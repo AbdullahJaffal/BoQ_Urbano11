@@ -1,0 +1,370 @@
+<Window x:Class="UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.Views.ManholeExcavationCatalogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:UrbanoMetraj.BoQ.SmartAssembly.UI.Converters"
+        Title="Manhole Kazı Kuralları Kataloğu"
+        Width="1060" Height="730"
+        MinWidth="840" MinHeight="540"
+        WindowStyle="ToolWindow"
+        ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="False">
+
+    <Window.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+
+        <Style x:Key="ColHeader" TargetType="DataGridColumnHeader">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="4,2"/>
+            <Setter Property="Background" Value="#F0F0F0"/>
+        </Style>
+
+        <Style x:Key="SecTitle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+
+        <!-- ── Status bar ──────────────────────────────────────────────────── -->
+        <StatusBar DockPanel.Dock="Bottom" Height="24">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusText}" Foreground="Gray" FontSize="11"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <!-- ── Main content ────────────────────────────────────────────────── -->
+        <Grid Margin="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="230" MinWidth="160"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 LEFT — Rules list
+                 ═══════════════════════════════════════════════════════════════ -->
+            <DockPanel Grid.Column="0">
+
+                <TextBlock DockPanel.Dock="Top" Style="{StaticResource SecTitle}"
+                           Text="Kazı Kuralları" Margin="0,0,0,6"/>
+
+                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                    <Button Content="+ Kural Ekle"
+                            Command="{Binding AddRuleCommand}"
+                            Padding="8,2" Margin="0,0,4,0"/>
+                    <Button Content="Çoğalt"
+                            Command="{Binding DuplicateRuleCommand}"
+                            Padding="8,2" Margin="0,0,4,0"/>
+                    <Button Content="Sil"
+                            Command="{Binding DeleteRuleCommand}"
+                            Padding="8,2" Margin="0,0,8,0"/>
+
+                    <Separator Width="1" Height="20" Margin="0,0,8,0" Background="#BBBBBB"/>
+
+                    <Button Content="💾 Kaydet"
+                            Command="{Binding SaveCommand}"
+                            Padding="8,2" Margin="0,0,4,0"
+                            ToolTip="Kazı kurallarını dahili konuma kaydeder&#x0a;(%APPDATA%\UrbanoMetraj\ManholeExcavCatalog.xml)"/>
+                    <Button Content="Dışa Aktar"
+                            Command="{Binding ExportCommand}"
+                            Padding="8,2" Margin="0,0,4,0"
+                            ToolTip="Kuralları seçilen konuma XML olarak dışa aktarır."/>
+                    <Button Content="İçe Aktar"
+                            Command="{Binding ImportCommand}"
+                            Padding="8,2"
+                            ToolTip="Daha önce dışa aktarılmış bir XML dosyasını içe aktarır."/>
+                </WrapPanel>
+
+                <DataGrid ItemsSource="{Binding Rules}"
+                          SelectedItem="{Binding SelectedRule}"
+                          AutoGenerateColumns="False" CanUserAddRows="False"
+                          SelectionMode="Single"
+                          ColumnHeaderStyle="{StaticResource ColHeader}">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Çap Aralığı"
+                            Binding="{Binding DiameterRangeDisplay}"
+                            IsReadOnly="True" Width="*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </DockPanel>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 RIGHT — Detail (visible when a rule is selected)
+                 ═══════════════════════════════════════════════════════════════ -->
+            <DockPanel Grid.Column="2"
+                       Visibility="{Binding IsRuleSelected,
+                                    Converter={StaticResource BoolToVis}}">
+
+                <!-- Rule header: diameter range inputs -->
+                <Border DockPanel.Dock="Top"
+                        BorderBrush="#BBBBBB" BorderThickness="1"
+                        Background="#F5F5F5" Padding="10,7"
+                        Margin="0,0,0,8">
+                    <WrapPanel>
+                        <TextBlock Text="Min Taban Çapı (mm):"
+                                   FontWeight="SemiBold" VerticalAlignment="Center"
+                                   Margin="0,0,6,0"/>
+                        <TextBox Width="90" Padding="4,2" Margin="0,0,20,0"
+                                 Text="{Binding SelectedRule.MinBaseDiameterMm,
+                                        UpdateSourceTrigger=PropertyChanged,
+                                        StringFormat=0}"/>
+                        <TextBlock Text="Maks Taban Çapı (mm):"
+                                   FontWeight="SemiBold" VerticalAlignment="Center"
+                                   Margin="0,0,6,0"/>
+                        <TextBox Width="90" Padding="4,2" Margin="0,0,14,0"
+                                 Text="{Binding SelectedRule.MaxBaseDiameterMm,
+                                        UpdateSourceTrigger=PropertyChanged,
+                                        StringFormat=0}"/>
+                        <TextBlock Text="(0 = sınırsız üst çap)"
+                                   Foreground="Gray" FontStyle="Italic" FontSize="11"
+                                   VerticalAlignment="Center"/>
+                    </WrapPanel>
+                </Border>
+
+                <!-- Vertical split: tiers grid (top) / tier detail (bottom) -->
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"   MinHeight="90"/>
+                        <RowDefinition Height="5"/>
+                        <RowDefinition Height="310" MinHeight="180"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- ── Depth Tiers grid ──────────────────────────────── -->
+                    <DockPanel Grid.Row="0">
+
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4"
+                                   LastChildFill="False">
+                            <TextBlock Style="{StaticResource SecTitle}"
+                                       Text="Derinlik Kademeleri"/>
+                            <Button Content="Sil" DockPanel.Dock="Right"
+                                    Command="{Binding SelectedRule.DeleteTierCommand}"
+                                    Padding="8,2" Margin="4,0,0,0"/>
+                            <Button Content="Çoğalt" DockPanel.Dock="Right"
+                                    Command="{Binding SelectedRule.DuplicateTierCommand}"
+                                    Padding="8,2" Margin="4,0,0,0"/>
+                            <Button Content="+ Kademe Ekle" DockPanel.Dock="Right"
+                                    Command="{Binding SelectedRule.AddTierCommand}"
+                                    Padding="8,2"/>
+                        </DockPanel>
+
+                        <DataGrid ItemsSource="{Binding SelectedRule.DepthTiers}"
+                                  SelectedItem="{Binding SelectedRule.SelectedTier}"
+                                  AutoGenerateColumns="False" CanUserAddRows="False"
+                                  SelectionMode="Single"
+                                  ColumnHeaderStyle="{StaticResource ColHeader}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Min (m)"
+                                    Binding="{Binding MinDepthM,
+                                              UpdateSourceTrigger=PropertyChanged,
+                                              StringFormat=0.0}"
+                                    Width="60"/>
+                                <DataGridTextColumn Header="Maks (m)"
+                                    Binding="{Binding MaxDepthM,
+                                              UpdateSourceTrigger=PropertyChanged,
+                                              StringFormat=0.0}"
+                                    Width="60"/>
+                                <DataGridTextColumn Header="Çalışma Gen. (m)"
+                                    Binding="{Binding WorkingClearanceM,
+                                              UpdateSourceTrigger=PropertyChanged,
+                                              StringFormat=0.00}"
+                                    Width="110"/>
+                                <DataGridTextColumn Header="Şev (H:V)"
+                                    Binding="{Binding SlopeRatio,
+                                              UpdateSourceTrigger=PropertyChanged,
+                                              StringFormat=0.0\#}"
+                                    Width="75"/>
+                                <DataGridCheckBoxColumn Header="İksa"
+                                    Binding="{Binding RequiresShoring,
+                                              UpdateSourceTrigger=PropertyChanged}"
+                                    Width="50"/>
+                                <DataGridCheckBoxColumn Header="Basamaklı"
+                                    Binding="{Binding IsSteppedExcavation,
+                                              UpdateSourceTrigger=PropertyChanged}"
+                                    Width="78"/>
+                                <DataGridTextColumn Header="Aralık"
+                                    Binding="{Binding DepthRangeDisplay}"
+                                    IsReadOnly="True" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+
+                    <GridSplitter Grid.Row="1" Height="5"
+                                  HorizontalAlignment="Stretch"/>
+
+                    <!-- ── Tier detail (visible when a tier is selected) ──── -->
+                    <DockPanel Grid.Row="2"
+                               Visibility="{Binding SelectedRule.IsTierSelected,
+                                            Converter={StaticResource BoolToVis}}">
+
+                        <!-- Stepped excavation params -->
+                        <Border DockPanel.Dock="Top"
+                                BorderBrush="#BBBBBB" BorderThickness="1"
+                                Background="#F5F5F5" Padding="10,6"
+                                Margin="0,0,0,8">
+                            <WrapPanel>
+                                <CheckBox Content="Basamaklı Kazı"
+                                          IsChecked="{Binding SelectedRule.SelectedTier.IsSteppedExcavation,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                          VerticalAlignment="Center" Margin="0,0,20,0"/>
+                                <TextBlock Text="Maks. Basamak Yük. (m):"
+                                           VerticalAlignment="Center" Margin="0,0,6,0"
+                                           IsEnabled="{Binding SelectedRule.SelectedTier.AreStepFieldsEnabled}"/>
+                                <TextBox Width="72" Padding="4,2" Margin="0,0,18,0"
+                                         IsEnabled="{Binding SelectedRule.SelectedTier.AreStepFieldsEnabled}"
+                                         Text="{Binding SelectedRule.SelectedTier.MaxStepHeightM,
+                                                UpdateSourceTrigger=PropertyChanged,
+                                                StringFormat=0.0\#}"/>
+                                <TextBlock Text="Berm Genişliği (m):"
+                                           VerticalAlignment="Center" Margin="0,0,6,0"
+                                           IsEnabled="{Binding SelectedRule.SelectedTier.AreStepFieldsEnabled}"/>
+                                <TextBox Width="72" Padding="4,2"
+                                         IsEnabled="{Binding SelectedRule.SelectedTier.AreStepFieldsEnabled}"
+                                         Text="{Binding SelectedRule.SelectedTier.StepBermWidthM,
+                                                UpdateSourceTrigger=PropertyChanged,
+                                                StringFormat=0.0\#}"/>
+                            </WrapPanel>
+                        </Border>
+
+                        <!-- Sub-base layers | Backfill layers (side by side) -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="6"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Sub-base layers -->
+                            <DockPanel Grid.Column="0">
+                                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4"
+                                           LastChildFill="False">
+                                    <TextBlock Style="{StaticResource SecTitle}"
+                                               Text="Alt Temel Katmanları  (üstten alta)"/>
+                                    <Button Content="Sil" DockPanel.Dock="Right"
+                                            Command="{Binding SelectedRule.SelectedTier.DeleteSubBaseLayerCommand}"
+                                            Padding="6,2" Margin="4,0,0,0"/>
+                                    <Button Content="Çoğalt" DockPanel.Dock="Right"
+                                            Command="{Binding SelectedRule.SelectedTier.DuplicateSubBaseLayerCommand}"
+                                            Padding="6,2" Margin="4,0,0,0"/>
+                                    <Button Content="+ Ekle" DockPanel.Dock="Right"
+                                            Command="{Binding SelectedRule.SelectedTier.AddSubBaseLayerCommand}"
+                                            Padding="6,2"/>
+                                </DockPanel>
+                                <DataGrid
+                                    ItemsSource="{Binding SelectedRule.SelectedTier.SubBaseLayers}"
+                                    SelectedItem="{Binding SelectedRule.SelectedTier.SelectedSubBaseLayer}"
+                                    AutoGenerateColumns="False" CanUserAddRows="False"
+                                    SelectionMode="Single"
+                                    ColumnHeaderStyle="{StaticResource ColHeader}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Katman Adı"
+                                            Binding="{Binding LayerName,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                            Width="*"/>
+                                        <DataGridTextColumn Header="Kalınlık (mm)"
+                                            Binding="{Binding ThicknessMm,
+                                                      UpdateSourceTrigger=PropertyChanged,
+                                                      StringFormat=0}"
+                                            Width="90"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+
+                            <GridSplitter Grid.Column="1" Width="6"
+                                          HorizontalAlignment="Stretch"/>
+
+                            <!-- Backfill layers -->
+                            <DockPanel Grid.Column="2">
+                                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4"
+                                           LastChildFill="False">
+                                    <TextBlock Style="{StaticResource SecTitle}"
+                                               Text="Geri Dolgu Katmanları  (üstten alta)"/>
+                                    <Button Content="Sil" DockPanel.Dock="Right"
+                                            Command="{Binding SelectedRule.SelectedTier.DeleteBackfillLayerCommand}"
+                                            Padding="6,2" Margin="4,0,0,0"/>
+                                    <Button Content="Çoğalt" DockPanel.Dock="Right"
+                                            Command="{Binding SelectedRule.SelectedTier.DuplicateBackfillLayerCommand}"
+                                            Padding="6,2" Margin="4,0,0,0"/>
+                                    <Button Content="+ Ekle" DockPanel.Dock="Right"
+                                            Command="{Binding SelectedRule.SelectedTier.AddBackfillLayerCommand}"
+                                            Padding="6,2"/>
+                                </DockPanel>
+                                <DataGrid
+                                    ItemsSource="{Binding SelectedRule.SelectedTier.BackfillLayers}"
+                                    SelectedItem="{Binding SelectedRule.SelectedTier.SelectedBackfillLayer}"
+                                    AutoGenerateColumns="False" CanUserAddRows="False"
+                                    SelectionMode="Single"
+                                    ColumnHeaderStyle="{StaticResource ColHeader}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Katman Adı"
+                                            Binding="{Binding LayerName,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                            Width="*"/>
+                                        <DataGridTextColumn Header="Malzeme"
+                                            Binding="{Binding MaterialType,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                            Width="80"/>
+
+                                        <!-- Thickness: greyed out when IsFillToSurface -->
+                                        <DataGridTemplateColumn Header="Kalınlık (m)" Width="80">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding ThicknessM, StringFormat=0.00}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsThicknessEnabled}" Value="False">
+                                                                        <Setter Property="Foreground" Value="Gray"/>
+                                                                        <Setter Property="FontStyle"  Value="Italic"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                            <DataGridTemplateColumn.CellEditingTemplate>
+                                                <DataTemplate>
+                                                    <TextBox
+                                                        Text="{Binding ThicknessM,
+                                                               UpdateSourceTrigger=PropertyChanged}"
+                                                        IsEnabled="{Binding IsThicknessEnabled}"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellEditingTemplate>
+                                        </DataGridTemplateColumn>
+
+                                        <DataGridCheckBoxColumn Header="Yüzeye Doldur"
+                                            Binding="{Binding IsFillToSurface,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                            Width="90"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Grid>
+                    </DockPanel>
+
+                    <!-- Tier placeholder (no tier selected) -->
+                    <TextBlock Grid.Row="2"
+                               VerticalAlignment="Center" HorizontalAlignment="Center"
+                               Text="Yukarıdaki tablodan bir derinlik kademesi seçin."
+                               Foreground="Gray" FontStyle="Italic"
+                               Visibility="{Binding SelectedRule.IsTierSelected,
+                                            Converter={StaticResource BoolToVis},
+                                            ConverterParameter=invert}"/>
+                </Grid>
+            </DockPanel>
+
+            <!-- Right placeholder (no rule selected) -->
+            <TextBlock Grid.Column="2"
+                       VerticalAlignment="Center" HorizontalAlignment="Center"
+                       Text="Soldaki listeden bir kazı kuralı seçin veya yeni kural ekleyin."
+                       Foreground="Gray" FontStyle="Italic"
+                       Visibility="{Binding IsRuleSelected,
+                                    Converter={StaticResource BoolToVis},
+                                    ConverterParameter=invert}"/>
+        </Grid>
+    </DockPanel>
+</Window>

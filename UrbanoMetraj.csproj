@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
+    <ProjectGuid>{9E3D5274-F01D-4AFD-8748-1E947169E8D4}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>UrbanoMetraj</RootNamespace>
+    <AssemblyName>UrbanoMetraj</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Required by MSBuild 18.5 NuGet targets: satisfies the win-x64 RID
+         validator without affecting the .NET Framework build in any way. -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
+    <DebugType>none</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Xml" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="Microsoft.CSharp" />
+    <!-- WinForms + Drawing – required for BoQStartupDialog and file dialogs -->
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <!-- WPF assemblies – required for ICommand + RibbonItemEventArgs in AdWindows + XAML pages -->
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+    <!-- System.Data – kept for general use -->
+    <Reference Include="System.Data" />
+    <!-- UI Automation – required for BoQ export dialog automation -->
+    <Reference Include="UIAutomationClient">
+      <HintPath>C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8\UIAutomationClient.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UIAutomationTypes">
+      <HintPath>C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8\UIAutomationTypes.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- AutoCAD Civil 3D 2023 – Copy Local = false (provided by host) -->
+    <Reference Include="acdbmgd">
+      <HintPath>C:\Program Files\Autodesk\AutoCAD 2023\acdbmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="acmgd">
+      <HintPath>C:\Program Files\Autodesk\AutoCAD 2023\acmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="accoremgd">
+      <HintPath>C:\Program Files\Autodesk\AutoCAD 2023\accoremgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AecBaseMgd">
+      <HintPath>C:\Program Files\Autodesk\AutoCAD 2023\AecBaseMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AeccDbMgd">
+      <HintPath>C:\Program Files\Autodesk\AutoCAD 2023\C3D\AeccDbMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- AutoCAD Ribbon API (AdWindows) – Copy Local = false (provided by host) -->
+    <Reference Include="AdWindows">
+      <HintPath>C:\Program Files\Autodesk\AutoCAD 2023\AdWindows.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <!-- NuGet packages (PackageReference style – restored by MSBuild /t:Restore) -->
+  <ItemGroup>
+    <!-- EPPlus 4.5.3.3: zero external dependencies, LGPL, safe inside AutoCAD AppDomain -->
+    <!-- NOTE: EPPlus 4.x does NOT require LicenseContext (that is EPPlus 5+ only)      -->
+    <PackageReference Include="EPPlus" Version="4.5.3.3" />
+    <!-- Clipper2 1.4.0: robust polygon boolean ops (Difference/Intersect/Union) for the
+         per-station BoQ overlap engine. netstandard2.0 → compatible with net48.
+         Boolean Earth Clipper is the standard, well-tested choice; we drive it in
+         integer space (×1e6 scaling) for numerical stability. -->
+    <PackageReference Include="Clipper2" Version="1.4.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="UrbanoPlugin.cs" />
+    <Compile Include="UrbanoDataExtractor.cs" />
+    <Compile Include="UrbanoNodDeepScan.cs" />
+    <Compile Include="UrbanoEntitySnoop.cs" />
+    <Compile Include="UrbanoNodSearch.cs" />
+    <Compile Include="UrbanoXmlExtractor.cs" />
+    <Compile Include="UrbanoCanarySearch.cs" />
+    <Compile Include="UrbanoTargetedSearch.cs" />
+    <Compile Include="UrbanoCanaryFinder.cs" />
+    <Compile Include="UrbanoDecryptXml.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="UrbanoDataMiner.cs" />
+    <!-- BoQ extraction feature – Phase 1 BIM Plugin -->
+    <Compile Include="BoQ\Models\BoQModels.cs" />
+    <Compile Include="BoQ\Models\BoQSettings.cs" />
+    <Compile Include="BoQ\Models\TrenchGeometry.cs" />
+    <Compile Include="BoQ\Services\IUrbanoExportService.cs" />
+    <Compile Include="BoQ\Services\UrbanoExportService.cs" />
+    <Compile Include="BoQ\Services\IBoQParserService.cs" />
+    <Compile Include="BoQ\Services\BoQParserService.cs" />
+    <Compile Include="BoQ\Services\ClipperGeo.cs" />
+    <Compile Include="BoQ\Services\BoQOverlapResolver.cs" />
+    <Compile Include="BoQ\Services\BoQScenarioAggregator.cs" />
+    <Compile Include="BoQ\Services\ManholeConfigService.cs" />
+    <Compile Include="BoQ\Services\ManholeAIService.cs" />
+    <Compile Include="BoQ\Services\ExcelExportService.cs" />
+    <Compile Include="BoQ\Services\SolidBuilderService.cs" />
+    <Compile Include="BoQ\Services\CrossSectionDrawService.cs" />
+    <Compile Include="BoQ\UI\RibbonSetup.cs" />
+    <Compile Include="BoQ\UI\InputBlocker.cs" />
+    <Compile Include="BoQ\UI\SolidsStartupDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="BoQ\UI\BoQStartupDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="BoQ\Services\DwgBoQStore.cs" />
+    <Compile Include="BoQ\UI\GeneralSettingsDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="BoQ\UI\BoQResultsDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="BoQ\BoQCommand.cs" />
+    <Compile Include="BoQ\BoQViewCommand.cs" />
+    <Compile Include="BoQ\BoQSimplifiedTestCommand.cs" />
+    <Compile Include="BoQ\BoQSimplifiedTestV2Command.cs" />
+    <Compile Include="BoQ\SolidsCommand.cs" />
+    <Compile Include="BoQ\SectionsCommand.cs" />
+    <Compile Include="BoQ\SectionsDbCommand.cs" />
+    <Compile Include="BoQ\Models\ManholeBoQCatalogModels.cs" />
+    <Compile Include="BoQ\Services\ManholeCatalogStore.cs" />
+
+    <Compile Include="BoQ\Services\ManholeAssignStore.cs" />
+    <Compile Include="BoQ\UI\ManholeAssignDialog.cs" />
+    <Compile Include="BoQ\ManholeAssignCommand.cs" />
+    <Compile Include="BoQ\MhProbeCommand.cs" />
+    <!-- ═══ Smart Assembly ══════════════════════════════════════════════════ -->
+    <Compile Include="BoQ\SmartAssembly\SmartAssemblyCommand.cs" />
+    <!-- Data Foundation -->
+    <!-- Models -->
+    <Compile Include="BoQ\SmartAssembly\Models\ComponentRole.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\FootprintShape.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\Footprint.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\SubPiece.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\ManholeComponent.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\BottomElementComponent.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\MiddleElementComponent.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\ReducerComponent.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\AdjusterComponent.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\CoverComponent.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\AssemblyRule.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\DepthTierRule.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\PipeRangeRule.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\ProjectTemplate.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\SmartAssemblyMasterCatalog.cs" />
+    <!-- Serialization -->
+    <Compile Include="BoQ\SmartAssembly\Serialization\MasterCatalogXmlManager.cs" />
+    <Compile Include="BoQ\SmartAssembly\Serialization\ProjectTemplateNodManager.cs" />
+    <!-- UI – ViewModels -->
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\RelayCommand.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ViewModelBase.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ComponentRowVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\RuleRowVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\BottomElementVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\DepthTierVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\PipeRangeRuleVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\RepositoryTabVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SubPieceRowVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\MasterRulesTabVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ProjectSetupTabVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SmartAssemblyMainVm.cs" />
+    <!-- UI – Converters -->
+    <Compile Include="BoQ\SmartAssembly\UI\Converters\NullToVisibilityConverter.cs" />
+    <!-- UI – Views (XAML code-behind) -->
+    <Compile Include="BoQ\SmartAssembly\UI\Views\SmartAssemblyWindow.xaml.cs">
+      <DependentUpon>SmartAssemblyWindow.xaml</DependentUpon>
+    </Compile>
+    <!-- ═══ Manhole Excavation Catalog ══════════════════════════════════════ -->
+    <Compile Include="BoQ\ManholeExcavationCatalog\Models\ManholeExcavationCatalogModels.cs" />
+    <Compile Include="BoQ\ManholeExcavationCatalog\Services\ManholeExcavationCatalogXmlManager.cs" />
+    <Compile Include="BoQ\ManholeExcavationCatalog\UI\ViewModels\ManholeExcavationMainVm.cs" />
+    <Compile Include="BoQ\ManholeExcavationCatalog\UI\Views\ManholeExcavationCatalogWindow.xaml.cs">
+      <DependentUpon>ManholeExcavationCatalogWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="BoQ\ManholeExcavationCatalog\ManholeExcavationCatalogCommand.cs" />
+    <!-- ═══ Pipe Trench Catalog ══════════════════════════════════════════════ -->
+    <Compile Include="BoQ\PipeTrenchCatalog\Models\PipeTrenchCatalogModels.cs" />
+    <Compile Include="BoQ\PipeTrenchCatalog\Services\PipeTrenchCatalogXmlManager.cs" />
+    <Compile Include="BoQ\PipeTrenchCatalog\UI\ViewModels\PipeTrenchMainVm.cs" />
+    <Compile Include="BoQ\PipeTrenchCatalog\UI\Views\PipeTrenchCatalogWindow.xaml.cs">
+      <DependentUpon>PipeTrenchCatalogWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="BoQ\PipeTrenchCatalog\PipeTrenchCatalogCommand.cs" />
+    <!-- ═══ Pipe Catalog ════════════════════════════════════════════════════ -->
+    <Compile Include="BoQ\PipeCatalog\Models\PipeCatalogModels.cs" />
+    <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogImportService.cs" />
+    <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogStore.cs" />
+    <Compile Include="BoQ\PipeCatalog\UI\ViewModels\PipeCatalogMainVm.cs" />
+    <Compile Include="BoQ\PipeCatalog\UI\Views\PipeCatalogWindow.xaml.cs">
+      <DependentUpon>PipeCatalogWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="BoQ\PipeCatalog\PipeCatalogCommand.cs" />
+    <!-- ═══ Soil Classification Catalog ════════════════════════════════════ -->
+    <Compile Include="BoQ\SoilCatalog\Models\SoilCatalogModels.cs" />
+    <Compile Include="BoQ\SoilCatalog\Services\SoilCatalogXmlManager.cs" />
+    <Compile Include="BoQ\SoilCatalog\UI\ViewModels\SoilCatalogVm.cs" />
+    <Compile Include="BoQ\SoilCatalog\UI\Views\SoilCatalogWindow.xaml.cs">
+      <DependentUpon>SoilCatalogWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="BoQ\SoilCatalog\SoilCatalogCommand.cs" />
+  </ItemGroup>
+  <!-- Smart Assembly + Pipe Catalog XAML Pages -->
+  <ItemGroup>
+    <Page Include="BoQ\SmartAssembly\UI\Views\SmartAssemblyWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="BoQ\PipeCatalog\UI\Views\PipeCatalogWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="BoQ\ManholeExcavationCatalog\UI\Views\ManholeExcavationCatalogWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="BoQ\PipeTrenchCatalog\UI\Views\PipeTrenchCatalogWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="BoQ\SoilCatalog\UI\Views\SoilCatalogWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

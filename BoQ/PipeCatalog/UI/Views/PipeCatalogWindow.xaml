@@ -1,0 +1,206 @@
+<Window x:Class="UrbanoMetraj.BoQ.PipeCatalogs.UI.Views.PipeCatalogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:UrbanoMetraj.BoQ.SmartAssembly.UI.Converters"
+        Title="Boru Kataloğu Yöneticisi"
+        Width="900" Height="620"
+        MinWidth="740" MinHeight="480"
+        WindowStyle="ToolWindow"
+        ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="False">
+
+    <Window.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+
+        <Style x:Key="ColHeader" TargetType="DataGridColumnHeader">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="4,2"/>
+            <Setter Property="Background" Value="#F0F0F0"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel LastChildFill="True">
+
+        <!-- Status bar -->
+        <StatusBar DockPanel.Dock="Bottom" Height="24">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusText}" Foreground="Gray" FontSize="11"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <Grid Margin="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="260"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 LEFT — Family list
+                 ═══════════════════════════════════════════════════════════════ -->
+            <DockPanel Grid.Column="0">
+
+                <TextBlock DockPanel.Dock="Top" Text="Boru Aileleri"
+                           FontWeight="Bold" Margin="0,0,0,6"/>
+
+                <!-- Toolbar: CRUD + separator + Save/Export/Import -->
+                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                    <Button Content="+ Ekle"
+                            Command="{Binding AddFamilyCommand}"
+                            Padding="8,2" Margin="0,0,4,0"/>
+                    <Button Content="Sil"
+                            Command="{Binding DeleteFamilyCommand}"
+                            Padding="8,2" Margin="0,0,8,0"/>
+
+                    <Separator Width="1" Height="20" Margin="0,0,8,0" Background="#BBBBBB"/>
+
+                    <Button Content="💾 Kaydet"
+                            Command="{Binding SaveCommand}"
+                            Padding="8,2" Margin="0,0,4,0"
+                            ToolTip="Kataloğu dahili konuma kaydeder&#x0a;(%APPDATA%\UrbanoMetraj\PipeCatalog.xml)"/>
+                    <Button Content="Dışa Aktar"
+                            Command="{Binding ExportCommand}"
+                            Padding="8,2" Margin="0,0,4,0"
+                            ToolTip="Kataloğu seçilen konuma XML olarak dışa aktarır."/>
+                    <Button Content="İçe Aktar"
+                            Command="{Binding ImportCommand}"
+                            Padding="8,2"
+                            ToolTip="Daha önce dışa aktarılmış bir XML dosyasını içe aktarır.&#x0a;Native şema ve Urbano şeması otomatik algılanır."/>
+                </WrapPanel>
+
+                <DataGrid ItemsSource="{Binding Families}"
+                          SelectedItem="{Binding SelectedFamily}"
+                          AutoGenerateColumns="False" CanUserAddRows="False"
+                          SelectionMode="Single"
+                          ColumnHeaderStyle="{StaticResource ColHeader}">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Aile Adı"
+                            Binding="{Binding FamilyName, UpdateSourceTrigger=PropertyChanged}"
+                            Width="*"/>
+                        <DataGridTextColumn Header="Malzeme"
+                            Binding="{Binding Material, UpdateSourceTrigger=PropertyChanged}"
+                            Width="90"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </DockPanel>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 RIGHT — Detail panel (visible when a family is selected)
+                 ═══════════════════════════════════════════════════════════════ -->
+            <DockPanel Grid.Column="2"
+                       Visibility="{Binding IsFamilySelected,
+                                    Converter={StaticResource BoolToVis}}">
+
+                <!-- Section A: editable family header -->
+                <Border DockPanel.Dock="Top"
+                        BorderBrush="#BBBBBB" BorderThickness="1"
+                        Background="#F5F5F5" Padding="10,8"
+                        Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="70"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="70"/>
+                            <ColumnDefinition Width="140"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0" Text="Aile Adı:"
+                                   FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBox   Grid.Column="1"
+                                   Text="{Binding SelectedFamilyName,
+                                          UpdateSourceTrigger=PropertyChanged}"
+                                   Padding="4,2" VerticalAlignment="Center"/>
+
+                        <TextBlock Grid.Column="3" Text="Malzeme:"
+                                   FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBox   Grid.Column="4"
+                                   Text="{Binding SelectedFamilyMaterial,
+                                          UpdateSourceTrigger=PropertyChanged}"
+                                   Padding="4,2" VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
+                <!-- Section B: pipe toolbar -->
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4" LastChildFill="False">
+                    <TextBlock Text="Borular" FontWeight="Bold"
+                               VerticalAlignment="Center" DockPanel.Dock="Left"/>
+                    <Button Content="+ Ekle"
+                            Command="{Binding AddPipeCommand}"
+                            DockPanel.Dock="Right" Padding="8,2" Margin="4,0,0,0"/>
+                    <Button Content="Çoğalt"
+                            Command="{Binding DuplicatePipeCommand}"
+                            DockPanel.Dock="Right" Padding="8,2" Margin="2,0,0,0"/>
+                    <Button Content="Sil"
+                            Command="{Binding DeletePipeCommand}"
+                            DockPanel.Dock="Right" Padding="8,2" Margin="2,0,0,0"/>
+                </DockPanel>
+
+                <!-- Section C: pipes DataGrid -->
+                <DataGrid x:Name="PipesGrid"
+                          ItemsSource="{Binding PipesInFamily}"
+                          SelectedItem="{Binding SelectedPipe}"
+                          AutoGenerateColumns="False" CanUserAddRows="False"
+                          SelectionMode="Single"
+                          ColumnHeaderStyle="{StaticResource ColHeader}"
+                          RowEditEnding="PipesGrid_RowEditEnding">
+
+                    <!-- Red background when OD ≠ ID + 2×Et and all three are filled -->
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsConsistent}" Value="False">
+                                    <Setter Property="Background" Value="#FFEEEE"/>
+                                    <Setter Property="ToolTip"
+                                            Value="OD ≠ ID + 2×Et — değerler tutarsız!"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.RowStyle>
+
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Poz No"
+                            Binding="{Binding PozNo,
+                                      UpdateSourceTrigger=PropertyChanged}"
+                            Width="80"/>
+                        <DataGridTextColumn Header="DN (mm)"
+                            Binding="{Binding NominalDiameter,
+                                      UpdateSourceTrigger=PropertyChanged,
+                                      StringFormat=0}"
+                            Width="65"/>
+                        <DataGridTextColumn Header="OD (mm)"
+                            Binding="{Binding OuterDiameter,
+                                      UpdateSourceTrigger=PropertyChanged,
+                                      StringFormat=0.0}"
+                            Width="75"/>
+                        <DataGridTextColumn Header="ID (mm)"
+                            Binding="{Binding InnerDiameter,
+                                      UpdateSourceTrigger=PropertyChanged,
+                                      StringFormat=0.0}"
+                            Width="75"/>
+                        <DataGridTextColumn Header="Et (mm)"
+                            Binding="{Binding WallThickness,
+                                      UpdateSourceTrigger=PropertyChanged,
+                                      StringFormat=0.0}"
+                            Width="65"/>
+                        <DataGridTextColumn Header="Açıklama"
+                            Binding="{Binding Aciklama,
+                                      UpdateSourceTrigger=PropertyChanged}"
+                            Width="*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </DockPanel>
+
+            <!-- Right placeholder (no family selected) -->
+            <TextBlock Grid.Column="2"
+                       VerticalAlignment="Center" HorizontalAlignment="Center"
+                       Text="Soldaki listeden bir boru ailesi seçin veya yeni ekleyin."
+                       Foreground="Gray" FontStyle="Italic"
+                       Visibility="{Binding IsFamilySelected,
+                                    Converter={StaticResource BoolToVis},
+                                    ConverterParameter=invert}"/>
+        </Grid>
+    </DockPanel>
+</Window>

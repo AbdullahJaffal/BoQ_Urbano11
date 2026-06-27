@@ -1,0 +1,58 @@
+# UrbanoMetraj Konfigürasyon Dosyası
+# Noktalı virgül (;) ile ayrılmış sütunlar. # ile başlayan satırlar yorum.
+# Bu dosyayı Excel'de açıp düzenleyebilirsiniz (UTF-8 encoding ile kaydedin).
+
+[KAZI]
+# Kazı, geri dolgu ve yataklama poz bilgileri
+POZ_NO;MAL_KODU;POZ_KODU;ACIKLAMA;BIRIM
+AS.01.01.01;;AS;Makine ile kazı yapılması işi (makine ile yumuşak ve sert toprak kazılması - serbest kazı);m³
+AS.01.02.01;;AS;Geri dolgu yapılması işi (kazı malzemesinden makina ile hendek ve temel dolgusu yapılması);m³
+AS.01.02.03;;AS;Yataklama-gömlekleme yapılması işi (Her kategoride granülometrik kum-çakıl el ile tokmakla sıkıştırılarak hendek ve temel taban ıslahı boru tabanı yataklaması ve boru gömleklemesi yapılması);m³
+
+[HENDEK]
+# Çapa göre hendek boyutları ve boru dış çapları
+# ORTALAMA_DERINLIK_M: Manhole derinliği okunamazsa kullanılacak varsayılan değer
+CAP_MM;HENDEK_GENISLIK_M;YATAKLAMA_KALINLIK_M;BORU_DIS_CAP_M;ORTALAMA_DERINLIK_M
+150;0.70;0.10;0.175;2.50
+200;0.80;0.10;0.236;2.50
+250;0.85;0.10;0.295;3.00
+300;0.90;0.10;0.358;3.00
+400;1.10;0.15;0.476;3.50
+500;1.20;0.20;0.594;4.00
+600;1.40;0.20;0.714;4.50
+700;1.55;0.25;0.834;5.00
+800;1.70;0.25;0.960;5.00
+1000;2.00;0.30;1.200;5.50
+1200;2.30;0.30;1.440;6.00
+
+[BORU]
+# Boru poz tanımları — MALZEME ve CAP_MM Urbano'daki değerlerle tam eşleşmeli
+MALZEME;CAP_MM;POZ_NO;MAL_KODU;POZ_KODU;ACIKLAMA;BIRIM
+KRG;300;AS.03.01.01;M4;AS;Ø300mm HDPE esaslı koruge kanalizasyon boru döşenmesi (SN 8 fitingsler lastik conta boru ve sızdırmazlık bedelleri dahil);müf
+KRG;400;AS.03.01.02;M4;AS;Ø400mm HDPE esaslı koruge kanalizasyon boru döşenmesi (SN 8 fitingsler lastik conta boru ve sızdırmazlık bedelleri dahil);müf
+KRG;500;AS.03.01.03;M4;AS;Ø500mm HDPE esaslı koruge kanalizasyon boru döşenmesi (SN 8 fitingsler lastik conta boru ve sızdırmazlık bedelleri dahil);müf
+KRG;600;AS.03.01.04;M4;AS;Ø600mm HDPE esaslı koruge kanalizasyon boru döşenmesi (SN 8 fitingsler lastik conta boru ve sızdırmazlık bedelleri dahil);müf
+KRG;800;AS.03.01.05;M4;AS;Ø800mm HDPE esaslı koruge kanalizasyon boru döşenmesi (SN 8 fitingsler lastik conta boru ve sızdırmazlık bedelleri dahil);müf
+KRG;1000;AS.03.01.06;M4;AS;Ø1000mm HDPE esaslı koruge kanalizasyon boru döşenmesi (SN 8 fitingsler lastik conta boru ve sızdırmazlık bedelleri dahil);müf
+PVC;150;AS.03.02.01;M5;AS;Ø150mm PVC kanalizasyon boru döşenmesi (SN 8);müf
+PVC;200;AS.03.02.02;M5;AS;Ø200mm PVC kanalizasyon boru döşenmesi (SN 8);müf
+PVC;250;AS.03.02.03;M5;AS;Ø250mm PVC kanalizasyon boru döşenmesi (SN 8);müf
+PVC;300;AS.03.02.04;M5;AS;Ø300mm PVC kanalizasyon boru döşenmesi (SN 8);müf
+
+[BACA]
+# Baca bileşenleri — TIP alanı hesap mantığını belirler:
+#   TABAN    → her baca için 1 adet
+#   KONIK    → her baca için 1 adet
+#   AYAR     → her baca için 1 adet
+#   GOVDE_L  → derinliğe göre hesaplanan büyük halka (bu yükseklik kullanılır)
+#   GOVDE_S  → derinliğe göre hesaplanan küçük halka (bu yükseklik kullanılır)
+#   BOYUN    → her baca için 1 adet
+#   KAPAK    → her baca için 1 adet
+POZ_NO;MAL_KODU;POZ_KODU;ACIKLAMA;BIRIM;TIP;YUKSEKLIK_M
+AS.02.01.01;M9;AS;Ø1000mm iç çapında prekast beton muayene bacası 300-400 çıkış taban (h=0.60) elemanı temini ve montajı;adet;TABAN;0.60
+AS.02.01.02;M15;AS;Ø1000mm iç çapında prekast beton muayene bacası konik (h=0.60) elemanı temini ve montajı;adet;KONIK;0.60
+AS.02.01.03;M12;AS;Ø1000mm iç çapında prekast beton muayene bacası ayar bileziği (h=0.30) elemanı temini ve montajı;adet;AYAR;0.30
+AS.02.01.04;M13;AS;Ø1000mm iç çapında prekast beton muayene bacası gövde (h=0.35) elemanı temini ve montajı;adet;GOVDE_S;0.35
+AS.02.01.05;M15;AS;Ø1000mm iç çapında prekast beton muayene bacası gövde (h=0.65) elemanı temini ve montajı;adet;GOVDE_L;0.65
+AS.02.01.06;M15;AS;Ø1000mm iç çapında prekast beton muayene bacası boyun bileziği (h=0.10) elemanı temini ve montajı;adet;BOYUN;0.10
+AS.02.01.07;M21;AS;Sfero döküm baca kapağı hazırlanması G688mm (77kg otomatik kilitli D400) temini ve montajı;adet;KAPAK;0.00

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Standalone verification harness for the BoQ geometry engine.
+       Links the SAME source files used by the AutoCAD plugin (ClipperGeo +
+       the geometry models) — neither has any AutoCAD dependency — so we can
+       prove the Clipper2 math from the command line via `dotnet run`. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>GeoHarness</AssemblyName>
+    <RootNamespace>GeoHarness</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Clipper2" Version="1.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\BoQ\Models\TrenchGeometry.cs" />
+    <Compile Include="..\..\BoQ\Models\BoQModels.cs" />
+    <Compile Include="..\..\BoQ\Services\ClipperGeo.cs" />
+    <Compile Include="..\..\BoQ\Services\BoQOverlapResolver.cs" />
+  </ItemGroup>
+
+</Project>
