@@ -108,7 +108,28 @@
       "Bash(Out-File -FilePath \"C:\\\\Users\\\\DELL\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Abdullah-ElsaProje-Software-UrbanoMetraj\\\\6697c773-f022-420c-a5e8-b0e3f2275765\\\\scratchpad\\\\excel_data.txt\" -Encoding utf8)",
       "Bash(Get-Content \"C:\\\\Users\\\\DELL\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--Abdullah-ElsaProje-Software-UrbanoMetraj\\\\6697c773-f022-420c-a5e8-b0e3f2275765\\\\scratchpad\\\\excel_data.txt\")",
       "Bash(Select-Object -First 50)",
-      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\amd64\\\\MSBuild.exe\" \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\UrbanoMetraj.csproj\" /p:Configuration=Debug /p:Platform=x64 /p:OutputPath=bin\\\\DebugV35\\\\ /t:Build /v:minimal 2>&1)"
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\amd64\\\\MSBuild.exe\" \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\UrbanoMetraj.csproj\" /p:Configuration=Debug /p:Platform=x64 /p:OutputPath=bin\\\\DebugV35\\\\ /t:Build /v:minimal 2>&1)",
+      "PowerShell(Remove-Item \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\BoQ\\\\BoQCommand.cs\" -Confirm:$false)",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v7.bat\")",
+      "PowerShell(cmd /c \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v31.bat\")",
+      "PowerShell(\\(Get-Item \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\bin\\\\DebugV34\\\\UrbanoMetraj.dll\"\\).LastWriteTime ; Get-Date)",
+      "PowerShell(cmd /c \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v32.bat\")",
+      "PowerShell(\\(Get-Item \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\bin\\\\DebugV35\\\\UrbanoMetraj.dll\"\\).LastWriteTime ; Get-Date)",
+      "PowerShell(cmd /c \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v33.bat\")",
+      "PowerShell(\\(Get-Item \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\bin\\\\DebugV36\\\\UrbanoMetraj.dll\"\\).LastWriteTime ; Get-Date)",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v34.bat\")",
+      "PowerShell(\\(Get-Item \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\bin\\\\DebugV37\\\\UrbanoMetraj.dll\"\\).LastWriteTime)",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v35.bat\")",
+      "PowerShell(Get-Content \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v35_out.txt\" -Tail 10; \\(Get-Item \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\bin\\\\DebugV38\\\\UrbanoMetraj.dll\"\\).LastWriteTime)",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v36.bat\")",
+      "PowerShell(Get-Content \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v36_out.txt\" -Tail 5; \\(Get-Item \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\bin\\\\DebugV39\\\\UrbanoMetraj.dll\"\\).LastWriteTime)",
+      "PowerShell($msbuild = 'C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\amd64\\\\MSBuild.exe'; $proj = 'D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\UrbanoMetraj.csproj'; $out = 'D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v30_out.txt'; & $msbuild $proj /p:Configuration=Debug /p:OutputPath=bin\\\\DebugV30\\\\ /p:Platform=x64 /t:Build /v:minimal 2>&1 | Out-File $out -Encoding utf8; \"EXIT_CODE=$LASTEXITCODE\" | Out-File $out -Append -Encoding utf8; Get-Content $out)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\" \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\UrbanoMetraj.csproj\" /p:Configuration=Release /p:Platform=x64 /p:OutputPath=bin\\\\ReleaseV11\\\\ /t:Build /v:minimal 2>&1)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\" \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\UrbanoMetraj.csproj\" /p:Configuration=Release /p:Platform=x64 /p:OutputPath=bin\\\\ReleaseV12\\\\ /t:Build /v:minimal 2>&1)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\amd64\\\\MSBuild.exe\" \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\UrbanoMetraj.csproj\" /p:Configuration=Debug /p:Platform=x64 /p:OutputPath=bin\\\\DebugV39\\\\ /t:Build /v:minimal 2>&1)",
+      "PowerShell(Start-Process -FilePath \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v7.bat\" -Wait -NoNewWindow)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
