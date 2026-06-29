@@ -89,16 +89,19 @@ namespace UrbanoMetraj.BoQ.Services
                 [ExportLanguage.English] = new[]
                 {
                     "Node Name", "Type", "Diameter (mm)", "Depth (m)",
+                    "Excav. Depth (m)", "Excav. Volume (m3)",
                     "Easting (m)", "Northing (m)", "Terrain Elev (m)"
                 },
                 [ExportLanguage.Turkish] = new[]
                 {
                     "Baca Adi", "Tip", "Cap (mm)", "Derinlik (m)",
+                    "Kazi Derinligi (m)", "Kazi Hacmi (m3)",
                     "X (m)", "Y (m)", "Arazi Kotu (m)"
                 },
                 [ExportLanguage.Russian] = new[]
                 {
                     "Nazvanie Uzla", "Tip", "Diametr (mm)", "Glubina (m)",
+                    "Glubina Vykopki (m)", "Ob'em Vykopki (m3)",
                     "X (m)", "Y (m)", "Otmetka Terr. (m)"
                 }
             };
@@ -106,24 +109,27 @@ namespace UrbanoMetraj.BoQ.Services
         private static readonly Dictionary<ExportLanguage, string[]> SummaryHeaderMap =
             new Dictionary<ExportLanguage, string[]>
             {
-                // Indices: 0=System 1=PipeLength 2=ManholeCount 3=Excav 4=Bed 5=Surr 6=Backfill 7=Overlap
+                // Indices: 0=System 1=PipeLength 2=ManholeCount 3=Excav 4=Bed 5=Surr 6=Backfill 7=MhExcav 8=Overlap
                 [ExportLanguage.English] = new[]
                 {
                     "System", "Total Pipe Length (m)", "Manhole Count",
                     "Total Excavation (m3)", "Total Bedding (m3)",
-                    "Total Surround (m3)", "Total Backfill (m3)", "Overlap Deducted (m3)"
+                    "Total Surround (m3)", "Total Backfill (m3)",
+                    "Manhole Excav. (m3)", "Overlap Deducted (m3)"
                 },
                 [ExportLanguage.Turkish] = new[]
                 {
                     "Sistem", "Toplam Boru Boyu (m)", "Baca Sayisi",
                     "Toplam Kazi (m3)", "Toplam Yataklama (m3)",
-                    "Toplam Gomlekleme (m3)", "Toplam Geri Dolgu (m3)", "Kesisen Hacim (m3)"
+                    "Toplam Gomlekleme (m3)", "Toplam Geri Dolgu (m3)",
+                    "Baca Kazi (m3)", "Kesisen Hacim (m3)"
                 },
                 [ExportLanguage.Russian] = new[]
                 {
                     "Sistema", "Obshch. Dlina Trub (m)", "Kol-vo Kolodtsev",
                     "Obshch. Vykopka (m3)", "Obshch. Podstilka (m3)",
-                    "Okruzheniye (m3)", "Obshch. Zasypka (m3)", "Vychitaniye (m3)"
+                    "Okruzheniye (m3)", "Obshch. Zasypka (m3)",
+                    "Vykopka Kolodtsev (m3)", "Vychitaniye (m3)"
                 }
             };
 
@@ -221,8 +227,9 @@ namespace UrbanoMetraj.BoQ.Services
                 ws.Cells[row, 5].Value = sys.Pipes.Sum(p => p.TotalBeddingVolume);
                 ws.Cells[row, 6].Value = sys.Pipes.Sum(p => p.TotalSurroundVolume);
                 ws.Cells[row, 7].Value = sys.Pipes.Sum(p => p.TotalBackfillVolume);
+                ws.Cells[row, 8].Value = sys.Manholes.Sum(m => m.ExcavationVolume);
                 if (showOverlap)
-                    ws.Cells[row, 8].Value = sys.Pipes.Sum(p => p.OverlapVolumeDeducted);
+                    ws.Cells[row, 9].Value = sys.Pipes.Sum(p => p.OverlapVolumeDeducted);
 
                 ApplyDataRowStyle(ws, row, colCount, alt);
                 SetNumericFormat(ws, row, 2, colCount, "#,##0.000");
@@ -237,7 +244,8 @@ namespace UrbanoMetraj.BoQ.Services
             ws.Cells[row, 5].Value = report.TotalBeddingVolume;
             ws.Cells[row, 6].Value = report.TotalSurroundVolume;
             ws.Cells[row, 7].Value = report.TotalBackfillVolume;
-            if (showOverlap) ws.Cells[row, 8].Value = report.TotalOverlapVolumeDeducted;
+            ws.Cells[row, 8].Value = report.TotalManholeExcavationVolume;
+            if (showOverlap) ws.Cells[row, 9].Value = report.TotalOverlapVolumeDeducted;
             ApplyTotalRowStyle(ws, row, colCount);
             SetNumericFormat(ws, row, 2, colCount, "#,##0.000");
 
@@ -325,27 +333,33 @@ namespace UrbanoMetraj.BoQ.Services
                 ws.Cells[row, 3].Value = m.Diameter > 0 ? m.Diameter + " mm" : "—";
                 // Col 4: Depth (m)
                 ws.Cells[row, 4].Value = m.Depth;
-                // Col 5: Easting
-                ws.Cells[row, 5].Value = m.X;
-                // Col 6: Northing
-                ws.Cells[row, 6].Value = m.Y;
-                // Col 7: Terrain elevation
-                ws.Cells[row, 7].Value = m.TerrainElevation;
+                // Col 5: Excavation depth H = TerrainElev − lowestInvert (m)
+                ws.Cells[row, 5].Value = m.ExcavationDepth;
+                // Col 6: Isolated excavation volume (m³) — no trench overlap deduction yet
+                ws.Cells[row, 6].Value = m.ExcavationVolume;
+                // Col 7: Easting
+                ws.Cells[row, 7].Value = m.X;
+                // Col 8: Northing
+                ws.Cells[row, 8].Value = m.Y;
+                // Col 9: Terrain elevation
+                ws.Cells[row, 9].Value = m.TerrainElevation;
 
                 ApplyDataRowStyle(ws, row, colCount, alt);
-                SetNumericFormat(ws, row, 4, 7, "#,##0.000");
+                SetNumericFormat(ws, row, 4, 9, "#,##0.000");
                 alt = !alt;
                 row++;
             }
 
             // Fixed widths — Type column (col 2) is wider to accommodate SmartTypeName
-            ws.Column(1).Width = 12;   // Node Name
+            ws.Column(1).Width = 16;   // Node Name
             ws.Column(2).Width = 36;   // Type (smart name — widest)
             ws.Column(3).Width = 14;   // Diameter
             ws.Column(4).Width = 14;   // Depth
-            ws.Column(5).Width = 16;   // Easting
-            ws.Column(6).Width = 16;   // Northing
-            ws.Column(7).Width = 16;   // Terrain Elev
+            ws.Column(5).Width = 18;   // Excav. Depth
+            ws.Column(6).Width = 18;   // Excav. Volume
+            ws.Column(7).Width = 16;   // Easting
+            ws.Column(8).Width = 16;   // Northing
+            ws.Column(9).Width = 16;   // Terrain Elev
         }
 
         // =====================================================================

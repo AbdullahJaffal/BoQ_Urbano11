@@ -54,6 +54,7 @@ namespace UrbanoMetraj.BoQ.Services
         private const string K_SC_LOWER       = "SCENARIO_LOWER";
         private const string K_SC_5050        = "SCENARIO_50_50";
         private const string K_MANHOLE_STACKS = "MANHOLE_STACKS";
+        private const string K_V2_VOLUMES    = "V2_VOLUMES";
 
         // Sub-container that holds all pipe-network data.
         // Other stores (ManholeCatalogStore, ManholeAssignStore) write under
@@ -148,6 +149,8 @@ namespace UrbanoMetraj.BoQ.Services
                         var pipeDict = MakeSubDict(tr, netDict, pid);
 
                         WritePipeMetadata(tr, pipeDict, sdr, netName);
+                        if (sdr.HasV2Volumes)
+                            WriteV2Volumes(tr, pipeDict, sdr);
 
                         foreach (var st in sdr.Stations ?? new List<CrossSectionStation>())
                         {
@@ -286,6 +289,7 @@ namespace UrbanoMetraj.BoQ.Services
 
                         var sdr = ReadPipeMetadata(tr, pipeDict);
                         sdr.SystemName = netName;   // keep grouping key consistent with the system
+                        ReadV2Volumes(tr, pipeDict, sdr);
 
                         foreach (DBDictionaryEntry staEntry in pipeDict)
                         {
@@ -509,6 +513,34 @@ namespace UrbanoMetraj.BoQ.Services
                 s.AExcavStart, s.AExcavEnd, s.ABackfillStart, s.ABackfillEnd,
             }) tvs.Add(Dbl(d));
             MakeXRecord(tr, pipeDict, K_METADATA, tvs.ToArray());
+        }
+
+        private static void WriteV2Volumes(Transaction tr, DBDictionary pipeDict, SectionDebugRow s)
+        {
+            MakeXRecord(tr, pipeDict, K_V2_VOLUMES,
+                I16(1),
+                Dbl(s.VExcavKU),      Dbl(s.VExcavKL),      Dbl(s.VExcavSP),    Dbl(s.VExcavGross),
+                Dbl(s.VBedding),      Dbl(s.VSurround),
+                Dbl(s.VBackfillKU),   Dbl(s.VBackfillKL),   Dbl(s.VBackfillSP), Dbl(s.VBackfillGross));
+        }
+
+        private static void ReadV2Volumes(Transaction tr, DBDictionary pipeDict, SectionDebugRow sdr)
+        {
+            var tvs = ReadXRecord(tr, pipeDict, K_V2_VOLUMES);
+            if (tvs == null) return;
+            int i = 0;
+            if (ReadI16(tvs, ref i) == 0) return;
+            sdr.HasV2Volumes    = true;
+            sdr.VExcavKU        = ReadDbl(tvs, ref i);
+            sdr.VExcavKL        = ReadDbl(tvs, ref i);
+            sdr.VExcavSP        = ReadDbl(tvs, ref i);
+            sdr.VExcavGross     = i < tvs.Length ? ReadDbl(tvs, ref i) : Math.Max(sdr.VExcavKU, sdr.VExcavKL);
+            sdr.VBedding        = ReadDbl(tvs, ref i);
+            sdr.VSurround       = ReadDbl(tvs, ref i);
+            sdr.VBackfillKU     = ReadDbl(tvs, ref i);
+            sdr.VBackfillKL     = ReadDbl(tvs, ref i);
+            sdr.VBackfillSP     = ReadDbl(tvs, ref i);
+            sdr.VBackfillGross  = i < tvs.Length ? ReadDbl(tvs, ref i) : Math.Max(sdr.VBackfillKU, sdr.VBackfillKL);
         }
 
         private static SectionDebugRow ReadPipeMetadata(Transaction tr, DBDictionary pipeDict)

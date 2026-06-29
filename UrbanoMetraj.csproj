@@ -125,6 +125,7 @@
     <Compile Include="BoQ\Services\BoQScenarioAggregator.cs" />
     <Compile Include="BoQ\Services\ManholeConfigService.cs" />
     <Compile Include="BoQ\Services\ManholeAIService.cs" />
+    <Compile Include="BoQ\Services\ManholeExcavOverlapService.cs" />
     <Compile Include="BoQ\Services\ExcelExportService.cs" />
     <Compile Include="BoQ\Services\SolidBuilderService.cs" />
     <Compile Include="BoQ\Services\CrossSectionDrawService.cs" />
@@ -143,7 +144,6 @@
     <Compile Include="BoQ\UI\BoQResultsDialog.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="BoQ\BoQCommand.cs" />
     <Compile Include="BoQ\BoQViewCommand.cs" />
     <Compile Include="BoQ\BoQSimplifiedTestCommand.cs" />
     <Compile Include="BoQ\BoQSimplifiedTestV2Command.cs" />
@@ -222,15 +222,26 @@
     <Compile Include="BoQ\PipeCatalog\UI\Views\PipeCatalogWindow.xaml.cs">
       <DependentUpon>PipeCatalogWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Include="BoQ\PipeCatalog\UI\Views\SinifYoneticisiDialog.cs" />
     <Compile Include="BoQ\PipeCatalog\PipeCatalogCommand.cs" />
     <!-- ═══ Soil Classification Catalog ════════════════════════════════════ -->
     <Compile Include="BoQ\SoilCatalog\Models\SoilCatalogModels.cs" />
     <Compile Include="BoQ\SoilCatalog\Services\SoilCatalogXmlManager.cs" />
+    <Compile Include="BoQ\SoilCatalog\Services\SoilCatalogStore.cs" />
     <Compile Include="BoQ\SoilCatalog\UI\ViewModels\SoilCatalogVm.cs" />
     <Compile Include="BoQ\SoilCatalog\UI\Views\SoilCatalogWindow.xaml.cs">
       <DependentUpon>SoilCatalogWindow.xaml</DependentUpon>
     </Compile>
     <Compile Include="BoQ\SoilCatalog\SoilCatalogCommand.cs" />
+    <!-- ═══ Dolgu Catalog ════════════════════════════════════════════════════ -->
+    <Compile Include="BoQ\DolguCatalog\Models\DolguCatalogModels.cs" />
+    <Compile Include="BoQ\DolguCatalog\Services\DolguCatalogXmlManager.cs" />
+    <Compile Include="BoQ\DolguCatalog\Services\DolguCatalogStore.cs" />
+    <Compile Include="BoQ\DolguCatalog\UI\ViewModels\DolguCatalogVm.cs" />
+    <Compile Include="BoQ\DolguCatalog\UI\Views\DolguCatalogWindow.xaml.cs">
+      <DependentUpon>DolguCatalogWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="BoQ\DolguCatalog\DolguCatalogCommand.cs" />
   </ItemGroup>
   <!-- Smart Assembly + Pipe Catalog XAML Pages -->
   <ItemGroup>
@@ -251,6 +262,10 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="BoQ\SoilCatalog\UI\Views\SoilCatalogWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="BoQ\DolguCatalog\UI\Views\DolguCatalogWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

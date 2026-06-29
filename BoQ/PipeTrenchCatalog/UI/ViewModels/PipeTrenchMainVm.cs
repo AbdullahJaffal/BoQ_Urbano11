@@ -2,10 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using UrbanoMetraj.BoQ.PipeCatalogs.Services;
+using UrbanoMetraj.BoQ.SoilCatalog.Services;
+using UrbanoMetraj.BoQ.DolguCatalog.Models;
+using UrbanoMetraj.BoQ.DolguCatalog.Services;
 using UrbanoMetraj.BoQ.PipeTrenchCatalog.Models;
 using UrbanoMetraj.BoQ.PipeTrenchCatalog.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;  // ViewModelBase, RelayCommand
@@ -26,6 +30,10 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
             => _model = model ?? throw new ArgumentNullException(nameof(model));
 
         public TrenchLayer Model => _model;
+
+        /// <summary>Shared dolgu materials list — used as ComboBox source in XAML.</summary>
+        public static ObservableCollection<DolguMalzemesi> AvailableMaterials
+            => DolguCatalogStore.Items;
 
         public string LayerName
         {
@@ -61,14 +69,87 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
     }
 
     // =========================================================================
+    // GomleklemeLayerVm – row VM for one Gömlekleme (encasement) layer
+    // =========================================================================
+
+    public sealed class GomleklemeLayerVm : ViewModelBase
+    {
+        private readonly GomleklemeLayer _model;
+
+        public GomleklemeLayerVm(GomleklemeLayer model)
+            => _model = model ?? throw new ArgumentNullException(nameof(model));
+
+        public GomleklemeLayer Model => _model;
+
+        /// <summary>Static list used as the Position ComboBox source in XAML.</summary>
+        public static string[] Positions { get; } = { "boru etrafı", "boru üstü" };
+
+        /// <summary>Shared dolgu materials list — used as ComboBox source in XAML.</summary>
+        public static ObservableCollection<DolguMalzemesi> AvailableMaterials
+            => DolguCatalogStore.Items;
+
+        public string LayerName
+        {
+            get => _model.LayerName;
+            set { _model.LayerName = value; OnPropertyChanged(); }
+        }
+
+        public string MaterialType
+        {
+            get => _model.MaterialType;
+            set { _model.MaterialType = value; OnPropertyChanged(); }
+        }
+
+        public string Position
+        {
+            get => _model.Position;
+            set
+            {
+                _model.Position = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsUpToPipeTopEnabled));
+                if (_model.Position != "boru etrafı" && _model.IsUpToPipeTop)
+                {
+                    _model.IsUpToPipeTop = false;
+                    OnPropertyChanged(nameof(IsUpToPipeTop));
+                }
+            }
+        }
+
+        public double ThicknessM
+        {
+            get => _model.ThicknessM;
+            set { _model.ThicknessM = value; OnPropertyChanged(); }
+        }
+
+        public bool IsUpToPipeTop
+        {
+            get => _model.IsUpToPipeTop;
+            set
+            {
+                _model.IsUpToPipeTop = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsThicknessEnabled));
+            }
+        }
+
+        /// <summary>CheckBox only active when Position == "boru etrafı".</summary>
+        public bool IsUpToPipeTopEnabled => _model.Position == "boru etrafı";
+
+        /// <summary>Kalınlık cell is locked when IsUpToPipeTop is true.</summary>
+        public bool IsThicknessEnabled => !_model.IsUpToPipeTop;
+    }
+
+    // =========================================================================
     // PipeTrenchDepthTierVm – row VM for one depth tier
     // =========================================================================
 
     public sealed class PipeTrenchDepthTierVm : ViewModelBase
     {
         private readonly PipeTrenchDepthTier _model;
-        private TrenchLayerVm _selectedBeddingLayer;
-        private TrenchLayerVm _selectedBackfillLayer;
+        private TrenchLayerVm     _selectedBeddingLayer;
+        private TrenchLayerVm     _selectedBackfillLayer;
+        private GomleklemeLayerVm _selectedGomleklemeLayer;
 
         public PipeTrenchDepthTierVm(PipeTrenchDepthTier model)
         {
@@ -82,6 +163,10 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
             foreach (var l in model.BackfillLayers)
                 BackfillLayers.Add(new TrenchLayerVm(l));
 
+            GomleklemeLayers = new ObservableCollection<GomleklemeLayerVm>();
+            foreach (var l in model.GomleklemeLayers)
+                GomleklemeLayers.Add(new GomleklemeLayerVm(l));
+
             AddBeddingLayerCommand    = new RelayCommand(OnAddBeddingLayer);
             DeleteBeddingLayerCommand = new RelayCommand(OnDeleteBeddingLayer,
                                            _ => _selectedBeddingLayer != null);
@@ -89,6 +174,10 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
             AddBackfillLayerCommand    = new RelayCommand(OnAddBackfillLayer);
             DeleteBackfillLayerCommand = new RelayCommand(OnDeleteBackfillLayer,
                                            _ => _selectedBackfillLayer != null);
+
+            AddGomleklemeLayerCommand    = new RelayCommand(OnAddGomleklemeLayer);
+            DeleteGomleklemeLayerCommand = new RelayCommand(OnDeleteGomleklemeLayer,
+                                              _ => _selectedGomleklemeLayer != null);
         }
 
         public PipeTrenchDepthTier Model => _model;
@@ -262,6 +351,42 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
             BackfillLayers.Remove(_selectedBackfillLayer);
             SelectedBackfillLayer = null;
         }
+
+        // ── Gömlekleme layers (around / above the pipe) ───────────────────────
+
+        public ObservableCollection<GomleklemeLayerVm> GomleklemeLayers { get; }
+
+        public GomleklemeLayerVm SelectedGomleklemeLayer
+        {
+            get => _selectedGomleklemeLayer;
+            set { Set(ref _selectedGomleklemeLayer, value); }
+        }
+
+        public ICommand AddGomleklemeLayerCommand    { get; }
+        public ICommand DeleteGomleklemeLayerCommand { get; }
+
+        private void OnAddGomleklemeLayer(object _)
+        {
+            var layer = new GomleklemeLayer
+            {
+                LayerName    = "Gömlekleme",
+                MaterialType = "Kum",
+                Position     = "boru etrafı",
+                ThicknessM   = 0.1
+            };
+            _model.GomleklemeLayers.Add(layer);
+            var vm = new GomleklemeLayerVm(layer);
+            GomleklemeLayers.Add(vm);
+            SelectedGomleklemeLayer = vm;
+        }
+
+        private void OnDeleteGomleklemeLayer(object _)
+        {
+            if (_selectedGomleklemeLayer == null) return;
+            _model.GomleklemeLayers.Remove(_selectedGomleklemeLayer.Model);
+            GomleklemeLayers.Remove(_selectedGomleklemeLayer);
+            SelectedGomleklemeLayer = null;
+        }
     }
 
     // =========================================================================
@@ -286,9 +411,195 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
             AddTierCommand       = new RelayCommand(OnAddTier);
             DeleteTierCommand    = new RelayCommand(OnDeleteTier,    _ => _selectedTier != null);
             DuplicateTierCommand = new RelayCommand(OnDuplicateTier, _ => _selectedTier != null);
+
+            BuildFamilyFilters();
+            RebuildDiameterList();
+            BuildSoilFilters();
         }
 
         public PipeTrenchRule Model => _model;
+
+        // ── Family filter + available diameters ───────────────────────────────
+
+        public ObservableCollection<FamilyFilterVm> FamilyFilters { get; }
+            = new ObservableCollection<FamilyFilterVm>();
+
+        private bool _suppressFamilyRebuild;
+        private bool _isFamilyDropdownOpen;
+
+        public bool IsFamilyDropdownOpen
+        {
+            get => _isFamilyDropdownOpen;
+            set { Set(ref _isFamilyDropdownOpen, value); }
+        }
+
+        public string SelectedFamiliesDisplay
+        {
+            get
+            {
+                if (FamilyFilters.Count == 0) return "Tüm Aileler";
+                var sel = FamilyFilters.Where(f => f.IsSelected).ToList();
+                if (sel.Count == FamilyFilters.Count) return "Tüm Aileler";
+                if (sel.Count == 0) return "(Seçim yok)";
+                return string.Join(", ", sel.Select(f => f.FamilyName));
+            }
+        }
+
+        public bool? AllFamiliesSelected
+        {
+            get
+            {
+                if (FamilyFilters.Count == 0) return true;
+                int n = FamilyFilters.Count(f => f.IsSelected);
+                if (n == FamilyFilters.Count) return true;
+                if (n == 0) return false;
+                return null;
+            }
+            set
+            {
+                bool target = value ?? true;
+                _suppressFamilyRebuild = true;
+                foreach (var f in FamilyFilters)
+                    f.IsSelected = target;
+                _suppressFamilyRebuild = false;
+                _model.SelectedFamilyNames.Clear();
+                // all selected → keep list empty (convention: empty = all)
+                RebuildDiameterList();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SelectedFamiliesDisplay));
+            }
+        }
+
+        public ObservableCollection<double> AvailableNominalDiameters { get; }
+            = new ObservableCollection<double>();
+
+        private void BuildFamilyFilters()
+        {
+            _suppressFamilyRebuild = true;
+            FamilyFilters.Clear();
+            bool useStored = _model.SelectedFamilyNames.Count > 0;
+            foreach (var family in PipeCatalogStore.Current.Families)
+            {
+                bool sel = !useStored || _model.SelectedFamilyNames.Contains(family.FamilyName);
+                var vm = new FamilyFilterVm(family.FamilyName) { OnChanged = OnFamilyFilterChanged };
+                vm.IsSelected = sel;
+                FamilyFilters.Add(vm);
+            }
+            _suppressFamilyRebuild = false;
+            OnPropertyChanged(nameof(AllFamiliesSelected));
+            OnPropertyChanged(nameof(SelectedFamiliesDisplay));
+        }
+
+        private void RebuildDiameterList()
+        {
+            var seen = new SortedSet<double>();
+            var selNames = new HashSet<string>(
+                FamilyFilters.Where(f => f.IsSelected).Select(f => f.FamilyName));
+            bool useFilter = FamilyFilters.Count > 0 && selNames.Count < FamilyFilters.Count;
+            foreach (var family in PipeCatalogStore.Current.Families)
+            {
+                if (useFilter && !selNames.Contains(family.FamilyName)) continue;
+                foreach (var pipe in family.Pipes)
+                    if (pipe.NominalDiameter > 0)
+                        seen.Add(pipe.NominalDiameter);
+            }
+            AvailableNominalDiameters.Clear();
+            foreach (var d in seen)
+                AvailableNominalDiameters.Add(d);
+        }
+
+        private void OnFamilyFilterChanged()
+        {
+            if (_suppressFamilyRebuild) return;
+            _model.SelectedFamilyNames.Clear();
+            int selCount = FamilyFilters.Count(f => f.IsSelected);
+            if (selCount < FamilyFilters.Count) // not all → store selected names
+                foreach (var f in FamilyFilters.Where(f => f.IsSelected))
+                    _model.SelectedFamilyNames.Add(f.FamilyName);
+            // all selected → keep list empty (convention: empty = all)
+            RebuildDiameterList();
+            OnPropertyChanged(nameof(AllFamiliesSelected));
+            OnPropertyChanged(nameof(SelectedFamiliesDisplay));
+        }
+
+        // ── Zemin-tipi filter ─────────────────────────────────────────────────
+
+        public ObservableCollection<SoilFilterVm> SoilFilters { get; }
+            = new ObservableCollection<SoilFilterVm>();
+
+        private bool _suppressSoilRebuild;
+        private bool _isSoilDropdownOpen;
+
+        public bool IsSoilDropdownOpen
+        {
+            get => _isSoilDropdownOpen;
+            set { Set(ref _isSoilDropdownOpen, value); }
+        }
+
+        public string SelectedSoilsDisplay
+        {
+            get
+            {
+                if (SoilFilters.Count == 0) return "Tüm Zeminler";
+                var sel = SoilFilters.Where(f => f.IsSelected).ToList();
+                if (sel.Count == SoilFilters.Count) return "Tüm Zeminler";
+                if (sel.Count == 0) return "(Seçim yok)";
+                return string.Join(", ", sel.Select(f => f.SoilName));
+            }
+        }
+
+        public bool? AllSoilsSelected
+        {
+            get
+            {
+                if (SoilFilters.Count == 0) return true;
+                int n = SoilFilters.Count(f => f.IsSelected);
+                if (n == SoilFilters.Count) return true;
+                if (n == 0) return false;
+                return null;
+            }
+            set
+            {
+                bool target = value ?? true;
+                _suppressSoilRebuild = true;
+                foreach (var f in SoilFilters)
+                    f.IsSelected = target;
+                _suppressSoilRebuild = false;
+                _model.SelectedSoilNames.Clear();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SelectedSoilsDisplay));
+            }
+        }
+
+        private void BuildSoilFilters()
+        {
+            _suppressSoilRebuild = true;
+            SoilFilters.Clear();
+            bool useStored = _model.SelectedSoilNames.Count > 0;
+            foreach (var soil in SoilCatalogStore.Items)
+            {
+                if (string.IsNullOrEmpty(soil.SoilName)) continue;
+                bool sel = !useStored || _model.SelectedSoilNames.Contains(soil.SoilName);
+                var vm = new SoilFilterVm(soil.SoilName) { OnChanged = OnSoilFilterChanged };
+                vm.IsSelected = sel;
+                SoilFilters.Add(vm);
+            }
+            _suppressSoilRebuild = false;
+            OnPropertyChanged(nameof(AllSoilsSelected));
+            OnPropertyChanged(nameof(SelectedSoilsDisplay));
+        }
+
+        private void OnSoilFilterChanged()
+        {
+            if (_suppressSoilRebuild) return;
+            _model.SelectedSoilNames.Clear();
+            int selCount = SoilFilters.Count(f => f.IsSelected);
+            if (selCount < SoilFilters.Count)
+                foreach (var f in SoilFilters.Where(f => f.IsSelected))
+                    _model.SelectedSoilNames.Add(f.SoilName);
+            OnPropertyChanged(nameof(AllSoilsSelected));
+            OnPropertyChanged(nameof(SelectedSoilsDisplay));
+        }
 
         // ── Metadata ─────────────────────────────────────────────────────────
 
@@ -431,29 +742,6 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
 
         public ObservableCollection<PipeTrenchRuleVm> Rules { get; }
 
-        // ── Available diameters (populated from PipeCatalogStore) ─────────────
-
-        /// <summary>
-        /// Distinct, sorted list of NominalDiameter values from the active Pipe Catalog.
-        /// Bound to the Min/Max ComboBoxes in the trench rule UI.
-        /// Call RebuildDiameterList() after any Pipe Catalog change.
-        /// </summary>
-        public ObservableCollection<double> AvailableNominalDiameters { get; }
-            = new ObservableCollection<double>();
-
-        private void RebuildDiameterList()
-        {
-            var seen = new SortedSet<double>();
-            foreach (var family in PipeCatalogStore.Current.Families)
-                foreach (var pipe in family.Pipes)
-                    if (pipe.NominalDiameter > 0)
-                        seen.Add(pipe.NominalDiameter);
-
-            AvailableNominalDiameters.Clear();
-            foreach (var d in seen)
-                AvailableNominalDiameters.Add(d);
-        }
-
         // ── Status bar ────────────────────────────────────────────────────────
 
         private string _statusText = "Hazır.";
@@ -470,6 +758,11 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
             get => _selectedRule;
             set
             {
+                if (_selectedRule != null)
+                {
+                    _selectedRule.IsFamilyDropdownOpen = false;
+                    _selectedRule.IsSoilDropdownOpen   = false;
+                }
                 Set(ref _selectedRule, value);
                 OnPropertyChanged(nameof(IsRuleSelected));
             }
@@ -511,8 +804,6 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
 
             if (Rules.Count > 0 && _statusText == "Hazır.")
                 StatusText = $"{Rules.Count} kural yüklendi.";
-
-            RebuildDiameterList();
 
             AddRuleCommand       = new RelayCommand(OnAddRule);
             DeleteRuleCommand    = new RelayCommand(OnDeleteRule,    _ => IsRuleSelected);
@@ -661,6 +952,60 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
     }
 
     // =========================================================================
+    // FamilyFilterVm – one checkbox item in the pipe-family filter bar
+    // =========================================================================
+
+    public sealed class FamilyFilterVm : ViewModelBase
+    {
+        private bool _isSelected = true;
+
+        public string FamilyName { get; }
+
+        internal Action OnChanged { get; set; }
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                OnPropertyChanged();
+                OnChanged?.Invoke();
+            }
+        }
+
+        public FamilyFilterVm(string name) => FamilyName = name;
+    }
+
+    // =========================================================================
+    // SoilFilterVm – one checkbox item in the zemin-tipi filter dropdown
+    // =========================================================================
+
+    public sealed class SoilFilterVm : ViewModelBase
+    {
+        private bool _isSelected = true;
+
+        public string SoilName { get; }
+
+        internal Action OnChanged { get; set; }
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                OnPropertyChanged();
+                OnChanged?.Invoke();
+            }
+        }
+
+        public SoilFilterVm(string name) => SoilName = name;
+    }
+
+    // =========================================================================
     // PipeTrenchCloner – deep-copy helpers shared by rule and tier VMs
     // =========================================================================
 
@@ -674,6 +1019,10 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
                 MinPipeDiameterMm = src.MinPipeDiameterMm,
                 MaxPipeDiameterMm = src.MaxPipeDiameterMm
             };
+            foreach (var name in src.SelectedFamilyNames)
+                r.SelectedFamilyNames.Add(name);
+            foreach (var name in src.SelectedSoilNames)
+                r.SelectedSoilNames.Add(name);
             foreach (var t in src.DepthTiers)
                 r.DepthTiers.Add(CloneTier(t));
             return r;
@@ -696,6 +1045,8 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
                 t.BeddingLayers.Add(CloneLayer(l));
             foreach (var l in src.BackfillLayers)
                 t.BackfillLayers.Add(CloneLayer(l));
+            foreach (var l in src.GomleklemeLayers)
+                t.GomleklemeLayers.Add(CloneGomleklemeLayer(l));
             return t;
         }
 
@@ -706,6 +1057,16 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
                 MaterialType    = src.MaterialType,
                 ThicknessM      = src.ThicknessM,
                 IsFillToSurface = src.IsFillToSurface
+            };
+
+        internal static GomleklemeLayer CloneGomleklemeLayer(GomleklemeLayer src)
+            => new GomleklemeLayer
+            {
+                LayerName     = src.LayerName,
+                MaterialType  = src.MaterialType,
+                Position      = src.Position,
+                ThicknessM    = src.ThicknessM,
+                IsUpToPipeTop = src.IsUpToPipeTop
             };
     }
 }

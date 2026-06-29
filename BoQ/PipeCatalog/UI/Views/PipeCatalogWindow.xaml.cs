@@ -7,15 +7,22 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.Views
 {
     public partial class PipeCatalogWindow : Window
     {
+        private readonly PipeCatalogMainVm _vm;
+
         public PipeCatalogWindow(PipeCatalogMainVm vm)
         {
             InitializeComponent();
+            _vm = vm;
             DataContext = vm;
+
+            vm.OpenClassManagerRequested += (s, e) =>
+            {
+                var dlg = new SinifYoneticisiDialog(_vm.CatalogClasses, this);
+                dlg.Show();
+            };
         }
 
         // Normalize the edited pipe after the row is committed.
-        // Runs after the DataGrid has written all cell values back to the model,
-        // so Normalize() sees the final values and can derive the missing dimension.
         private void PipesGrid_RowEditEnding(object sender, DataGridRowEditEndingEventArgs e)
         {
             if (e.EditAction != DataGridEditAction.Commit) return;

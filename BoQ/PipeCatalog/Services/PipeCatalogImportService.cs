@@ -56,6 +56,14 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.Services
             if (root?.Attribute("lastModified") != null)
                 catalog.LastModified = DateTime.Parse(root.Attribute("lastModified").Value);
 
+            // Catalog-level shared classes
+            foreach (var clsEl in root?.Elements("Class")
+                                  ?? System.Linq.Enumerable.Empty<XElement>())
+            {
+                string cls = clsEl.Attribute("name")?.Value ?? "";
+                if (!string.IsNullOrEmpty(cls)) catalog.Classes.Add(cls);
+            }
+
             foreach (var famEl in root?.Elements("PipeFamily")
                                   ?? System.Linq.Enumerable.Empty<XElement>())
             {
@@ -75,6 +83,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.Services
                         OuterDiameter   = ParseDouble(pipeEl.Attribute("od")?.Value),
                         InnerDiameter   = ParseDouble(pipeEl.Attribute("id_mm")?.Value),
                         WallThickness   = ParseDouble(pipeEl.Attribute("wt")?.Value),
+                        Sinif           = pipeEl.Attribute("sinif")?.Value    ?? "",
                         Aciklama        = pipeEl.Attribute("aciklama")?.Value ?? ""
                     });
                 }
@@ -87,6 +96,10 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.Services
         {
             var root = new XElement("PipeCatalog",
                 new XAttribute("lastModified", catalog.LastModified.ToString("O")));
+
+            // Catalog-level shared classes
+            foreach (var cls in catalog.Classes)
+                root.Add(new XElement("Class", new XAttribute("name", cls)));
 
             foreach (var fam in catalog.Families)
             {
@@ -103,6 +116,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.Services
                         new XAttribute("od",       pipe.OuterDiameter),
                         new XAttribute("id_mm",    pipe.InnerDiameter),
                         new XAttribute("wt",       pipe.WallThickness),
+                        new XAttribute("sinif",    pipe.Sinif    ?? ""),
                         new XAttribute("aciklama", pipe.Aciklama ?? "")));
 
                 root.Add(famEl);

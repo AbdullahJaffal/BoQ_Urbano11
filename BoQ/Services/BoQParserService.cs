@@ -257,7 +257,9 @@ namespace UrbanoMetraj.BoQ.Services
             public string MhGuid         { get; set; }
             public int    MhDiameter     { get; set; }   // nominal shaft Ø, mm
             // Computed in ComputeManholeDepths
-            public double Depth          { get; set; }
+            public double Depth            { get; set; }
+            public double ExcavationDepth  { get; set; }   // H = TerrainZ − lowestInvert
+            public double ExcavationVolume { get; set; }   // Simpson's 1/3 rule (m³)
         }
 
         private sealed class SectionInfo
@@ -680,9 +682,28 @@ namespace UrbanoMetraj.BoQ.Services
                 double lowestInvert = invertsByNode[nd.Guid].Min();
                 nd.Depth = Math.Max(0, (nd.TerrainZ - lowestInvert) + nd.Mhb);
 
+                // Isolated manhole excavation — no trench overlap deduction yet.
+                // Base square side = 1.0m (shaft) + 0.5m + 0.5m (working space) = 2.0m.
+                // Slope 1H:3V → each side grows by h/3 per metre of rise on each face.
+                // Side(h) = 2.0 + 2*(h/3);  A(h) = Side²
+                // Volume by Simpson's 1/3: V = (H/6)*(A_bot + 4*A_mid + A_top)
+                double excavH = Math.Max(0, nd.TerrainZ - lowestInvert);
+                nd.ExcavationDepth = excavH;
+                if (excavH > 1e-6)
+                {
+                    double sideBot = 2.0;
+                    double sideMid = 2.0 + 2.0 * (excavH * 0.5) / 3.0;
+                    double sideTop = 2.0 + 2.0 * excavH / 3.0;
+                    double aBot = sideBot * sideBot;
+                    double aMid = sideMid * sideMid;
+                    double aTop = sideTop * sideTop;
+                    nd.ExcavationVolume = (excavH / 6.0) * (aBot + 4.0 * aMid + aTop);
+                }
+
                 Dbg(ed, $"\n  [BoQ-DBG] Node {nd.Name,-4}: " +
                         $"TH1={nd.TerrainZ:F3}  lowestInv={lowestInvert:F3}" +
-                        $"  MHB={nd.Mhb:F3}  Depth={nd.Depth:F3}");
+                        $"  MHB={nd.Mhb:F3}  Depth={nd.Depth:F3}" +
+                        $"  MhExcavV={nd.ExcavationVolume:F3}");
             }
         }
 
@@ -849,13 +870,15 @@ namespace UrbanoMetraj.BoQ.Services
                 {
                     boq.Manholes.Add(new ManholeItem
                     {
-                        NodeName         = nd.Name,
-                        X                = nd.X,
-                        Y                = nd.Y,
-                        TerrainElevation = nd.TerrainZ,
-                        Depth            = nd.Depth,
-                        Diameter         = nd.MhDiameter,
-                        Count            = 1
+                        NodeName          = nd.Name,
+                        X                 = nd.X,
+                        Y                 = nd.Y,
+                        TerrainElevation  = nd.TerrainZ,
+                        Depth             = nd.Depth,
+                        Diameter          = nd.MhDiameter,
+                        Count             = 1,
+                        ExcavationDepth   = nd.ExcavationDepth,
+                        ExcavationVolume  = nd.ExcavationVolume,
                     });
                 }
 

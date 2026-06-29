@@ -34,27 +34,50 @@ namespace UrbanoMetraj.BoQ
         private static string       _exportXmlPath;
         private static Editor       _editor;
         private static EventHandler _idleHandler;
+        private static BoQSettings  _settings;
+
+        private static bool _reopenViewAfterSave;
+        public static void RequestReopenView() => _reopenViewAfterSave = true;
 
         // =====================================================================
         // Command entry point
         // =====================================================================
 
-        [CommandMethod("BOQ_SIMPLIFIED_V2", CommandFlags.Modal)]
+        [CommandMethod("URBANO_BOQ", CommandFlags.Modal)]
         public void Run()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
             Editor   ed  = doc.Editor;
 
-            ed.WriteMessage("\n[SimplifiedBoQV2] >>> BOQ_SIMPLIFIED_V2 starting <<<");
+            ed.WriteMessage("\n[BoQ] >>> URBANO_BOQ (V2 engine) starting <<<");
 
             if (_idleHandler != null)
             {
-                ed.WriteMessage("\n[SimplifiedBoQV2] Already running — wait for completion.\n");
+                ed.WriteMessage("\n[BoQ] Already running — wait for completion.\n");
                 return;
             }
 
+            // Load saved settings from DWG, or use defaults.
+            BoQSettings settings;
+            if (DwgBoQStore.HasData(doc.Database))
+            {
+                try   { (_, settings) = DwgBoQStore.Load(doc.Database); settings = settings ?? new BoQSettings(); }
+                catch { settings = new BoQSettings(); }
+            }
+            else
+            {
+                settings = new BoQSettings();
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.ManholeConfigPath))
+            {
+                try { settings.ManholeConfigPath = ManholeConfigService.EnsureCatalogExists(); }
+                catch (Exception ex) { ed.WriteMessage($"\n[BoQ] Catalog check failed: {ex.Message}\n"); }
+            }
+
+            _settings      = settings;
             _editor        = ed;
-            _exportXmlPath = Path.Combine(Path.GetTempPath(), "urbano_simplified_boq_v2.xml");
+            _exportXmlPath = Path.Combine(Path.GetTempPath(), "urbano_boq_export.xml");
 
             try { if (File.Exists(_exportXmlPath)) File.Delete(_exportXmlPath); } catch { }
 
@@ -109,21 +132,22 @@ namespace UrbanoMetraj.BoQ
             Application.Idle -= _idleHandler;
             _idleHandler = null;
 
-            Editor ed      = _editor;
-            string xmlPath = _exportXmlPath;
+            Editor      ed       = _editor;
+            string      xmlPath  = _exportXmlPath;
+            BoQSettings settings = _settings;
 
             try
             {
                 // ── Phase 1: Parse ───────────────────────────────────────────────
-                ed.WriteMessage("\n[SimplifiedBoQV2] Parsing Urbano XML…");
+                ed.WriteMessage("\n[BoQ] Parsing Urbano XML…");
                 var parser = new BoQParserService(enableClashDetection: false);
                 BoQReport report = parser.Parse(xmlPath, ed);
                 var rows = report.SectionDebug;
 
-                ed.WriteMessage($"\n[SimplifiedBoQV2] {rows.Count} section(s) parsed.");
+                ed.WriteMessage($"\n[BoQ] {rows.Count} section(s) parsed.");
                 if (rows.Count == 0)
                 {
-                    ed.WriteMessage("\n[SimplifiedBoQV2] No sections — aborting.\n");
+                    ed.WriteMessage("\n[BoQ] No sections — aborting.\n");
                     return;
                 }
 
@@ -144,7 +168,7 @@ namespace UrbanoMetraj.BoQ
                 var pairZones    = ComputePairZones(corridors, pairs);
                 var perPipeZones = BuildPerPipeZones(pairZones, rows.Count);
 
-                ed.WriteMessage($"\n[SimplifiedBoQV2] Corridor scan: {pairZones.Count} overlapping pair(s).");
+                ed.WriteMessage($"\n[BoQ] Corridor scan: {pairZones.Count} overlapping pair(s).");
                 foreach (var pz0 in pairZones)
                     ed.WriteMessage(
                         $"\n   Pair: [{rows[pz0.PipeA].PipeName}] ↔ [{rows[pz0.PipeB].PipeName}]" +
@@ -185,17 +209,122 @@ namespace UrbanoMetraj.BoQ
                 // are computed and verified (KU=KL guaranteed structurally).
                 IntegrateBisectorZones(pairZones, rows, results, ed);
 
+                // ── Phase 9b.5: Transfer V2 volumes to rows for DWG storage ─────
+                // After all integration phases are complete, copy final KU/KL/SP
+                // totals into SectionDebugRow so DwgBoQStore can persist them in
+                // V2_VOLUMES and BoQScenarioAggregator can use them directly.
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    var r = results[i];
+                    rows[i].VExcavKU    = r.VExcavKU;
+                    rows[i].VExcavKL    = r.VExcavKL;
+                    rows[i].VExcavSP    = r.VExcavSP;
+                    rows[i].VBedding    = r.VBedding;
+                    rows[i].VSurround   = r.VSurround;
+                    rows[i].VBackfillKU    = r.VBackfillKU;
+                    rows[i].VBackfillKL    = r.VBackfillKL;
+                    rows[i].VBackfillSP    = r.VBackfillSP;
+                    rows[i].VExcavGross    = r.VExcavGross;
+                    rows[i].VBackfillGross = r.VBackfillGross;
+                    rows[i].HasV2Volumes = true;
+                }
+
+                // ── Phase 9c: Build CrossSectionStation list from V2 data ────────
+                // Replaces parser-level stations in report.SectionDebug with V2's
+                // computed stations (including correct per-station KU/KL/SP scenario
+                // profiles). This is what DwgBoQStore persists and VIEW/SECTIONS read.
+                PopulateReportStations(report, rows, allStations, pairZones);
+
                 // ── Phase 10: Report ─────────────────────────────────────────────
                 PrintReport(ed, results);
                 SaveReport(ed, rows, allStations, results, pairZones);
+
+                // ── Phase 11: Manhole AI ──────────────────────────────────────────
+                ed.WriteMessage("\n[BoQ] Running Manhole AI (topology + stacking)…");
+                try
+                {
+                    var catalog = ManholeAIService.ReadCatalog(settings.ManholeConfigPath);
+                    ManholeAIService.Process(report, settings, catalog);
+                    ed.WriteMessage($"\n[BoQ] Manhole AI complete: {report.TotalManholeCount} manholes processed.");
+                }
+                catch (Exception aiEx)
+                {
+                    ed.WriteMessage($"\n[BoQ] Manhole AI warning: {aiEx.Message} (continues without BOM data)");
+                }
+
+                // ── Phase 11.5: Manhole–Trench Overlap Diagnostic ────────────────
+                ed.WriteMessage("\n[BoQ] Computing manhole excavation / pipe trench overlaps…");
+                try
+                {
+                    var overlapLines = ManholeExcavOverlapService.Compute(report);
+                    if (overlapLines.Count == 0)
+                    {
+                        ed.WriteMessage("\n[BoQ] No manhole–trench overlaps found.");
+                    }
+                    else
+                    {
+                        ed.WriteMessage("\n[BoQ] ── Manhole Excavation / Pipe Trench Overlap ────────────");
+                        foreach (var line in overlapLines)
+                            ed.WriteMessage(line);
+                        ed.WriteMessage("\n[BoQ] ──────────────────────────────────────────────────────────");
+                    }
+                }
+                catch (Exception ovEx)
+                {
+                    ed.WriteMessage($"\n[BoQ] Overlap diagnostic warning: {ovEx.Message}");
+                }
+
+                // ── Phase 11.6: Manhole–Manhole Overlap Diagnostic ───────────────
+                ed.WriteMessage("\n[BoQ] Computing manhole vs manhole excavation overlaps…");
+                try
+                {
+                    var mhMhLines = ManholeExcavOverlapService.ComputeManholeVsManhole(report);
+                    if (mhMhLines.Count == 0)
+                    {
+                        ed.WriteMessage("\n[BoQ] No manhole–manhole overlaps found.");
+                    }
+                    else
+                    {
+                        ed.WriteMessage("\n[BoQ] ── Manhole vs Manhole Excavation Overlap ───────────────");
+                        foreach (var line in mhMhLines)
+                            ed.WriteMessage(line);
+                        ed.WriteMessage("\n[BoQ] ──────────────────────────────────────────────────────────");
+                    }
+                }
+                catch (Exception mhEx)
+                {
+                    ed.WriteMessage($"\n[BoQ] Manhole–manhole overlap warning: {mhEx.Message}");
+                }
+
+                // ── Phase 12: Save to DWG ────────────────────────────────────────
+                ed.WriteMessage("\n[BoQ] Saving results to DWG database…");
+                var activeDoc = Application.DocumentManager.MdiActiveDocument;
+                using (activeDoc.LockDocument())
+                {
+                    DwgBoQStore.Save(activeDoc.Database, report, settings);
+                }
+                ed.WriteMessage(
+                    $"\n[BoQ] Done. {report.SectionDebug?.Count ?? 0} section(s) stored in DWG.\n" +
+                    "[BoQ] Use URBANO_BOQ_VIEW to view quantities and export to Excel.\n");
             }
             catch (Exception ex)
             {
-                ed.WriteMessage($"\n[SimplifiedBoQV2 ERROR] {ex.Message}\n{ex.StackTrace}");
+                ed.WriteMessage($"\n[BoQ ERROR] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             }
             finally
             {
                 InputBlocker.Hide();
+                try { if (xmlPath != null && File.Exists(xmlPath)) File.Delete(xmlPath); } catch { }
+
+                bool reopen = _reopenViewAfterSave;
+                _reopenViewAfterSave = false;
+                _settings      = null;
+                _editor        = null;
+                _exportXmlPath = null;
+
+                if (reopen)
+                    Application.DocumentManager.MdiActiveDocument?
+                        .SendStringToExecute("URBANO_BOQ_VIEW\n", true, false, true);
             }
         }
 
@@ -1387,6 +1516,7 @@ namespace UrbanoMetraj.BoQ
                     double vb = (s0.AreaBackfill + s1.AreaBackfill) * 0.5 * dXY;
                     res.VExcavKU    += ve; res.VExcavKL    += ve; res.VExcavSP    += ve;
                     res.VBackfillKU += vb; res.VBackfillKL += vb; res.VBackfillSP += vb;
+                    res.VExcavGross += ve; res.VBackfillGross += vb;
                 }
                 else
                 {
@@ -1402,6 +1532,7 @@ namespace UrbanoMetraj.BoQ
                     res.VExcavKU += (eKU_s0 + eKU_s1) * 0.5 * dXY;
                     res.VExcavKL += (eKL_s0 + eKL_s1) * 0.5 * dXY;
                     res.VExcavSP += (s0.AreaExcavSP + s1.AreaExcavSP) * 0.5 * dXY;
+                    res.VExcavGross += (s0.AreaExcav + s1.AreaExcav) * 0.5 * dXY;
 
                     double bKU_s0 = thisIsUpper ? s0.AreaBackfill : s0.AreaBackfillDeducted;
                     double bKU_s1 = thisIsUpper ? s1.AreaBackfill : s1.AreaBackfillDeducted;
@@ -1411,6 +1542,7 @@ namespace UrbanoMetraj.BoQ
                     res.VBackfillKU += (bKU_s0 + bKU_s1) * 0.5 * dXY;
                     res.VBackfillKL += (bKL_s0 + bKL_s1) * 0.5 * dXY;
                     res.VBackfillSP += (s0.AreaBackfillSP + s1.AreaBackfillSP) * 0.5 * dXY;
+                    res.VBackfillGross += (s0.AreaBackfill + s1.AreaBackfill) * 0.5 * dXY;
                 }
 
                 res.SegmentCount++;
@@ -1491,6 +1623,7 @@ namespace UrbanoMetraj.BoQ
                     resB.VExcavKU += sliceKU_B;  resB.VExcavKL += sliceKL_B;
                     resA.VExcavSP += vA - vOverlap * 0.5;
                     resB.VExcavSP += vB - vOverlap * 0.5;
+                    resA.VExcavGross += vA;  resB.VExcavGross += vB;
 
                     cumKU_A += sliceKU_A; cumKL_A += sliceKL_A;
                     cumKU_B += sliceKU_B; cumKL_B += sliceKL_B;
@@ -1508,6 +1641,7 @@ namespace UrbanoMetraj.BoQ
                     resB.VBackfillKL += aIsUpper ? bvB : bvB - bvOverlap;
                     resA.VBackfillSP += bvA - bvOverlap * 0.5;
                     resB.VBackfillSP += bvB - bvOverlap * 0.5;
+                    resA.VBackfillGross += bvA;  resB.VBackfillGross += bvB;
 
                     // Per-slice verification
                     double sliceCombinedKU = sliceKU_A + sliceKU_B;
@@ -1529,6 +1663,129 @@ namespace UrbanoMetraj.BoQ
                     $"\n  Zone combined: KU={cumKU_A+cumKU_B:F4}  KL={cumKL_A+cumKL_B:F4}" +
                     $"  Δ={cumKU_A+cumKU_B-(cumKL_A+cumKL_B):F6}");
             }
+        }
+
+        // =====================================================================
+        // Phase 9c — Convert V2 stations → CrossSectionStation for DwgBoQStore
+        // =====================================================================
+
+        private static void PopulateReportStations(
+            BoQReport                      report,
+            List<SectionDebugRow>          rows,
+            List<List<SimplifiedStation>>  allStations,
+            List<PairZone>                 pairZones)
+        {
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var row    = rows[i];
+                var merged = new List<SimplifiedStation>(allStations[i]);
+
+                // For bisector zones: replace interior allStations with pz.BisStations.
+                foreach (var pz in pairZones)
+                {
+                    if (!pz.UseBisectorFrame) continue;
+
+                    List<SimplifiedStation> bisSts;
+                    double enterDist, exitDist;
+                    if      (pz.PipeA == i) { bisSts = pz.BisStationsA; enterDist = pz.EnterA; exitDist = pz.ExitA; }
+                    else if (pz.PipeB == i) { bisSts = pz.BisStationsB; enterDist = pz.EnterB; exitDist = pz.ExitB; }
+                    else continue;
+
+                    if (bisSts == null || bisSts.Count == 0) continue;
+
+                    // Remove interior allStations — keep the two boundary stations.
+                    merged.RemoveAll(s => s.StationDist > enterDist + 1e-6 && s.StationDist < exitDist - 1e-6);
+
+                    // Map BisectorDist [min..max] → pipe-axis StationDist [enter..exit].
+                    double bisMin  = bisSts.Min(s => s.BisectorDist);
+                    double bisMax  = bisSts.Max(s => s.BisectorDist);
+                    double bisSpan = bisMax - bisMin;
+
+                    foreach (var bs in bisSts)
+                    {
+                        double t = bisSpan > 1e-9 ? (bs.BisectorDist - bisMin) / bisSpan : 0.5;
+                        merged.Add(new SimplifiedStation
+                        {
+                            StationDist          = Math.Round(enterDist + t * (exitDist - enterDist), 3),
+                            WorldX = bs.WorldX,  WorldY = bs.WorldY,
+                            TerrainZ = bs.TerrainZ, InvertZ = bs.InvertZ,
+                            TrueDepth = bs.TrueDepth, HwExcav = bs.HwExcav,
+                            ExcavPoly    = bs.ExcavPoly,    BeddingPoly  = bs.BeddingPoly,
+                            SurroundPoly = bs.SurroundPoly, BackfillPoly = bs.BackfillPoly,
+                            AreaExcav            = bs.AreaExcav,
+                            AreaBedding          = bs.AreaBedding,
+                            AreaSurround         = bs.AreaSurround,
+                            AreaBackfill         = bs.AreaBackfill,
+                            AreaExcavDeducted    = bs.AreaExcavDeducted,
+                            AreaBackfillDeducted = bs.AreaBackfillDeducted,
+                            AreaExcavDeductedKL  = bs.AreaExcavDeductedKL,
+                            AreaBackfillDeductedKL = bs.AreaBackfillDeductedKL,
+                            AreaExcavSP    = bs.AreaExcavSP,
+                            AreaBackfillSP = bs.AreaBackfillSP,
+                            OtherInvertZ   = bs.OtherInvertZ,
+                            IsBisectorZone = true,
+                            BisectorDist   = bs.BisectorDist
+                        });
+                    }
+                }
+
+                merged.Sort((a, b) => a.StationDist.CompareTo(b.StationDist));
+
+                row.Stations.Clear();
+                foreach (var st in merged)
+                    row.Stations.Add(ToCSS(st));
+            }
+        }
+
+        private static CrossSectionStation ToCSS(SimplifiedStation st)
+        {
+            bool inParallelZone = !double.IsNaN(st.OtherInvertZ) && !st.IsBisectorZone;
+            bool stIsUpper      = inParallelZone && (st.InvertZ >= st.OtherInvertZ);
+
+            double kuEx = inParallelZone ? (stIsUpper ? st.AreaExcav : st.AreaExcavDeducted)    : st.AreaExcav;
+            double klEx = inParallelZone ? (stIsUpper ? st.AreaExcavDeductedKL : st.AreaExcav)  : st.AreaExcav;
+            double spEx = inParallelZone ? st.AreaExcavSP    : st.AreaExcav;
+
+            double kuBf = inParallelZone ? (stIsUpper ? st.AreaBackfill : st.AreaBackfillDeducted)    : st.AreaBackfill;
+            double klBf = inParallelZone ? (stIsUpper ? st.AreaBackfillDeductedKL : st.AreaBackfill) : st.AreaBackfill;
+            double spBf = inParallelZone ? st.AreaBackfillSP : st.AreaBackfill;
+
+            var pu = new ScenarioProfile { Preference = TiePreference.KeepUpper };
+            pu.Excavation.NetArea = kuEx;  pu.Backfill.NetArea = kuBf;
+            pu.Bedding.NetArea    = st.AreaBedding;  pu.Surround.NetArea = st.AreaSurround;
+
+            var pl = new ScenarioProfile { Preference = TiePreference.KeepLower };
+            pl.Excavation.NetArea = klEx;  pl.Backfill.NetArea = klBf;
+            pl.Bedding.NetArea    = st.AreaBedding;  pl.Surround.NetArea = st.AreaSurround;
+
+            var ps = new ScenarioProfile { Preference = TiePreference.Split };
+            ps.Excavation.NetArea = spEx;  ps.Backfill.NetArea = spBf;
+            ps.Bedding.NetArea    = st.AreaBedding;  ps.Surround.NetArea = st.AreaSurround;
+
+            return new CrossSectionStation
+            {
+                StationDist       = st.StationDist,
+                WorldX            = st.WorldX,
+                WorldY            = st.WorldY,
+                TerrainZ          = st.TerrainZ,
+                InvertZ           = st.InvertZ,
+                TrueDepth         = st.TrueDepth,
+                TopWidthExcav     = st.HwExcav * 2.0,
+                AreaExcav         = st.AreaExcav,
+                AreaBedding       = st.AreaBedding,
+                AreaSurround      = st.AreaSurround,
+                AreaBackfill      = st.AreaBackfill,
+                AreaExcavNet      = kuEx,
+                AreaBackfillNet   = kuBf,
+                HasOverlap        = !double.IsNaN(st.OtherInvertZ),
+                ExcavPoly         = st.ExcavPoly,
+                BeddingPoly       = st.BeddingPoly,
+                SurroundPoly      = st.SurroundPoly,
+                BackfillPoly      = st.BackfillPoly,
+                ScenarioKeepUpper = pu,
+                ScenarioKeepLower = pl,
+                ScenarioSplit     = ps
+            };
         }
 
         // =====================================================================
@@ -2109,9 +2366,9 @@ namespace UrbanoMetraj.BoQ
             public double Length2D;
             public int    SegmentCount;
 
-            public double VExcavKU,    VExcavKL,    VExcavSP;
+            public double VExcavKU,    VExcavKL,    VExcavSP,    VExcavGross;
             public double VBedding,    VSurround;
-            public double VBackfillKU, VBackfillKL, VBackfillSP;
+            public double VBackfillKU, VBackfillKL, VBackfillSP, VBackfillGross;
         }
     }
 }

@@ -5,6 +5,23 @@ using System.Windows.Data;
 
 namespace UrbanoMetraj.BoQ.SmartAssembly.UI.Converters
 {
+    // Proxy Freezable that inherits DataContext — lets DataGridTemplateColumn bindings
+    // reach resources (like the VM) that are outside the visual tree.
+    public class BindingProxy : Freezable
+    {
+        protected override Freezable CreateInstanceCore() => new BindingProxy();
+
+        public static readonly DependencyProperty DataProperty =
+            DependencyProperty.Register("Data", typeof(object), typeof(BindingProxy));
+
+        public object Data
+        {
+            get => GetValue(DataProperty);
+            set => SetValue(DataProperty, value);
+        }
+    }
+
+
     /// <summary>null → Collapsed, non-null → Visible (invert with ConverterParameter="invert").</summary>
     [ValueConversion(typeof(object), typeof(Visibility))]
     public class NullToVisibilityConverter : IValueConverter

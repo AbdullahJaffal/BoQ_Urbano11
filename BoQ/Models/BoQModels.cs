@@ -58,6 +58,68 @@ namespace UrbanoMetraj.BoQ.Models
         public ManholeStackResult StackCastInPlace { get; set; }
         /// <summary>Backward-compat accessor (PreCast wins if available).</summary>
         public ManholeStackResult Stack => StackPreCast ?? StackCastInPlace;
+
+        // ── Manhole vs Manhole geometric states ──────────────────────────────
+        /// <summary>
+        /// Lower segment: ZBottom → zTouch. No overlap exists here.
+        /// Null when zTouch == ZBottom (no lower zone).
+        /// </summary>
+        public ManholeGeoSegment GeoLower { get; set; }
+        /// <summary>
+        /// Upper segment: zTouch → ZTop. Overlap zone; carries Inside/Outside split.
+        /// </summary>
+        public ManholeGeoSegment GeoUpper { get; set; }
+
+        // ── Manhole excavation (isolated — no trench overlap deduction yet) ────
+        /// <summary>
+        /// Excavation depth H = TerrainElevation − lowest connected pipe invert (m).
+        /// 0 if no connected pipes are found.
+        /// </summary>
+        public double ExcavationDepth  { get; set; }
+        /// <summary>
+        /// Isolated manhole excavation volume (m³) computed via Simpson's 1/3 rule
+        /// on a square frustum: base 2.0 m, slope 1H:3V, working space 0.5 m.
+        /// Does NOT yet deduct trench-overlap zones.
+        /// </summary>
+        public double ExcavationVolume { get; set; }
+    }
+
+    /// <summary>
+    /// Geometric state of a manhole excavation footprint at one Z elevation.
+    /// </summary>
+    public class ManholeGeoLevel
+    {
+        /// <summary>Elevation (m a.s.l.) this level represents.</summary>
+        public double Z { get; set; }
+
+        /// <summary>Original unmodified footprint ring at this Z.</summary>
+        public List<double[]> RawPoly { get; set; }
+
+        /// <summary>
+        /// This manhole's assigned share of the intersection zone at this Z.
+        /// Null for lower-segment levels (no intersection below zTouch).
+        /// </summary>
+        public List<List<double[]>> InsideRegion { get; set; }
+
+        /// <summary>
+        /// Part of RawPoly that lies entirely OUTSIDE the total intersection zone.
+        /// = Difference(RawPoly, totalIntersect_at_z).
+        /// For lower-segment levels this equals the full RawPoly.
+        /// </summary>
+        public List<List<double[]>> OutsideRegion { get; set; }
+    }
+
+    /// <summary>
+    /// Three Simpson's integration levels (Bottom / Mid / Top) covering one
+    /// vertical segment of a manhole's excavation frustum.
+    /// Two segments are stored per manhole: GeoLower (ZBottom→zTouch) and
+    /// GeoUpper (zTouch→ZTop).
+    /// </summary>
+    public class ManholeGeoSegment
+    {
+        public ManholeGeoLevel Bottom { get; set; }
+        public ManholeGeoLevel Mid    { get; set; }
+        public ManholeGeoLevel Top    { get; set; }
     }
 
     public class SystemBoQ
@@ -227,6 +289,19 @@ namespace UrbanoMetraj.BoQ.Models
         public double VExcav                { get; set; }
         public double VBackfill             { get; set; }
 
+        // V2 pre-computed volumes per scenario (stored in DWG under V2_VOLUMES).
+        // When HasV2Volumes == true, BoQScenarioAggregator uses these directly
+        // instead of re-integrating from per-station ScenarioProfile.NetArea.
+        public double VExcavKU     { get; set; }
+        public double VExcavKL     { get; set; }
+        public double VExcavSP     { get; set; }
+        public double VExcavGross  { get; set; }
+        public double VBackfillKU  { get; set; }
+        public double VBackfillKL  { get; set; }
+        public double VBackfillSP  { get; set; }
+        public double VBackfillGross { get; set; }
+        public bool   HasV2Volumes  { get; set; }
+
         // ── Clash detection ───────────────────────────────────────────────────
         public double OverlapVolumeDeducted { get; set; }
         public List<string> ClashLog        { get; set; } = new List<string>();
@@ -276,6 +351,9 @@ namespace UrbanoMetraj.BoQ.Models
 
         public double TotalOverlapVolumeDeducted =>
             Systems.SelectMany(s => s.Pipes).Sum(p => p.OverlapVolumeDeducted);
+
+        public double TotalManholeExcavationVolume =>
+            Systems.SelectMany(s => s.Manholes).Sum(m => m.ExcavationVolume);
     }
 
     // =========================================================================

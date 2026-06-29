@@ -228,17 +228,9 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             set { var b = _model as BottomElementComponent; if (b?.Footprint != null && value.HasValue) { b.Footprint.WidthMm = value.Value; OnPropertyChanged(); } }
         }
 
-        public static readonly string[] FootprintOrientationOptions =
-        {
-            "uzun kenar; çıkış boru yönünde",
-            "uzun kenar; giriş boru yönünde",
-            "kısa kenar; çıkış boru yönünde",
-            "kısa kenar; giriş boru yönünde"
-        };
-
         public string FootprintOrientation
         {
-            get { var b = _model as BottomElementComponent; return b?.Footprint?.RectangularOrientation ?? FootprintOrientationOptions[0]; }
+            get { var b = _model as BottomElementComponent; return b?.Footprint?.RectangularOrientation ?? ""; }
             set { var b = _model as BottomElementComponent; if (b?.Footprint != null) { b.Footprint.RectangularOrientation = value; OnPropertyChanged(); } }
         }
 

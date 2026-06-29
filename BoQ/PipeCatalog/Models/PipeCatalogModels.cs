@@ -67,6 +67,13 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.Models
             }
         }
 
+        private string _sinif = "";
+        public string Sinif
+        {
+            get => _sinif;
+            set { if (_sinif == value) return; _sinif = value; Notify(); }
+        }
+
         private string _aciklama = "";
         public string Aciklama
         {
@@ -149,6 +156,10 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.Models
 
     public class PipeCatalog
     {
+        // Shared pressure / stiffness classes for all families in this catalog.
+        public ObservableCollection<string> Classes { get; set; }
+            = new ObservableCollection<string>();
+
         public ObservableCollection<PipeFamily> Families { get; set; }
             = new ObservableCollection<PipeFamily>();
 

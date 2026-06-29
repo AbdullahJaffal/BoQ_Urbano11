@@ -53,6 +53,22 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.Services
                     new XAttribute("minDiamMm",  rule.MinPipeDiameterMm.ToString("G")),
                     new XAttribute("maxDiamMm",  rule.MaxPipeDiameterMm.ToString("G")));
 
+                if (rule.SelectedFamilyNames.Count > 0)
+                {
+                    var familiesEl = new XElement("SelectedFamilies");
+                    foreach (var name in rule.SelectedFamilyNames)
+                        familiesEl.Add(new XElement("Family", new XAttribute("name", name)));
+                    ruleEl.Add(familiesEl);
+                }
+
+                if (rule.SelectedSoilNames.Count > 0)
+                {
+                    var soilsEl = new XElement("SelectedSoils");
+                    foreach (var name in rule.SelectedSoilNames)
+                        soilsEl.Add(new XElement("Soil", new XAttribute("name", name)));
+                    ruleEl.Add(soilsEl);
+                }
+
                 foreach (var tier in rule.DepthTiers)
                 {
                     var tierEl = new XElement("Tier",
@@ -78,6 +94,14 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.Services
                             new XAttribute("material",      bf.MaterialType ?? ""),
                             new XAttribute("thickM",        bf.ThicknessM.ToString("G")),
                             new XAttribute("fillToSurface", bf.IsFillToSurface.ToString())));
+
+                    foreach (var gl in tier.GomleklemeLayers)
+                        tierEl.Add(new XElement("Gomlekleme",
+                            new XAttribute("layerName",    gl.LayerName ?? ""),
+                            new XAttribute("material",     gl.MaterialType ?? ""),
+                            new XAttribute("position",     gl.Position ?? "boru etrafı"),
+                            new XAttribute("thickM",       gl.ThicknessM.ToString("G")),
+                            new XAttribute("upToPipeTop",  gl.IsUpToPipeTop.ToString())));
 
                     ruleEl.Add(tierEl);
                 }
@@ -111,6 +135,24 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.Services
                     MaxPipeDiameterMm = ParseDouble((string)ruleEl.Attribute("maxDiamMm"))
                 };
 
+                var familiesEl = ruleEl.Element("SelectedFamilies");
+                if (familiesEl != null)
+                    foreach (var fEl in familiesEl.Elements("Family"))
+                    {
+                        var name = (string)fEl.Attribute("name");
+                        if (!string.IsNullOrEmpty(name))
+                            rule.SelectedFamilyNames.Add(name);
+                    }
+
+                var soilsEl = ruleEl.Element("SelectedSoils");
+                if (soilsEl != null)
+                    foreach (var sEl in soilsEl.Elements("Soil"))
+                    {
+                        var name = (string)sEl.Attribute("name");
+                        if (!string.IsNullOrEmpty(name))
+                            rule.SelectedSoilNames.Add(name);
+                    }
+
                 foreach (var tierEl in ruleEl.Elements("Tier"))
                 {
                     var tier = new PipeTrenchDepthTier
@@ -141,6 +183,16 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.Services
                             MaterialType    = (string)bfEl.Attribute("material")  ?? "",
                             ThicknessM      = ParseDouble((string)bfEl.Attribute("thickM")),
                             IsFillToSurface = ParseBool((string)bfEl.Attribute("fillToSurface"))
+                        });
+
+                    foreach (var glEl in tierEl.Elements("Gomlekleme"))
+                        tier.GomleklemeLayers.Add(new GomleklemeLayer
+                        {
+                            LayerName     = (string)glEl.Attribute("layerName") ?? "",
+                            MaterialType  = (string)glEl.Attribute("material")  ?? "",
+                            Position      = (string)glEl.Attribute("position")  ?? "boru etrafı",
+                            ThicknessM    = ParseDouble((string)glEl.Attribute("thickM")),
+                            IsUpToPipeTop = ParseBool((string)glEl.Attribute("upToPipeTop"))
                         });
 
                     rule.DepthTiers.Add(tier);

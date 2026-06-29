@@ -13,5 +13,7 @@ namespace UrbanoMetraj.BoQ.SoilCatalog.Models
         public string SoilName      { get; set; } = "";
         public double BulkingFactor { get; set; } = 1.20;
         public string BoqItemCode   { get; set; } = "";
+        public string KaziTipi      { get; set; } = "";
+        public string Aciklama      { get; set; } = "";
     }
 }

@@ -44,7 +44,9 @@ namespace UrbanoMetraj.BoQ.SoilCatalog.Services
                     new XAttribute("id",            s.Id.ToString("D")),
                     new XAttribute("soilName",      s.SoilName      ?? ""),
                     new XAttribute("bulkingFactor", s.BulkingFactor.ToString("G")),
-                    new XAttribute("boqItemCode",   s.BoqItemCode   ?? "")));
+                    new XAttribute("boqItemCode",   s.BoqItemCode   ?? ""),
+                    new XAttribute("kaziTipi",      s.KaziTipi      ?? ""),
+                    new XAttribute("aciklama",      s.Aciklama      ?? "")));
 
             new XDocument(new XDeclaration("1.0", "utf-8", null), root)
                 .Save(path);
@@ -73,7 +75,9 @@ namespace UrbanoMetraj.BoQ.SoilCatalog.Services
                     Id            = id == Guid.Empty ? Guid.NewGuid() : id,
                     SoilName      = (string)el.Attribute("soilName")    ?? "",
                     BulkingFactor = bf > 0 ? bf : 1.0,
-                    BoqItemCode   = (string)el.Attribute("boqItemCode") ?? ""
+                    BoqItemCode   = (string)el.Attribute("boqItemCode") ?? "",
+                    KaziTipi      = (string)el.Attribute("kaziTipi")    ?? "",
+                    Aciklama      = (string)el.Attribute("aciklama")    ?? ""
                 });
             }
             return list;

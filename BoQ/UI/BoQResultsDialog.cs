@@ -232,7 +232,7 @@ namespace UrbanoMetraj.BoQ.UI
             };
             btnRefresh.Click += (s, e) =>
             {
-                BoQCommand.RequestReopenView();
+                BoQSimplifiedTestV2Command.RequestReopenView();
                 _doc.SendStringToExecute("URBANO_BOQ\n", true, false, true);
                 Close();
             };
@@ -364,6 +364,7 @@ namespace UrbanoMetraj.BoQ.UI
             Add(grid, "Toplam yataklama (m³)",      $"{_report.TotalBeddingVolume:N3}");
             Add(grid, "Toplam gömlekleme (m³)",     $"{_report.TotalSurroundVolume:N3}");
             Add(grid, "Toplam geri dolgu (m³)",     $"{_report.TotalBackfillVolume:N3}");
+            Add(grid, "Toplam baca kazısı (m³)",    $"{_report.TotalManholeExcavationVolume:N3}");
             Add(grid, "Çakışmadan düşülen (m³)",    $"{_report.TotalOverlapVolumeDeducted:N3}");
             Add(grid, "İstasyon verisi",
                 $"{_report.SectionDebug?.Sum(s => s.Stations?.Count ?? 0) ?? 0} istasyon / " +
@@ -429,19 +430,25 @@ namespace UrbanoMetraj.BoQ.UI
             foreach (string col in new[]
             {
                 "Ad", "Tip", "Çap (mm)", "Derinlik (m)",
+                "Kazı Derin. (m)", "Kazı Hacmi (m³)",
                 "X (m)", "Y (m)", "Zemin Z (m)"
             })
                 grid.Columns.Add(col, col);
             grid.Columns[0].Width = 70;
             grid.Columns[1].Width = 180;
             grid.Columns[2].Width = 70;
-            for (int i = 3; i < grid.Columns.Count; i++) grid.Columns[i].Width = 90;
+            grid.Columns[3].Width = 90;
+            grid.Columns[4].Width = 100;
+            grid.Columns[5].Width = 110;
+            for (int i = 6; i < grid.Columns.Count; i++) grid.Columns[i].Width = 90;
 
             foreach (var m in sys.Manholes)
             {
                 grid.Rows.Add(
                     m.NodeName, m.SmartTypeName ?? "", m.Diameter,
                     m.Depth.ToString("N2"),
+                    m.ExcavationDepth.ToString("N3"),
+                    m.ExcavationVolume.ToString("N3"),
                     m.X.ToString("N3"), m.Y.ToString("N3"),
                     m.TerrainElevation.ToString("N3"));
             }

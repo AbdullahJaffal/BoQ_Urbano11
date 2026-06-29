@@ -29,6 +29,7 @@ namespace UrbanoMetraj.BoQ.UI
         private const string BTN_PIPE_CAT        = "UM_BTN_PIPE_CATALOG";
         private const string BTN_PIPE_TRENCH     = "UM_BTN_PIPE_TRENCH";
         private const string BTN_SOIL_CAT        = "UM_BTN_SOIL_CATALOG";
+        private const string BTN_DOLGU_CAT       = "UM_BTN_DOLGU_CATALOG";
 
         public static void Initialize()
         {
@@ -186,6 +187,24 @@ namespace UrbanoMetraj.BoQ.UI
                     Content = "Zemin türlerini ve kabarma katsayılarını yönetir.\n" +
                               "Her kayıt: zemin adı, kabarma katsayısı (örn. 1.20)\n" +
                               "ve poz numarası. Katalog XML olarak kaydedilir."
+                }
+            });
+
+            // ── Dolgu Catalog button ─────────────────────────────────────────
+            panelSource.Items.Add(new RibbonButton
+            {
+                Id             = BTN_DOLGU_CAT,
+                Text           = "Dolgu\nKataloğu",
+                ShowText       = true,
+                Size           = RibbonItemSize.Large,
+                LargeImage     = LoadIcon("um_dolgu_catalog.png"),
+                CommandHandler = new RibbonCommandRelay("DOLGU_CATALOG"),
+                ToolTip        = new RibbonToolTip
+                {
+                    Title   = "Dolgu Kataloğu",
+                    Content = "Dolgu malzemelerini ve poz numaralarını yönetir.\n" +
+                              "Her kayıt: poz no, dolgu malzemesi adı ve açıklama.\n" +
+                              "Katalog XML olarak kaydedilir."
                 }
             });
 

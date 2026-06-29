@@ -36,6 +36,10 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
 
         public bool IsFamilySelected => _selectedFamily != null;
 
+        // Catalog-wide shared class list — bound as ItemsSource of the Sınıf ComboBox.
+        public System.Collections.ObjectModel.ObservableCollection<string> CatalogClasses
+            => _catalog.Classes;
+
         // ── Selected-family proxy properties (bound to right-panel TextBoxes) ─
         public string SelectedFamilyName
         {
@@ -82,9 +86,10 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
         public ICommand DeletePipeCommand    { get; }
         public ICommand DuplicatePipeCommand { get; }
 
-        public ICommand SaveCommand          { get; }
-        public ICommand ExportCommand        { get; }
-        public ICommand ImportCommand        { get; }
+        public ICommand SaveCommand            { get; }
+        public ICommand ExportCommand          { get; }
+        public ICommand ImportCommand          { get; }
+        public ICommand ManageClassesCommand   { get; }
 
         // ── Selected pipe ─────────────────────────────────────────────────────
         private PipeDefinition _selectedPipe;
@@ -107,9 +112,10 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             DeletePipeCommand    = new RelayCommand(OnDeletePipe,     _ => IsPipeSelected);
             DuplicatePipeCommand = new RelayCommand(OnDuplicatePipe,  _ => IsPipeSelected);
 
-            SaveCommand   = new RelayCommand(OnSave,   _ => Families.Count > 0);
-            ExportCommand = new RelayCommand(OnExport, _ => Families.Count > 0);
-            ImportCommand = new RelayCommand(OnImport);
+            SaveCommand          = new RelayCommand(OnSave,          _ => Families.Count > 0);
+            ExportCommand        = new RelayCommand(OnExport,        _ => Families.Count > 0);
+            ImportCommand        = new RelayCommand(OnImport);
+            ManageClassesCommand = new RelayCommand(OnManageClasses);
         }
 
         // ── Family CRUD ───────────────────────────────────────────────────────
@@ -163,15 +169,26 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             if (_selectedPipe == null || _selectedFamily == null) return;
             var clone = new PipeDefinition
             {
+                PozNo           = _selectedPipe.PozNo,
                 NominalDiameter = _selectedPipe.NominalDiameter,
                 OuterDiameter   = _selectedPipe.OuterDiameter,
                 InnerDiameter   = _selectedPipe.InnerDiameter,
-                WallThickness   = _selectedPipe.WallThickness
+                WallThickness   = _selectedPipe.WallThickness,
+                Sinif           = _selectedPipe.Sinif,
+                Aciklama        = _selectedPipe.Aciklama
             };
             _selectedFamily.Pipes.Add(clone);
             SelectedPipe = clone;
             UpdateStore();
         }
+
+        // ── Class manager ─────────────────────────────────────────────────────
+
+        // Raised so the View can open the dialog (VM stays UI-agnostic for the Window ref).
+        public event System.EventHandler OpenClassManagerRequested;
+
+        private void OnManageClasses(object _)
+            => OpenClassManagerRequested?.Invoke(this, System.EventArgs.Empty);
 
         // ── Save / Export / Import ────────────────────────────────────────────
 
@@ -277,10 +294,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
 
         // ── Helpers ───────────────────────────────────────────────────────────
 
-        private static string DefaultSavePath =>
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "UrbanoMetraj", "PipeCatalog.xml");
+        private static string DefaultSavePath => PipeCatalogStore.DefaultSavePath;
 
         private void UpdateStore() => PipeCatalogStore.Current = _catalog;
 

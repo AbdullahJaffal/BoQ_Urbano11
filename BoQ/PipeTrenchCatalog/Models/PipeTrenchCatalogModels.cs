@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 
 namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.Models
@@ -22,6 +23,27 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.Models
         /// Only one layer per collection should have this flag set; the engine uses the first match.
         /// </summary>
         public bool IsFillToSurface { get; set; }
+    }
+
+    /// <summary>
+    /// A single wrapping/encasement layer placed around or above the pipe
+    /// (Gömlekleme / Gömlekleme Katmanı).
+    /// </summary>
+    public class GomleklemeLayer
+    {
+        public string LayerName    { get; set; } = "";
+        public string MaterialType { get; set; } = "";
+
+        /// <summary>"boru etrafı" (around pipe) or "boru üstü" (above pipe).</summary>
+        public string Position { get; set; } = "boru etrafı";
+
+        public double ThicknessM { get; set; }
+
+        /// <summary>
+        /// Only applicable when Position == "boru etrafı".
+        /// When true, this layer extends up to the pipe crown.
+        /// </summary>
+        public bool IsUpToPipeTop { get; set; }
     }
 
     /// <summary>
@@ -83,6 +105,13 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.Models
         /// </summary>
         public ObservableCollection<TrenchLayer> BackfillLayers { get; set; }
             = new ObservableCollection<TrenchLayer>();
+
+        /// <summary>
+        /// Wrapping / encasement layers placed around and above the pipe (Gömlekleme).
+        /// Ordered from the pipe invert upward.
+        /// </summary>
+        public ObservableCollection<GomleklemeLayer> GomleklemeLayers { get; set; }
+            = new ObservableCollection<GomleklemeLayer>();
     }
 
     /// <summary>
@@ -105,5 +134,17 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.Models
 
         public ObservableCollection<PipeTrenchDepthTier> DepthTiers { get; set; }
             = new ObservableCollection<PipeTrenchDepthTier>();
+
+        /// <summary>
+        /// Pipe family names selected for this rule's Min/Max diameter filter.
+        /// Empty = all families (default). Persisted in XML.
+        /// </summary>
+        public List<string> SelectedFamilyNames { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Zemin (soil) names this rule applies to.
+        /// Empty = all soil types (default). Persisted in XML.
+        /// </summary>
+        public List<string> SelectedSoilNames { get; set; } = new List<string>();
     }
 }

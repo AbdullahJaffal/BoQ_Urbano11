@@ -51,6 +51,14 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             new FootprintShapeItem(FootprintShape.Square,      "Kare"),
         };
 
+        public string[] FootprintOrientationOptions { get; } =
+        {
+            "uzun kenar; çıkış boru yönünde",
+            "uzun kenar; giriş boru yönünde",
+            "kısa kenar; çıkış boru yönünde",
+            "kısa kenar; giriş boru yönünde"
+        };
+
         private ComponentRole _newRole = ComponentRole.MiddleElement;
         public ComponentRole NewRole { get => _newRole; set { Set(ref _newRole, value); } }
 

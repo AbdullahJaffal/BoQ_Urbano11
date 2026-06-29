@@ -139,8 +139,18 @@
                                 <Label Content="Ad:"/>
                                 <TextBox Text="{Binding RepositoryTab.SelectedComponent.Name,
                                                 UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
-                                <Label Content="Etkin Yükseklik (mm):"
-                                       ToolTip="Kompozit seçiliyse alt parça toplamından otomatik hesaplanır"/>
+
+                                <!-- Etkin Yükseklik + değişken checkbox -->
+                                <DockPanel Margin="0,2,0,0">
+                                    <CheckBox Content="değişken"
+                                              DockPanel.Dock="Right"
+                                              IsChecked="{Binding RepositoryTab.SelectedComponent.IsVariable,
+                                                          UpdateSourceTrigger=PropertyChanged}"
+                                              VerticalAlignment="Center" Margin="6,0,0,0"
+                                              ToolTip="İşaretlendiğinde yükseklik değişken (saha ayarı) — elle giriş ve kompozit hesap devre dışı"/>
+                                    <Label Content="Etkin Yükseklik (mm):" Padding="5,0,0,0"
+                                           ToolTip="Kompozit seçiliyse alt parça toplamından otomatik hesaplanır"/>
+                                </DockPanel>
                                 <TextBox Text="{Binding RepositoryTab.SelectedComponent.EffectiveHeight,
                                                 UpdateSourceTrigger=PropertyChanged}"
                                          IsReadOnly="{Binding RepositoryTab.SelectedComponent.IsEffectiveHeightReadOnly}"
@@ -149,22 +159,28 @@
                                         <Style TargetType="TextBox">
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding RepositoryTab.SelectedComponent.IsEffectiveHeightReadOnly}" Value="True">
-                                                    <Setter Property="Background"  Value="#F0F0F0"/>
-                                                    <Setter Property="Foreground"  Value="Gray"/>
-                                                    <Setter Property="FontStyle"   Value="Italic"/>
+                                                    <Setter Property="Background" Value="#F0F0F0"/>
+                                                    <Setter Property="Foreground" Value="Gray"/>
+                                                    <Setter Property="FontStyle"  Value="Italic"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </TextBox.Style>
                                 </TextBox>
-                                <TextBlock Text="(Alt parça yüksekliklerinin toplamı)"
+                                <TextBlock Text="(Baca Yüksekliğine Bağlı)"
                                            FontSize="10" Foreground="Gray" FontStyle="Italic"
                                            Margin="0,0,0,4"
                                            Visibility="{Binding RepositoryTab.SelectedComponent.IsEffectiveHeightReadOnly,
                                                         Converter={StaticResource BoolToVis}}"/>
+
                                 <Label Content="Aile Etiketi:"/>
                                 <TextBox Text="{Binding RepositoryTab.SelectedComponent.FamilyTag,
                                                 UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                <Label Content="Malzeme:"/>
+                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.Malzeme,
+                                                UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="Malzeme türü (örn. C30/37 Beton, HDPE, Dökme Demir)"
+                                         Margin="0,0,0,4"/>
                                 <Label Content="Dış Hacim (m³):"
                                        ToolTip="Bileşenin toplam mekânsal hacmi"/>
                                 <TextBox Text="{Binding RepositoryTab.SelectedComponent.ExternalVolume,
@@ -174,7 +190,25 @@
                                        ToolTip="Net beton / HDPE hacmi"/>
                                 <TextBox Text="{Binding RepositoryTab.SelectedComponent.MaterialVolume,
                                                 UpdateSourceTrigger=PropertyChanged, StringFormat=0.0000}"
-                                         Margin="0,0,0,6"/>
+                                         Margin="0,0,0,4"/>
+
+                                <!-- Zorunlu Parça — tüm tipler için BottomElement hariç -->
+                                <CheckBox Content="Zorunlu Parça"
+                                          IsChecked="{Binding RepositoryTab.SelectedComponent.ZorunluParca,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                          Visibility="{Binding RepositoryTab.SelectedComponent.ShowZorunluParca,
+                                                       Converter={StaticResource BoolToVis}}"
+                                          ToolTip="Bu bileşen her montajda zorunlu olarak yer alır"
+                                          Margin="0,0,0,4"/>
+
+                                <!-- Yükseltme Parçası — sadece MiddleElement ve Adjuster -->
+                                <CheckBox Content="Yükseltme Parçası"
+                                          IsChecked="{Binding RepositoryTab.SelectedComponent.YukseltmeParcasi,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                          Visibility="{Binding RepositoryTab.SelectedComponent.ShowYukseltmeParcasi,
+                                                       Converter={StaticResource BoolToVis}}"
+                                          ToolTip="Bu halka yükseltme amacıyla kullanılır"
+                                          Margin="0,0,0,6"/>
 
                                 <!-- BottomElement -->
                                 <StackPanel Visibility="{Binding RepositoryTab.IsBottomElementSelected,
@@ -183,25 +217,45 @@
                                     <TextBlock Text="Taban Geometrisi" FontWeight="SemiBold" Margin="0,0,0,4"/>
                                     <Label Content="Plan Şekli:"/>
                                     <ComboBox ItemsSource="{Binding RepositoryTab.AllFootprintShapes}"
-                                              SelectedItem="{Binding RepositoryTab.SelectedComponent.PlanShape,
-                                                             UpdateSourceTrigger=PropertyChanged}"
+                                              DisplayMemberPath="Display"
+                                              SelectedValuePath="Shape"
+                                              SelectedValue="{Binding RepositoryTab.SelectedComponent.PlanShape,
+                                                              UpdateSourceTrigger=PropertyChanged}"
                                               Margin="0,0,0,4"/>
+
+                                    <!-- Dairesel -->
                                     <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.IsCircularFootprint,
                                                              Converter={StaticResource BoolToVis}}">
                                         <Label Content="Taban Çapı (mm):"/>
                                         <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintDiamMm,
                                                          UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
                                     </StackPanel>
-                                    <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.IsCircularFootprint,
-                                                             Converter={StaticResource BoolToVis},
-                                                             ConverterParameter=invert}">
-                                        <Label Content="Uzunluk (mm):"/>
-                                        <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintLengthMm,
-                                                         UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
-                                        <Label Content="Genişlik (mm):"/>
-                                        <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintWidthMm,
+
+                                    <!-- Kare -->
+                                    <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.IsSquareFootprint,
+                                                             Converter={StaticResource BoolToVis}}">
+                                        <Label Content="Kenar Uzunluğu (mm):"/>
+                                        <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintSideMm,
                                                          UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
                                     </StackPanel>
+
+                                    <!-- Dikdörtgen -->
+                                    <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.IsRectangularFootprint,
+                                                             Converter={StaticResource BoolToVis}}">
+                                        <Label Content="Uzun Kenar (mm):"/>
+                                        <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintLengthMm,
+                                                         UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                        <Label Content="Kısa Kenar (mm):"/>
+                                        <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintWidthMm,
+                                                         UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                        <Label Content="Uzun Kenar Yönü:"
+                                               ToolTip="Dikdörtgen tabanın uzun kenarının boru yönüne göre konumu"/>
+                                        <ComboBox ItemsSource="{Binding RepositoryTab.FootprintOrientationOptions}"
+                                                  SelectedItem="{Binding RepositoryTab.SelectedComponent.FootprintOrientation,
+                                                                 UpdateSourceTrigger=PropertyChanged}"
+                                                  Margin="0,0,0,4"/>
+                                    </StackPanel>
+
                                     <Label Content="Et Kalınlığı (mm):"/>
                                     <TextBox Text="{Binding RepositoryTab.SelectedComponent.WallThicknessMm,
                                                     UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
@@ -215,6 +269,7 @@
                                                     UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"/>
                                     <CheckBox IsChecked="{Binding RepositoryTab.SelectedComponent.IsCompositeChecked,
                                                           UpdateSourceTrigger=PropertyChanged}"
+                                              IsEnabled="{Binding RepositoryTab.SelectedComponent.IsCompositeEnabled}"
                                               Content="Kompozit Alt Parçalı" Margin="0,0,0,4"/>
                                     <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.IsCompositeChecked,
                                                              Converter={StaticResource BoolToVis}}">

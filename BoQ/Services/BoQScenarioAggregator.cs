@@ -37,6 +37,23 @@ namespace UrbanoMetraj.BoQ.Services
         /// </summary>
         public static void RecomputeRow(SectionDebugRow sdr, TiePreference kazi, TiePreference dolgu)
         {
+            // Fast path: V2 pre-computed volumes stored in DWG — just select scenario.
+            if (sdr.HasV2Volumes)
+            {
+                sdr.VExcav = kazi == TiePreference.KeepUpper ? sdr.VExcavKU
+                           : kazi == TiePreference.KeepLower ? sdr.VExcavKL
+                           : kazi == TiePreference.Ignore    ? sdr.VExcavGross
+                           :                                   sdr.VExcavSP;
+                // VBedding / VSurround have no scenario variation — already set.
+                sdr.VBackfill = dolgu == TiePreference.KeepUpper ? sdr.VBackfillKU
+                              : dolgu == TiePreference.KeepLower ? sdr.VBackfillKL
+                              : dolgu == TiePreference.Ignore    ? sdr.VBackfillGross
+                              :                                    sdr.VBackfillSP;
+                sdr.OverlapVolumeDeducted = System.Math.Max(0,
+                    (sdr.VExcavGross - sdr.VExcav) + (sdr.VBackfillGross - sdr.VBackfill));
+                return;
+            }
+
             var st = sdr.Stations;
             if (st == null || st.Count < 2)
             {
@@ -102,6 +119,8 @@ namespace UrbanoMetraj.BoQ.Services
             foreach (var sdr in report.SectionDebug)
                 RecomputeRow(sdr, kazi, dolgu);
 
+            RecomputeManholeExcavation(report);
+
             foreach (var sys in report.Systems ?? Enumerable.Empty<SystemBoQ>())
             {
                 var rows = report.SectionDebug.Where(r => r.SystemName == sys.SystemName);
@@ -121,6 +140,64 @@ namespace UrbanoMetraj.BoQ.Services
                     })
                     .ToList();
             }
+        }
+
+        /// <summary>
+        /// Recomputes manhole excavation depths and volumes from the section data
+        /// already loaded in the report. Call this after loading from DWG cache so
+        /// that ExcavationDepth/ExcavationVolume are populated even when the DWG
+        /// was saved before these fields existed.
+        /// </summary>
+        public static void RecomputeManholeExcavation(BoQReport report)
+        {
+            if (report?.SectionDebug == null || report.Systems == null) return;
+
+            // Build nodeName → list of connected pipe invert elevations
+            var invertsByNode = new Dictionary<string, List<double>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var sdr in report.SectionDebug)
+            {
+                AddInv(invertsByNode, sdr.StartNodeName, sdr.InvertStart);
+                AddInv(invertsByNode, sdr.EndNodeName,   sdr.InvertEnd);
+            }
+
+            foreach (var sys in report.Systems)
+            {
+                foreach (var m in sys.Manholes)
+                {
+                    if (m.NodeName == null) continue;
+                    List<double> inverts;
+                    if (!invertsByNode.TryGetValue(m.NodeName, out inverts) || inverts.Count == 0)
+                        continue;
+
+                    double lowestInvert = inverts.Min();
+                    double H = System.Math.Max(0, m.TerrainElevation - lowestInvert);
+                    m.ExcavationDepth = H;
+
+                    if (H > 1e-6)
+                    {
+                        double sideBot = 2.0;
+                        double sideMid = 2.0 + 2.0 * (H * 0.5) / 3.0;
+                        double sideTop = 2.0 + 2.0 * H / 3.0;
+                        m.ExcavationVolume = (H / 6.0) *
+                            (sideBot * sideBot + 4.0 * sideMid * sideMid + sideTop * sideTop);
+                    }
+                    else
+                    {
+                        m.ExcavationVolume = 0;
+                    }
+                }
+            }
+        }
+
+        private static void AddInv(Dictionary<string, List<double>> dict, string name, double inv)
+        {
+            if (string.IsNullOrEmpty(name)) return;
+            List<double> list;
+            if (!dict.TryGetValue(name, out list))
+                dict[name] = list = new List<double>();
+            list.Add(inv);
         }
 
         // ── helpers ───────────────────────────────────────────────────────────
