@@ -313,7 +313,8 @@ namespace UrbanoMetraj.BoQ.Services
             public double ExcavVol              { get; set; }   // avg(AExcav)  × Length2D  (m³)  [modified in-place by clash detection]
             public double VBackfill             { get; set; }   // avg(ABackfill) × Length2D (m³) [modified in-place by clash detection]
             // ── Clash detection (populated by ComputeTrenchClashes) ────────────
-            public double OverlapVolumeDeducted { get; set; }   // running sum of all halfVol deductions
+            public double OverlapExcavDeducted    { get; set; }   // kazı  deduction from trench clash
+            public double OverlapBackfillDeducted { get; set; }   // dolgu deduction from trench clash
             public List<string> ClashLog        { get; set; } = new List<string>();
         }
 
@@ -787,7 +788,8 @@ namespace UrbanoMetraj.BoQ.Services
                     VSurround             = sec.VSurround,
                     VExcav                = sec.ExcavVol,
                     VBackfill             = sec.VBackfill,
-                    OverlapVolumeDeducted = 0
+                    OverlapExcavDeducted    = 0,
+                    OverlapBackfillDeducted = 0
                 };
                 sdrs.Add(sdr);
                 report.SectionDebug.Add(sdr);
@@ -830,7 +832,8 @@ namespace UrbanoMetraj.BoQ.Services
                 sections[i].VBedding              = sdrs[i].VBedding;
                 sections[i].VSurround             = sdrs[i].VSurround;
                 sections[i].VBackfill             = sdrs[i].VBackfill;
-                sections[i].OverlapVolumeDeducted = sdrs[i].OverlapVolumeDeducted;
+                sections[i].OverlapExcavDeducted    = sdrs[i].OverlapExcavDeducted;
+                sections[i].OverlapBackfillDeducted = sdrs[i].OverlapBackfillDeducted;
             }
 
             // ── Step 3b: Print diagnostic coordinate table to command line ────
@@ -860,7 +863,8 @@ namespace UrbanoMetraj.BoQ.Services
                         TotalBeddingVolume    = grp.Sum(s => s.VBedding),
                         TotalSurroundVolume   = grp.Sum(s => s.VSurround),
                         TotalBackfillVolume   = grp.Sum(s => s.VBackfill),
-                        OverlapVolumeDeducted = grp.Sum(s => s.OverlapVolumeDeducted)
+                        OverlapExcavDeducted    = grp.Sum(s => s.OverlapExcavDeducted),
+                        OverlapBackfillDeducted = grp.Sum(s => s.OverlapBackfillDeducted)
                     });
                 }
 
@@ -912,13 +916,15 @@ namespace UrbanoMetraj.BoQ.Services
             sec.VBedding             = vBedding;
             sec.VSurround            = vSurround;
             sec.VBackfill            = vBackfill;
-            sec.OverlapVolumeDeducted = Math.Max(0, (vExcavFull - vExcav) + (vBackfillFull - vBackfill));
+            sec.OverlapExcavDeducted    = Math.Max(0, vExcavFull - vExcav);
+            sec.OverlapBackfillDeducted = Math.Max(0, vBackfillFull - vBackfill);
 
-            sdr.VExcav               = vExcav;
-            sdr.VBedding             = vBedding;
-            sdr.VSurround            = vSurround;
-            sdr.VBackfill            = vBackfill;
-            sdr.OverlapVolumeDeducted = sec.OverlapVolumeDeducted;
+            sdr.VExcav                  = vExcav;
+            sdr.VBedding                = vBedding;
+            sdr.VSurround               = vSurround;
+            sdr.VBackfill               = vBackfill;
+            sdr.OverlapExcavDeducted    = sec.OverlapExcavDeducted;
+            sdr.OverlapBackfillDeducted = sec.OverlapBackfillDeducted;
         }
 
         // =====================================================================
@@ -2166,8 +2172,10 @@ namespace UrbanoMetraj.BoQ.Services
                     lower.VBackfill = Math.Max(0, lower.VBackfill - bfLow);
                     upper.VBackfill = Math.Max(0, upper.VBackfill - bfUp);
 
-                    lower.OverlapVolumeDeducted += exLow + bfLow;
-                    upper.OverlapVolumeDeducted += exUp + bfUp;
+                    lower.OverlapExcavDeducted    += exLow;
+                    lower.OverlapBackfillDeducted += bfLow;
+                    upper.OverlapExcavDeducted    += exUp;
+                    upper.OverlapBackfillDeducted += bfUp;
 
                     string nameLow = $"{lower.StartNodeName} → {lower.EndNodeName}";
                     string nameUp  = $"{upper.StartNodeName} → {upper.EndNodeName}";
@@ -2238,6 +2246,8 @@ namespace UrbanoMetraj.BoQ.Services
                     deductLower = 0.0;          deductUpper = volume;       break;
                 case OverlapAssignment.UpperPipe:
                     deductLower = volume;       deductUpper = 0.0;          break;
+                case OverlapAssignment.Ignore:
+                    deductLower = 0.0;          deductUpper = 0.0;          break;
                 default: // Split
                     deductLower = volume * 0.5; deductUpper = volume * 0.5; break;
             }

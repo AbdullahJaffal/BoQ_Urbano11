@@ -37,33 +37,54 @@ namespace UrbanoMetraj.BoQ.Services
         /// </summary>
         public static void RecomputeRow(SectionDebugRow sdr, TiePreference kazi, TiePreference dolgu)
         {
-            // Fast path: V2 pre-computed volumes stored in DWG — just select scenario.
+            // ── Fast path: V2 pre-computed volumes (stored in DWG) ────────────
+            // kazı and dolgu are fully independent — each picks its own scenario.
             if (sdr.HasV2Volumes)
             {
-                sdr.VExcav = kazi == TiePreference.KeepUpper ? sdr.VExcavKU
-                           : kazi == TiePreference.KeepLower ? sdr.VExcavKL
-                           : kazi == TiePreference.Ignore    ? sdr.VExcavGross
-                           :                                   sdr.VExcavSP;
-                // VBedding / VSurround have no scenario variation — already set.
-                sdr.VBackfill = dolgu == TiePreference.KeepUpper ? sdr.VBackfillKU
-                              : dolgu == TiePreference.KeepLower ? sdr.VBackfillKL
-                              : dolgu == TiePreference.Ignore    ? sdr.VBackfillGross
-                              :                                    sdr.VBackfillSP;
-                sdr.OverlapVolumeDeducted = System.Math.Max(0,
-                    (sdr.VExcavGross - sdr.VExcav) + (sdr.VBackfillGross - sdr.VBackfill));
+                // Excavation
+                if (kazi == TiePreference.Ignore)
+                {
+                    sdr.VExcav               = sdr.VExcavGross;
+                    sdr.OverlapExcavDeducted = 0;
+                }
+                else
+                {
+                    sdr.VExcav = kazi == TiePreference.KeepUpper ? sdr.VExcavKU
+                               : kazi == TiePreference.KeepLower ? sdr.VExcavKL
+                               :                                   sdr.VExcavSP;
+                    sdr.OverlapExcavDeducted = System.Math.Max(0, sdr.VExcavGross - sdr.VExcav);
+                }
+
+                // Dolgu (bedding / surround / backfill)
+                if (dolgu == TiePreference.Ignore)
+                {
+                    sdr.VBackfill               = sdr.VBackfillGross;
+                    sdr.OverlapBackfillDeducted = 0;
+                }
+                else
+                {
+                    sdr.VBackfill = dolgu == TiePreference.KeepUpper ? sdr.VBackfillKU
+                                  : dolgu == TiePreference.KeepLower ? sdr.VBackfillKL
+                                  :                                    sdr.VBackfillSP;
+                    sdr.OverlapBackfillDeducted = System.Math.Max(0, sdr.VBackfillGross - sdr.VBackfill);
+                }
                 return;
             }
 
+            // ── Slow path: station-by-station integration ─────────────────────
+            // NetArea(Ignore) returns the gross area, so vEx/vBa will equal gEx/gBa
+            // when Ignore is selected → deduction becomes 0 automatically.
             var st = sdr.Stations;
             if (st == null || st.Count < 2)
             {
                 sdr.VExcav = sdr.VBedding = sdr.VSurround = sdr.VBackfill = 0;
-                sdr.OverlapVolumeDeducted = 0;
+                sdr.OverlapExcavDeducted    = 0;
+                sdr.OverlapBackfillDeducted = 0;
                 return;
             }
 
             double vEx = 0, vBe = 0, vSu = 0, vBa = 0;
-            double gEx = 0, gBe = 0, gSu = 0, gBa = 0;   // gross (no deduction) totals
+            double gEx = 0, gBe = 0, gSu = 0, gBa = 0;
 
             for (int i = 0; i < st.Count - 1; i++)
             {
@@ -72,14 +93,14 @@ namespace UrbanoMetraj.BoQ.Services
                 double d   = Math.Sqrt(ddx * ddx + ddy * ddy);
                 if (d <= 1e-9) continue;
 
-                vEx += Avg(NetArea(st[i], kazi,  TrenchLayerType.Excavation),
+                vEx += Avg(NetArea(st[i],     kazi,  TrenchLayerType.Excavation),
                            NetArea(st[i + 1], kazi,  TrenchLayerType.Excavation)) * d;
-                vBe += Avg(NetArea(st[i], dolgu, TrenchLayerType.Bedding),
-                           NetArea(st[i + 1], dolgu, TrenchLayerType.Bedding)) * d;
-                vSu += Avg(NetArea(st[i], dolgu, TrenchLayerType.Surround),
-                           NetArea(st[i + 1], dolgu, TrenchLayerType.Surround)) * d;
-                vBa += Avg(NetArea(st[i], dolgu, TrenchLayerType.Backfill),
-                           NetArea(st[i + 1], dolgu, TrenchLayerType.Backfill)) * d;
+                vBe += Avg(NetArea(st[i],     dolgu, TrenchLayerType.Bedding),
+                           NetArea(st[i + 1], dolgu, TrenchLayerType.Bedding))    * d;
+                vSu += Avg(NetArea(st[i],     dolgu, TrenchLayerType.Surround),
+                           NetArea(st[i + 1], dolgu, TrenchLayerType.Surround))   * d;
+                vBa += Avg(NetArea(st[i],     dolgu, TrenchLayerType.Backfill),
+                           NetArea(st[i + 1], dolgu, TrenchLayerType.Backfill))   * d;
 
                 gEx += Avg(st[i].AreaExcav,    st[i + 1].AreaExcav)    * d;
                 gBe += Avg(st[i].AreaBedding,  st[i + 1].AreaBedding)  * d;
@@ -87,23 +108,29 @@ namespace UrbanoMetraj.BoQ.Services
                 gBa += Avg(st[i].AreaBackfill, st[i + 1].AreaBackfill) * d;
             }
 
-            // Apply the integration-averaging correction so that KeepUpper, KeepLower
-            // and Split all produce exactly the same total excavation volume.
-            double adj = 0;
-            switch (kazi)
+            // Excavation averaging correction (only applies to non-Ignore scenarios)
+            if (kazi != TiePreference.Ignore)
             {
-                case TiePreference.KeepUpper: adj = sdr.ExcavAvgAdjKU; break;
-                case TiePreference.KeepLower: adj = sdr.ExcavAvgAdjKL; break;
-                case TiePreference.Split:     adj = sdr.ExcavAvgAdjSP; break;
+                double adj = 0;
+                switch (kazi)
+                {
+                    case TiePreference.KeepUpper: adj = sdr.ExcavAvgAdjKU; break;
+                    case TiePreference.KeepLower: adj = sdr.ExcavAvgAdjKL; break;
+                    case TiePreference.Split:     adj = sdr.ExcavAvgAdjSP; break;
+                }
+                vEx = System.Math.Max(0, vEx + adj);
             }
-            vEx = System.Math.Max(0, vEx + adj);
 
-            sdr.VExcav    = vEx;
-            sdr.VBedding  = vBe;
-            sdr.VSurround = vSu;
-            sdr.VBackfill = vBa;
-            sdr.OverlapVolumeDeducted =
-                System.Math.Max(0, (gEx - vEx) + (gBe - vBe) + (gSu - vSu) + (gBa - vBa));
+            sdr.VExcav    = System.Math.Max(0, vEx);
+            sdr.VBedding  = System.Math.Max(0, vBe);
+            sdr.VSurround = System.Math.Max(0, vSu);
+            sdr.VBackfill = System.Math.Max(0, vBa);
+
+            // Deductions: 0 when Ignore (vEx == gEx in that case anyway, but be explicit)
+            sdr.OverlapExcavDeducted    = kazi  == TiePreference.Ignore ? 0
+                : System.Math.Max(0, gEx - sdr.VExcav);
+            sdr.OverlapBackfillDeducted = dolgu == TiePreference.Ignore ? 0
+                : System.Math.Max(0, (gBe - vBe) + (gSu - vSu) + (gBa - vBa));
         }
 
         /// <summary>
@@ -112,12 +139,17 @@ namespace UrbanoMetraj.BoQ.Services
         /// This is what the BoQ_VIEW "Hesapla" button calls after the user changes
         /// a drop-down.
         /// </summary>
-        public static void Apply(BoQReport report, TiePreference kazi, TiePreference dolgu)
+        public static void Apply(BoQReport report, TiePreference kazi, TiePreference dolgu,
+                                  bool applyManholeDeduction = false)
         {
             if (report?.SectionDebug == null) return;
 
             foreach (var sdr in report.SectionDebug)
+            {
                 RecomputeRow(sdr, kazi, dolgu);
+                if (applyManholeDeduction)
+                    sdr.VExcav = System.Math.Max(0, sdr.VExcav - sdr.ManholeExcavDeducted);
+            }
 
             RecomputeManholeExcavation(report);
 
@@ -136,7 +168,8 @@ namespace UrbanoMetraj.BoQ.Services
                         TotalBeddingVolume    = g.Sum(r => r.VBedding),
                         TotalSurroundVolume   = g.Sum(r => r.VSurround),
                         TotalBackfillVolume   = g.Sum(r => r.VBackfill),
-                        OverlapVolumeDeducted = g.Sum(r => r.OverlapVolumeDeducted),
+                        OverlapExcavDeducted    = g.Sum(r => r.OverlapExcavDeducted),
+                        OverlapBackfillDeducted = g.Sum(r => r.OverlapBackfillDeducted),
                     })
                     .ToList();
             }

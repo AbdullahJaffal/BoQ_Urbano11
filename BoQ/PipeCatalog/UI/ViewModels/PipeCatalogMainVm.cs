@@ -49,7 +49,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
                 if (_selectedFamily == null || _selectedFamily.FamilyName == value) return;
                 _selectedFamily.FamilyName = value;
                 OnPropertyChanged();
-                UpdateStore();
+                MarkDirty();
             }
         }
 
@@ -61,7 +61,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
                 if (_selectedFamily == null || _selectedFamily.Material == value) return;
                 _selectedFamily.Material = value;
                 OnPropertyChanged();
-                UpdateStore();
+                MarkDirty();
             }
         }
 
@@ -104,7 +104,8 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
         // ── Constructor ───────────────────────────────────────────────────────
         public PipeCatalogMainVm(PipeCatalog catalog)
         {
-            _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+            // Work on a DEEP COPY — changes stay local until the user clicks Kaydet.
+            _catalog = DeepClone(catalog ?? new PipeCatalog());
 
             AddFamilyCommand     = new RelayCommand(OnAddFamily);
             DeleteFamilyCommand  = new RelayCommand(OnDeleteFamily,   _ => IsFamilySelected);
@@ -112,7 +113,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             DeletePipeCommand    = new RelayCommand(OnDeletePipe,     _ => IsPipeSelected);
             DuplicatePipeCommand = new RelayCommand(OnDuplicatePipe,  _ => IsPipeSelected);
 
-            SaveCommand          = new RelayCommand(OnSave,          _ => Families.Count > 0);
+            SaveCommand          = new RelayCommand(OnSave,          _ => _isDirty);
             ExportCommand        = new RelayCommand(OnExport,        _ => Families.Count > 0);
             ImportCommand        = new RelayCommand(OnImport);
             ManageClassesCommand = new RelayCommand(OnManageClasses);
@@ -125,8 +126,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             var fam = new PipeFamily { FamilyName = GenerateDefaultFamilyName() };
             _catalog.Families.Add(fam);
             SelectedFamily = fam;
-            UpdateStore();
-            StatusText = $"'{fam.FamilyName}' ailesi eklendi.";
+            MarkDirty();
         }
 
         private string GenerateDefaultFamilyName()
@@ -142,7 +142,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             if (_selectedFamily == null) return;
             _catalog.Families.Remove(_selectedFamily);
             SelectedFamily = null;
-            UpdateStore();
+            MarkDirty();
         }
 
         // ── Pipe CRUD ─────────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             var pipe = new PipeDefinition { NominalDiameter = 100 };
             _selectedFamily.Pipes.Add(pipe);
             SelectedPipe = pipe;
-            UpdateStore();
+            MarkDirty();
         }
 
         private void OnDeletePipe(object _)
@@ -161,7 +161,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             if (_selectedPipe == null || _selectedFamily == null) return;
             _selectedFamily.Pipes.Remove(_selectedPipe);
             SelectedPipe = null;
-            UpdateStore();
+            MarkDirty();
         }
 
         private void OnDuplicatePipe(object _)
@@ -179,7 +179,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             };
             _selectedFamily.Pipes.Add(clone);
             SelectedPipe = clone;
-            UpdateStore();
+            MarkDirty();
         }
 
         // ── Class manager ─────────────────────────────────────────────────────
@@ -200,6 +200,8 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
                 string path = DefaultSavePath;
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 PipeCatalogImportService.ExportNativeXml(_catalog, path);
+                UpdateStore();   // ← only here: commit working copy to live store
+                _isDirty = false;
                 StatusText = "Katalog kaydedildi.";
             }
             catch (Exception ex) { ShowError("Kayıt hatası", ex); }
@@ -270,8 +272,9 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
                     _catalog.Families.Add(f);
 
                 SelectedFamily = null;
-                UpdateStore();
-                StatusText = string.Format("{0} aile yüklendi.", _catalog.Families.Count);
+                MarkDirty();
+                StatusText = string.Format("{0} aile yüklendi — kaydetmek için Kaydet'e basın.",
+                                           _catalog.Families.Count);
             }
             catch (Exception ex) { ShowError("İçe aktarma hatası", ex); }
         }
@@ -288,15 +291,54 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             foreach (var f in extracted.Families)
                 _catalog.Families.Add(f);
             SelectedFamily = null;
-            UpdateStore();
-            StatusText = string.Format("DWG'den {0} aile çıkarıldı.", _catalog.Families.Count);
+            MarkDirty();
+            StatusText = string.Format("DWG'den {0} aile çıkarıldı — kaydetmek için Kaydet'e basın.",
+                                       _catalog.Families.Count);
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
 
+        private bool _isDirty;
+
+        private void MarkDirty()
+        {
+            _isDirty   = true;
+            StatusText = "● Kaydedilmemiş değişiklikler var — Kaydet tuşuna basın.";
+        }
+
         private static string DefaultSavePath => PipeCatalogStore.DefaultSavePath;
 
         private void UpdateStore() => PipeCatalogStore.Current = _catalog;
+
+        private static PipeCatalog DeepClone(PipeCatalog src)
+        {
+            var dst = new PipeCatalog { LastModified = src.LastModified };
+            foreach (var cls in src.Classes)
+                dst.Classes.Add(cls);
+            foreach (var fam in src.Families)
+            {
+                var fc = new PipeFamily
+                {
+                    Id         = fam.Id,
+                    FamilyName = fam.FamilyName,
+                    Material   = fam.Material
+                };
+                foreach (var p in fam.Pipes)
+                    fc.Pipes.Add(new PipeDefinition
+                    {
+                        Id              = p.Id,
+                        PozNo           = p.PozNo,
+                        NominalDiameter = p.NominalDiameter,
+                        OuterDiameter   = p.OuterDiameter,
+                        InnerDiameter   = p.InnerDiameter,
+                        WallThickness   = p.WallThickness,
+                        Sinif           = p.Sinif,
+                        Aciklama        = p.Aciklama
+                    });
+                dst.Families.Add(fc);
+            }
+            return dst;
+        }
 
         private static string PickFile(string filter, string title)
         {

@@ -30,12 +30,14 @@ namespace UrbanoMetraj.BoQ.UI
         private ComboBox   _cmbKazi;
         private ComboBox   _cmbDolgu;
         private ComboBox   _cmbBaca;
+        private ComboBox   _cmbBacaKazi;
         private ComboBox   _cmbLanguage;
         private TextBox    _txtExportPath;
         private Label      _lblInfo;
 
         private OverlapAssignment SelectedExcavationOverlap => IndexToOverlap(_cmbKazi.SelectedIndex);
         private OverlapAssignment SelectedBackfillOverlap   => IndexToOverlap(_cmbDolgu.SelectedIndex);
+        private bool              BacaKaziHesapla           => _cmbBacaKazi?.SelectedIndex == 0;
 
         private const int CW     = 820;
         private const int MARGIN = 10;
@@ -48,6 +50,8 @@ namespace UrbanoMetraj.BoQ.UI
             _savedSettings = savedSettings;
             _doc           = doc;
             BuildForm();
+            // Pre-compute pipe–manhole overlap volumes so BacaKazi deduction is available.
+            ManholeExcavOverlapService.Compute(_report);
             // Show the tables for the saved default method on first open.
             Recalculate();
         }
@@ -208,15 +212,28 @@ namespace UrbanoMetraj.BoQ.UI
             _cmbBaca = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Left = MARGIN + 374, Top = row1, Width = 140
+                Left = MARGIN + 374, Top = row1, Width = 106
             };
             _cmbBaca.Items.AddRange(new object[] { "Prefabrik", "Yerinde Döküm" });
             _cmbBaca.SelectedIndex =
                 (_savedSettings?.ManholeType ?? ManholeType.PreCast) == ManholeType.PreCast ? 0 : 1;
 
+            var lblBacaKazi = new Label
+            {
+                Text = "B.Kazısı:", Left = MARGIN + 488, Top = row1 + 4, Width = 62,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            _cmbBacaKazi = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Left = MARGIN + 552, Top = row1, Width = 90
+            };
+            _cmbBacaKazi.Items.AddRange(new object[] { "Hesapla", "Yoksay" });
+            _cmbBacaKazi.SelectedIndex = (_savedSettings?.BacaKaziHesapla ?? false) ? 0 : 1;
+
             var btnHesapla = new Button
             {
-                Text = "Hesapla", Left = MARGIN + 522, Top = row1 - 1, Width = 90, Height = 28,
+                Text = "Hesapla", Left = MARGIN + 650, Top = row1 - 1, Width = 90, Height = 28,
                 BackColor = Color.FromArgb(0, 70, 127), ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f, FontStyle.Bold)
             };
@@ -289,7 +306,7 @@ namespace UrbanoMetraj.BoQ.UI
             Controls.AddRange(new Control[]
             {
                 lblKazi, _cmbKazi, lblDolgu, _cmbDolgu,
-                lblBaca, _cmbBaca, btnHesapla,
+                lblBaca, _cmbBaca, lblBacaKazi, _cmbBacaKazi, btnHesapla,
                 btnRefresh, btnSolids, btnSettings, btnSections
             });
         }
@@ -316,13 +333,14 @@ namespace UrbanoMetraj.BoQ.UI
         {
             TiePreference kazi  = BoQScenarioAggregator.Map(SelectedExcavationOverlap);
             TiePreference dolgu = BoQScenarioAggregator.Map(SelectedBackfillOverlap);
-            BoQScenarioAggregator.Apply(_report, kazi, dolgu);
+            BoQScenarioAggregator.Apply(_report, kazi, dolgu, BacaKaziHesapla);
 
             if (_savedSettings != null)
             {
                 _savedSettings.ExcavationOverlap = SelectedExcavationOverlap;
                 _savedSettings.BackfillOverlap   = SelectedBackfillOverlap;
                 _savedSettings.ManholeType       = SelectedManholeType;
+                _savedSettings.BacaKaziHesapla   = BacaKaziHesapla;
             }
 
             RebuildTabs();
@@ -364,8 +382,10 @@ namespace UrbanoMetraj.BoQ.UI
             Add(grid, "Toplam yataklama (m³)",      $"{_report.TotalBeddingVolume:N3}");
             Add(grid, "Toplam gömlekleme (m³)",     $"{_report.TotalSurroundVolume:N3}");
             Add(grid, "Toplam geri dolgu (m³)",     $"{_report.TotalBackfillVolume:N3}");
-            Add(grid, "Toplam baca kazısı (m³)",    $"{_report.TotalManholeExcavationVolume:N3}");
-            Add(grid, "Çakışmadan düşülen (m³)",    $"{_report.TotalOverlapVolumeDeducted:N3}");
+            Add(grid, "Toplam baca kazısı (m³)",
+                BacaKaziHesapla ? $"{_report.TotalManholeExcavationVolume:N3}" : "0,000");
+            Add(grid, "Çakışmadan düşülen kazı (m³)",  $"{_report.TotalOverlapExcavDeducted:N3}");
+            Add(grid, "Çakışmadan düşülen dolgu (m³)", $"{_report.TotalOverlapBackfillDeducted:N3}");
             Add(grid, "İstasyon verisi",
                 $"{_report.SectionDebug?.Sum(s => s.Stations?.Count ?? 0) ?? 0} istasyon / " +
                 $"{_report.SectionDebug?.Count ?? 0} kesit");
@@ -380,42 +400,117 @@ namespace UrbanoMetraj.BoQ.UI
             var grid = MakeGrid();
             foreach (string col in new[]
             {
-                "Çap (mm)", "Malzeme", "Uzunluk (m)",
+                "Boru Hattı", "Çap (mm)", "Malzeme", "Uzunluk (m)",
                 "Kazı (m³)", "Yataklama (m³)", "Gömlekleme (m³)",
                 "Geri dolgu (m³)", "Düşülen (m³)"
             })
                 grid.Columns.Add(col, col);
-            grid.Columns[0].Width = 80;
-            grid.Columns[1].Width = 90;
-            for (int i = 2; i < grid.Columns.Count; i++) grid.Columns[i].Width = 100;
+            grid.Columns[0].Width = 120;
+            grid.Columns[1].Width = 75;
+            grid.Columns[2].Width = 70;
+            for (int i = 3; i < grid.Columns.Count; i++) grid.Columns[i].Width = 95;
 
-            foreach (var p in sys.Pipes)
-            {
-                grid.Rows.Add(
-                    p.Diameter, p.Material,
-                    p.TotalLength.ToString("N2"),
-                    p.TotalExcavationVolume.ToString("N3"),
-                    p.TotalBeddingVolume.ToString("N3"),
-                    p.TotalSurroundVolume.ToString("N3"),
-                    p.TotalBackfillVolume.ToString("N3"),
-                    p.OverlapVolumeDeducted.ToString("N3"));
-            }
+            var sections = _report.SectionDebug?
+                .Where(r => r.SystemName == sys.SystemName)
+                .OrderBy(r => r.DiameterMm)
+                .ThenBy(r => r.PipeName)
+                .ToList();
 
-            if (sys.Pipes.Count > 0)
+            if (sections != null && sections.Count > 0)
             {
-                int r = grid.Rows.Add(
-                    "TOPLAM", "",
-                    sys.Pipes.Sum(p => p.TotalLength).ToString("N2"),
-                    sys.Pipes.Sum(p => p.TotalExcavationVolume).ToString("N3"),
-                    sys.Pipes.Sum(p => p.TotalBeddingVolume).ToString("N3"),
-                    sys.Pipes.Sum(p => p.TotalSurroundVolume).ToString("N3"),
-                    sys.Pipes.Sum(p => p.TotalBackfillVolume).ToString("N3"),
-                    sys.Pipes.Sum(p => p.OverlapVolumeDeducted).ToString("N3"));
-                foreach (DataGridViewCell c in grid.Rows[r].Cells)
+                double gtLen = 0, gtEx = 0, gtBe = 0, gtSu = 0, gtBa = 0, gtOv = 0;
+
+                var groups = sections.GroupBy(r => r.DiameterMm);
+                foreach (var grp in groups)
+                {
+                    double stLen = 0, stEx = 0, stBe = 0, stSu = 0, stBa = 0, stOv = 0;
+
+                    foreach (var s in grp)
+                    {
+                        grid.Rows.Add(
+                            s.PipeName,
+                            s.DiameterMm,
+                            s.Material,
+                            s.Length2D.ToString("N2"),
+                            s.VExcav.ToString("N3"),
+                            s.VBedding.ToString("N3"),
+                            s.VSurround.ToString("N3"),
+                            s.VBackfill.ToString("N3"),
+                            (s.OverlapExcavDeducted + s.OverlapBackfillDeducted).ToString("N3"));
+
+                        stLen += s.Length2D;  stEx += s.VExcav;
+                        stBe  += s.VBedding;  stSu += s.VSurround;
+                        stBa  += s.VBackfill;
+                        stOv  += s.OverlapExcavDeducted + s.OverlapBackfillDeducted;
+                    }
+
+                    // Subtotal row per diameter
+                    int sr = grid.Rows.Add(
+                        $"Ara Toplam Ø{grp.Key} mm", "", "",
+                        stLen.ToString("N2"),
+                        stEx.ToString("N3"),
+                        stBe.ToString("N3"),
+                        stSu.ToString("N3"),
+                        stBa.ToString("N3"),
+                        stOv.ToString("N3"));
+                    foreach (DataGridViewCell c in grid.Rows[sr].Cells)
+                    {
+                        c.Style.BackColor = Color.FromArgb(0, 90, 160);
+                        c.Style.ForeColor = Color.White;
+                        c.Style.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+                    }
+
+                    gtLen += stLen; gtEx += stEx; gtBe += stBe;
+                    gtSu  += stSu;  gtBa += stBa; gtOv += stOv;
+                }
+
+                // Grand total row
+                int tr = grid.Rows.Add(
+                    "GENEL TOPLAM", "", "",
+                    gtLen.ToString("N2"),
+                    gtEx.ToString("N3"),
+                    gtBe.ToString("N3"),
+                    gtSu.ToString("N3"),
+                    gtBa.ToString("N3"),
+                    gtOv.ToString("N3"));
+                foreach (DataGridViewCell c in grid.Rows[tr].Cells)
                 {
                     c.Style.BackColor = Color.FromArgb(0, 70, 127);
                     c.Style.ForeColor = Color.White;
                     c.Style.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+                }
+            }
+            else
+            {
+                // Fallback: old DWG without section debug — aggregated view
+                foreach (var p in sys.Pipes)
+                {
+                    grid.Rows.Add(
+                        "—", p.Diameter, p.Material,
+                        p.TotalLength.ToString("N2"),
+                        p.TotalExcavationVolume.ToString("N3"),
+                        p.TotalBeddingVolume.ToString("N3"),
+                        p.TotalSurroundVolume.ToString("N3"),
+                        p.TotalBackfillVolume.ToString("N3"),
+                        (p.OverlapExcavDeducted + p.OverlapBackfillDeducted).ToString("N3"));
+                }
+
+                if (sys.Pipes.Count > 0)
+                {
+                    int tr = grid.Rows.Add(
+                        "GENEL TOPLAM", "", "",
+                        sys.Pipes.Sum(p => p.TotalLength).ToString("N2"),
+                        sys.Pipes.Sum(p => p.TotalExcavationVolume).ToString("N3"),
+                        sys.Pipes.Sum(p => p.TotalBeddingVolume).ToString("N3"),
+                        sys.Pipes.Sum(p => p.TotalSurroundVolume).ToString("N3"),
+                        sys.Pipes.Sum(p => p.TotalBackfillVolume).ToString("N3"),
+                        sys.Pipes.Sum(p => p.OverlapExcavDeducted + p.OverlapBackfillDeducted).ToString("N3"));
+                    foreach (DataGridViewCell c in grid.Rows[tr].Cells)
+                    {
+                        c.Style.BackColor = Color.FromArgb(0, 70, 127);
+                        c.Style.ForeColor = Color.White;
+                        c.Style.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+                    }
                 }
             }
 
@@ -442,13 +537,14 @@ namespace UrbanoMetraj.BoQ.UI
             grid.Columns[5].Width = 110;
             for (int i = 6; i < grid.Columns.Count; i++) grid.Columns[i].Width = 90;
 
+            bool showMhExcav = BacaKaziHesapla;
             foreach (var m in sys.Manholes)
             {
                 grid.Rows.Add(
                     m.NodeName, m.SmartTypeName ?? "", m.Diameter,
                     m.Depth.ToString("N2"),
-                    m.ExcavationDepth.ToString("N3"),
-                    m.ExcavationVolume.ToString("N3"),
+                    showMhExcav ? m.ExcavationDepth.ToString("N3") : "0,000",
+                    showMhExcav ? m.ExcavationVolume.ToString("N3") : "0,000",
                     m.X.ToString("N3"), m.Y.ToString("N3"),
                     m.TerrainElevation.ToString("N3"));
             }

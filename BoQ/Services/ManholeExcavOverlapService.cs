@@ -41,6 +41,9 @@ namespace UrbanoMetraj.BoQ.Services
             var lines = new List<string>();
             if (report?.Systems == null || report.SectionDebug == null) return lines;
 
+            // Reset before accumulating (safe to call multiple times).
+            foreach (var s in report.SectionDebug) s.ManholeExcavDeducted = 0;
+
             // Index sections by node name for fast lookup.
             // "outlet" = pipe that STARTS at this manhole (water flows out).
             // "inlet"  = pipe that ENDS   at this manhole (water flows in).
@@ -134,6 +137,9 @@ namespace UrbanoMetraj.BoQ.Services
                         double pipeVol = (Hmh / 6.0) * (aBot + 4.0 * aMid + aTop);
                         string lbl = $"{sdr.StartNodeName}→{sdr.EndNodeName}";
                         perPipeVolumes.Add((lbl, pipeVol));
+
+                        // Accumulate into the section row for BoQ deduction.
+                        sdr.ManholeExcavDeducted += pipeVol;
 
                         // Accumulate into union (for Value 3 calculation)
                         if (trBot != null) unionBot.Add(trBot);

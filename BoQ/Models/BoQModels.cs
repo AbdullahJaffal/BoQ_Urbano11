@@ -17,7 +17,8 @@ namespace UrbanoMetraj.BoQ.Models
         public double TotalBeddingVolume      { get; set; }  // m³  bedding sand layer
         public double TotalSurroundVolume     { get; set; }  // m³  pipe surround sand (net of pipe)
         public double TotalBackfillVolume     { get; set; }  // m³  compacted backfill (after clash deduction)
-        public double OverlapVolumeDeducted   { get; set; }  // m³  50/50 deducted due to trench clash
+        public double OverlapExcavDeducted    { get; set; }  // m³  kazı  deducted due to trench clash
+        public double OverlapBackfillDeducted { get; set; }  // m³  dolgu deducted due to trench clash
     }
 
     /// <summary>
@@ -303,7 +304,14 @@ namespace UrbanoMetraj.BoQ.Models
         public bool   HasV2Volumes  { get; set; }
 
         // ── Clash detection ───────────────────────────────────────────────────
-        public double OverlapVolumeDeducted { get; set; }
+        public double OverlapExcavDeducted    { get; set; }
+        public double OverlapBackfillDeducted { get; set; }
+
+        // ── Manhole–pipe overlap (runtime only, not persisted) ─────────────────
+        /// <summary>Sum of overlap volumes between this pipe trench and all manholes it
+        /// connects to. Populated by ManholeExcavOverlapService.Compute each time
+        /// the dialog opens. Subtracted from VExcav when BacaKaziHesapla=true.</summary>
+        public double ManholeExcavDeducted    { get; set; }
         public List<string> ClashLog        { get; set; } = new List<string>();
 
         // ── Integration-averaging corrections (set by ApplyExcavationAveraging) ──
@@ -349,8 +357,11 @@ namespace UrbanoMetraj.BoQ.Models
         public double TotalBackfillVolume =>
             Systems.SelectMany(s => s.Pipes).Sum(p => p.TotalBackfillVolume);
 
-        public double TotalOverlapVolumeDeducted =>
-            Systems.SelectMany(s => s.Pipes).Sum(p => p.OverlapVolumeDeducted);
+        public double TotalOverlapExcavDeducted =>
+            Systems.SelectMany(s => s.Pipes).Sum(p => p.OverlapExcavDeducted);
+
+        public double TotalOverlapBackfillDeducted =>
+            Systems.SelectMany(s => s.Pipes).Sum(p => p.OverlapBackfillDeducted);
 
         public double TotalManholeExcavationVolume =>
             Systems.SelectMany(s => s.Manholes).Sum(m => m.ExcavationVolume);

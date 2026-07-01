@@ -44,8 +44,9 @@ namespace UrbanoMetraj.BoQ.Services
         // Theme palette  (System.Drawing.Color — EPPlus 4 does not use XLColor)
         // =====================================================================
 
-        private static readonly Color ThemeBlue    = Color.FromArgb(0,   70, 127);
+        private static readonly Color ThemeBlue     = Color.FromArgb(0,   70, 127);
         private static readonly Color ThemeMidBlue = Color.FromArgb(0,   50, 100);   // total / BOM header rows
+        private static readonly Color ThemeSubtotal= Color.FromArgb(0,   90, 160);   // diameter subtotal rows
         private static readonly Color ThemeAltRow  = Color.FromArgb(235, 241, 250);
         private static readonly Color ThemeBorder  = Color.FromArgb(180, 198, 231);
         private static readonly Color ThemeWhite   = Color.White;
@@ -59,23 +60,26 @@ namespace UrbanoMetraj.BoQ.Services
         private static readonly Dictionary<ExportLanguage, string[]> PipeHeaderMap =
             new Dictionary<ExportLanguage, string[]>
             {
+                // Col 0: Pipe section name  Col 1: Diameter  Col 2: Material
+                // Col 3: Length  Col 4: Excav  Col 5: Bed  Col 6: Surr  Col 7: Backfill
+                // Col 8: Overlap Excav Deducted  Col 9: Overlap Backfill Deducted
                 [ExportLanguage.English] = new[]
                 {
-                    "Diameter (mm)", "Material", "Length (m)",
+                    "Pipe Section", "Diameter (mm)", "Material", "Length (m)",
                     "Excavation (m3)", "Bedding (m3)", "Surround (m3)",
-                    "Backfill (m3)", "Overlap Deducted (m3)"
+                    "Backfill (m3)", "Excav. Deducted (m3)", "Backfill Deducted (m3)"
                 },
                 [ExportLanguage.Turkish] = new[]
                 {
-                    "Cap (mm)", "Malzeme", "Boy (m)",
+                    "Boru Hatti", "Cap (mm)", "Malzeme", "Boy (m)",
                     "Kazi (m3)", "Yataklama (m3)", "Gomlekleme (m3)",
-                    "Geri Dolgu (m3)", "Kesisen Hacim (m3)"
+                    "Geri Dolgu (m3)", "Kazi Dusumu (m3)", "Dolgu Dusumu (m3)"
                 },
                 [ExportLanguage.Russian] = new[]
                 {
-                    "Diametr (mm)", "Material", "Dlina (m)",
+                    "Uchastok", "Diametr (mm)", "Material", "Dlina (m)",
                     "Vykopka (m3)", "Podstilka (m3)", "Okruzheniye (m3)",
-                    "Zasypka (m3)", "Vychitaniye (m3)"
+                    "Zasypka (m3)", "Vych. Vykopka (m3)", "Vych. Zasypka (m3)"
                 }
             };
 
@@ -109,27 +113,27 @@ namespace UrbanoMetraj.BoQ.Services
         private static readonly Dictionary<ExportLanguage, string[]> SummaryHeaderMap =
             new Dictionary<ExportLanguage, string[]>
             {
-                // Indices: 0=System 1=PipeLength 2=ManholeCount 3=Excav 4=Bed 5=Surr 6=Backfill 7=MhExcav 8=Overlap
+                // Indices: 0=System 1=PipeLength 2=ManholeCount 3=Excav 4=Bed 5=Surr 6=Backfill 7=MhExcav 8=OverlapExcav 9=OverlapBackfill
                 [ExportLanguage.English] = new[]
                 {
                     "System", "Total Pipe Length (m)", "Manhole Count",
                     "Total Excavation (m3)", "Total Bedding (m3)",
                     "Total Surround (m3)", "Total Backfill (m3)",
-                    "Manhole Excav. (m3)", "Overlap Deducted (m3)"
+                    "Manhole Excav. (m3)", "Excav. Deducted (m3)", "Backfill Deducted (m3)"
                 },
                 [ExportLanguage.Turkish] = new[]
                 {
                     "Sistem", "Toplam Boru Boyu (m)", "Baca Sayisi",
                     "Toplam Kazi (m3)", "Toplam Yataklama (m3)",
                     "Toplam Gomlekleme (m3)", "Toplam Geri Dolgu (m3)",
-                    "Baca Kazi (m3)", "Kesisen Hacim (m3)"
+                    "Baca Kazi (m3)", "Kazi Dusumu (m3)", "Dolgu Dusumu (m3)"
                 },
                 [ExportLanguage.Russian] = new[]
                 {
                     "Sistema", "Obshch. Dlina Trub (m)", "Kol-vo Kolodtsev",
                     "Obshch. Vykopka (m3)", "Obshch. Podstilka (m3)",
                     "Okruzheniye (m3)", "Obshch. Zasypka (m3)",
-                    "Vykopka Kolodtsev (m3)", "Vychitaniye (m3)"
+                    "Vykopka Kolodtsev (m3)", "Vych. Vykopka (m3)", "Vych. Zasypka (m3)"
                 }
             };
 
@@ -149,6 +153,14 @@ namespace UrbanoMetraj.BoQ.Services
                 [ExportLanguage.Russian] = "VSEGO"
             };
 
+        private static readonly Dictionary<ExportLanguage, string> SubtotalLabelMap =
+            new Dictionary<ExportLanguage, string>
+            {
+                [ExportLanguage.English] = "Subtotal",
+                [ExportLanguage.Turkish] = "Ara Toplam",
+                [ExportLanguage.Russian] = "Promezh. Itog"
+            };
+
         // =====================================================================
         // Public entry point
         // =====================================================================
@@ -166,7 +178,7 @@ namespace UrbanoMetraj.BoQ.Services
             string   totalLbl = TotalLabelMap   [settings.Language];
 
             bool showOverlap = settings.EnableClashDetection
-                            && report.TotalOverlapVolumeDeducted > 1e-6;
+                            && (report.TotalOverlapExcavDeducted + report.TotalOverlapBackfillDeducted) > 1e-6;
 
             using (var pkg = new ExcelPackage())
             {
@@ -175,7 +187,10 @@ namespace UrbanoMetraj.BoQ.Services
                 foreach (var sys in report.Systems)
                 {
                     string safe = SanitizeSheetName(sys.SystemName);
-                    WritePipeSheet   (pkg, sys, safe, pHeaders, totalLbl, showOverlap);
+                    var sections = report.SectionDebug?
+                        .Where(r => r.SystemName == sys.SystemName).ToList();
+                    WritePipeSheet(pkg, sys, sections, safe, pHeaders,
+                                   totalLbl, SubtotalLabelMap[settings.Language], showOverlap);
                     WriteManholeSheet(pkg, sys, safe, mHeaders);
                 }
 
@@ -202,7 +217,7 @@ namespace UrbanoMetraj.BoQ.Services
             string[] hdr, string totalLbl, bool showOverlap)
         {
             var ws       = pkg.Workbook.Worksheets.Add("Summary");
-            int colCount = showOverlap ? hdr.Length : hdr.Length - 1;
+            int colCount = showOverlap ? hdr.Length : hdr.Length - 2;
 
             WriteTitle(ws, "Urbano Network — Bill of Quantities", colCount, 1);
 
@@ -229,7 +244,10 @@ namespace UrbanoMetraj.BoQ.Services
                 ws.Cells[row, 7].Value = sys.Pipes.Sum(p => p.TotalBackfillVolume);
                 ws.Cells[row, 8].Value = sys.Manholes.Sum(m => m.ExcavationVolume);
                 if (showOverlap)
-                    ws.Cells[row, 9].Value = sys.Pipes.Sum(p => p.OverlapVolumeDeducted);
+                {
+                    ws.Cells[row, 9].Value  = sys.Pipes.Sum(p => p.OverlapExcavDeducted);
+                    ws.Cells[row, 10].Value = sys.Pipes.Sum(p => p.OverlapBackfillDeducted);
+                }
 
                 ApplyDataRowStyle(ws, row, colCount, alt);
                 SetNumericFormat(ws, row, 2, colCount, "#,##0.000");
@@ -245,7 +263,11 @@ namespace UrbanoMetraj.BoQ.Services
             ws.Cells[row, 6].Value = report.TotalSurroundVolume;
             ws.Cells[row, 7].Value = report.TotalBackfillVolume;
             ws.Cells[row, 8].Value = report.TotalManholeExcavationVolume;
-            if (showOverlap) ws.Cells[row, 9].Value = report.TotalOverlapVolumeDeducted;
+            if (showOverlap)
+            {
+                ws.Cells[row, 9].Value  = report.TotalOverlapExcavDeducted;
+                ws.Cells[row, 10].Value = report.TotalOverlapBackfillDeducted;
+            }
             ApplyTotalRowStyle(ws, row, colCount);
             SetNumericFormat(ws, row, 2, colCount, "#,##0.000");
 
@@ -257,11 +279,12 @@ namespace UrbanoMetraj.BoQ.Services
         // =====================================================================
 
         private static void WritePipeSheet(ExcelPackage pkg, SystemBoQ sys,
-            string safeName, string[] hdr, string totalLbl, bool showOverlap)
+            List<SectionDebugRow> sections, string safeName,
+            string[] hdr, string totalLbl, string subtotalLbl, bool showOverlap)
         {
             string sheetName = Truncate(safeName + "_Pipes", 31);
             var ws           = pkg.Workbook.Worksheets.Add(sheetName);
-            int colCount     = showOverlap ? hdr.Length : hdr.Length - 1;
+            int colCount     = showOverlap ? hdr.Length : hdr.Length - 2;
 
             WriteTitle(ws, sys.SystemName + " — Pipes", colCount, 1);
 
@@ -269,37 +292,132 @@ namespace UrbanoMetraj.BoQ.Services
             WriteHeaders(ws, hdrRow, hdr, colCount);
             ws.View.FreezePanes(hdrRow + 1, 1);
 
-            int  row = hdrRow + 1;
-            bool alt = false;
-            foreach (var p in sys.Pipes)
-            {
-                ws.Cells[row, 1].Value = p.Diameter + " mm";
-                ws.Cells[row, 2].Value = p.Material;
-                ws.Cells[row, 3].Value = p.TotalLength;
-                ws.Cells[row, 4].Value = p.TotalExcavationVolume;
-                ws.Cells[row, 5].Value = p.TotalBeddingVolume;
-                ws.Cells[row, 6].Value = p.TotalSurroundVolume;
-                ws.Cells[row, 7].Value = p.TotalBackfillVolume;
-                if (showOverlap) ws.Cells[row, 8].Value = p.OverlapVolumeDeducted;
+            int row = hdrRow + 1;
 
-                ApplyDataRowStyle(ws, row, colCount, alt);
-                SetNumericFormat(ws, row, 3, colCount, "#,##0.000");
-                alt = !alt;
-                row++;
+            // ── Per-section breakdown: grouped by diameter ──────────────────────
+            if (sections != null && sections.Count > 0)
+            {
+                var groups = sections
+                    .OrderBy(r => r.DiameterMm)
+                    .ThenBy(r => r.PipeName)
+                    .GroupBy(r => new { r.DiameterMm, Mat = r.Material ?? "" });
+
+                double gtLen = 0, gtEx = 0, gtBe = 0, gtSu = 0, gtBa = 0, gtOvEx = 0, gtOvBf = 0;
+
+                foreach (var grp in groups)
+                {
+                    bool alt = false;
+                    double stLen = 0, stEx = 0, stBe = 0, stSu = 0, stBa = 0, stOvEx = 0, stOvBf = 0;
+
+                    foreach (var r in grp)
+                    {
+                        ws.Cells[row, 1].Value = r.PipeName;
+                        ws.Cells[row, 2].Value = r.DiameterMm + " mm";
+                        ws.Cells[row, 3].Value = r.Material;
+                        ws.Cells[row, 4].Value = r.Length2D;
+                        ws.Cells[row, 5].Value = r.VExcav;
+                        ws.Cells[row, 6].Value = r.VBedding;
+                        ws.Cells[row, 7].Value = r.VSurround;
+                        ws.Cells[row, 8].Value = r.VBackfill;
+                        if (showOverlap)
+                        {
+                            ws.Cells[row, 9].Value  = r.OverlapExcavDeducted;
+                            ws.Cells[row, 10].Value = r.OverlapBackfillDeducted;
+                        }
+
+                        ApplyDataRowStyle(ws, row, colCount, alt);
+                        SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
+                        alt = !alt;
+
+                        stLen += r.Length2D;  stEx += r.VExcav;
+                        stBe  += r.VBedding;  stSu += r.VSurround;
+                        stBa  += r.VBackfill;
+                        stOvEx += r.OverlapExcavDeducted;
+                        stOvBf += r.OverlapBackfillDeducted;
+                        row++;
+                    }
+
+                    string subLbl = subtotalLbl + " Ø" + grp.Key.DiameterMm + " mm";
+                    ws.Cells[row, 1].Value = subLbl;
+                    ws.Cells[row, 4].Value = stLen;
+                    ws.Cells[row, 5].Value = stEx;
+                    ws.Cells[row, 6].Value = stBe;
+                    ws.Cells[row, 7].Value = stSu;
+                    ws.Cells[row, 8].Value = stBa;
+                    if (showOverlap)
+                    {
+                        ws.Cells[row, 9].Value  = stOvEx;
+                        ws.Cells[row, 10].Value = stOvBf;
+                    }
+                    ApplySubtotalRowStyle(ws, row, colCount);
+                    SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
+                    row++;
+
+                    gtLen += stLen; gtEx += stEx; gtBe += stBe;
+                    gtSu  += stSu;  gtBa += stBa;
+                    gtOvEx += stOvEx; gtOvBf += stOvBf;
+                }
+
+                ws.Cells[row, 1].Value = totalLbl;
+                ws.Cells[row, 4].Value = gtLen;
+                ws.Cells[row, 5].Value = gtEx;
+                ws.Cells[row, 6].Value = gtBe;
+                ws.Cells[row, 7].Value = gtSu;
+                ws.Cells[row, 8].Value = gtBa;
+                if (showOverlap)
+                {
+                    ws.Cells[row, 9].Value  = gtOvEx;
+                    ws.Cells[row, 10].Value = gtOvBf;
+                }
+                ApplyTotalRowStyle(ws, row, colCount);
+                SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
+            }
+            else
+            {
+                // Fallback: old DWG without section debug data — aggregate view
+                bool alt = false;
+                foreach (var p in sys.Pipes)
+                {
+                    ws.Cells[row, 1].Value = "—";
+                    ws.Cells[row, 2].Value = p.Diameter + " mm";
+                    ws.Cells[row, 3].Value = p.Material;
+                    ws.Cells[row, 4].Value = p.TotalLength;
+                    ws.Cells[row, 5].Value = p.TotalExcavationVolume;
+                    ws.Cells[row, 6].Value = p.TotalBeddingVolume;
+                    ws.Cells[row, 7].Value = p.TotalSurroundVolume;
+                    ws.Cells[row, 8].Value = p.TotalBackfillVolume;
+                    if (showOverlap)
+                    {
+                        ws.Cells[row, 9].Value  = p.OverlapExcavDeducted;
+                        ws.Cells[row, 10].Value = p.OverlapBackfillDeducted;
+                    }
+
+                    ApplyDataRowStyle(ws, row, colCount, alt);
+                    SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
+                    alt = !alt;
+                    row++;
+                }
+
+                ws.Cells[row, 1].Value = totalLbl;
+                ws.Cells[row, 4].Value = sys.Pipes.Sum(p => p.TotalLength);
+                ws.Cells[row, 5].Value = sys.Pipes.Sum(p => p.TotalExcavationVolume);
+                ws.Cells[row, 6].Value = sys.Pipes.Sum(p => p.TotalBeddingVolume);
+                ws.Cells[row, 7].Value = sys.Pipes.Sum(p => p.TotalSurroundVolume);
+                ws.Cells[row, 8].Value = sys.Pipes.Sum(p => p.TotalBackfillVolume);
+                if (showOverlap)
+                {
+                    ws.Cells[row, 9].Value  = sys.Pipes.Sum(p => p.OverlapExcavDeducted);
+                    ws.Cells[row, 10].Value = sys.Pipes.Sum(p => p.OverlapBackfillDeducted);
+                }
+                ApplyTotalRowStyle(ws, row, colCount);
+                SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
             }
 
-            ws.Cells[row, 1].Value = totalLbl;
-            ws.Cells[row, 3].Value = sys.Pipes.Sum(p => p.TotalLength);
-            ws.Cells[row, 4].Value = sys.Pipes.Sum(p => p.TotalExcavationVolume);
-            ws.Cells[row, 5].Value = sys.Pipes.Sum(p => p.TotalBeddingVolume);
-            ws.Cells[row, 6].Value = sys.Pipes.Sum(p => p.TotalSurroundVolume);
-            ws.Cells[row, 7].Value = sys.Pipes.Sum(p => p.TotalBackfillVolume);
-            if (showOverlap)
-                ws.Cells[row, 8].Value = sys.Pipes.Sum(p => p.OverlapVolumeDeducted);
-            ApplyTotalRowStyle(ws, row, colCount);
-            SetNumericFormat(ws, row, 3, colCount, "#,##0.000");
-
-            SetFixedWidths(ws, colCount, firstColWidth: 14, dataColWidth: 18);
+            ws.Column(1).Width = 22;   // Pipe section name
+            ws.Column(2).Width = 14;   // Diameter
+            ws.Column(3).Width = 12;   // Material
+            for (int c = 4; c <= colCount; c++)
+                ws.Column(c).Width = 18;
         }
 
         // =====================================================================
@@ -506,7 +624,7 @@ namespace UrbanoMetraj.BoQ.Services
         {
             var ws = pkg.Workbook.Worksheets.Add("Clash_Debug");
 
-            string[] hdr = { "System", "Pipe Section", "Overlap Partner", "Deducted (m3)", "Detail" };
+            string[] hdr = { "System", "Pipe Section", "Overlap Partner", "Excav Deducted (m3)", "Backfill Deducted (m3)", "Detail" };
             WriteTitle(ws, "Trench Overlap — Clash Detection Log", hdr.Length, 1);
 
             const int hdrRow = 3;
@@ -528,12 +646,15 @@ namespace UrbanoMetraj.BoQ.Services
                     ws.Cells[row, 1].Value = sec.SystemName;
                     ws.Cells[row, 2].Value = sec.PipeName;
                     ws.Cells[row, 3].Value = partner;
-                    ws.Cells[row, 4].Value = sec.OverlapVolumeDeducted;
-                    ws.Cells[row, 5].Value = msg;
+                    ws.Cells[row, 4].Value = sec.OverlapExcavDeducted;
+                    ws.Cells[row, 5].Value = sec.OverlapBackfillDeducted;
+                    ws.Cells[row, 6].Value = msg;
 
                     ApplyDataRowStyle(ws, row, hdr.Length, alt);
-                    ws.Cells[row, 4].Style.Numberformat.Format   = "#,##0.0000";
-                    ws.Cells[row, 4].Style.HorizontalAlignment   = ExcelHorizontalAlignment.Right;
+                    ws.Cells[row, 4].Style.Numberformat.Format = "#,##0.0000";
+                    ws.Cells[row, 4].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
+                    ws.Cells[row, 5].Style.Numberformat.Format = "#,##0.0000";
+                    ws.Cells[row, 5].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
                     alt = !alt;
                     row++;
                 }
@@ -614,6 +735,27 @@ namespace UrbanoMetraj.BoQ.Services
                 cell.Style.Border.Bottom.Color.SetColor(ThemeBorder);
                 cell.Style.Border.Left.Color.SetColor(ThemeBorder);
                 cell.Style.Border.Right.Color.SetColor(ThemeBorder);
+                cell.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
+            }
+        }
+
+        private static void ApplySubtotalRowStyle(ExcelWorksheet ws, int row, int colCount)
+        {
+            for (int c = 1; c <= colCount; c++)
+            {
+                var cell = ws.Cells[row, c];
+                cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
+                cell.Style.Fill.BackgroundColor.SetColor(ThemeSubtotal);
+                cell.Style.Font.Bold = true;
+                cell.Style.Font.Color.SetColor(ThemeWhite);
+                cell.Style.Border.Top.Style    = ExcelBorderStyle.Thin;
+                cell.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+                cell.Style.Border.Left.Style   = ExcelBorderStyle.Thin;
+                cell.Style.Border.Right.Style  = ExcelBorderStyle.Thin;
+                cell.Style.Border.Top.Color.SetColor(ThemeWhite);
+                cell.Style.Border.Bottom.Color.SetColor(ThemeWhite);
+                cell.Style.Border.Left.Color.SetColor(ThemeWhite);
+                cell.Style.Border.Right.Color.SetColor(ThemeWhite);
                 cell.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
             }
         }

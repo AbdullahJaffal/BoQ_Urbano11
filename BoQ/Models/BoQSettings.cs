@@ -108,5 +108,13 @@ namespace UrbanoMetraj.BoQ.Models
         /// Crossing boundary stations are always forced regardless of this value.
         /// </summary>
         public double CrossSectionInterval { get; set; } = 5.0;
+
+        /// <summary>
+        /// When true, the overlap between each pipe trench and its connected manhole
+        /// excavations is deducted from the pipe's excavation volume, and the manhole
+        /// excavation total is shown. When false (Yoksay), no deduction is applied
+        /// and the manhole excavation total is displayed as 0.
+        /// </summary>
+        public bool BacaKaziHesapla { get; set; } = false;
     }
 }
