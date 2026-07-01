@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace UrbanoMetraj.BoQ.SmartAssembly.Models
 {
@@ -22,5 +23,19 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
         public bool   IsCastInSitu   { get; set; }
 
         public string Notes          { get; set; }
+
+        /// <summary>Per-role quantity constraints for this tier. MaxCount=0 means unlimited.</summary>
+        public List<ComponentTypeConstraint> ComponentConstraints { get; set; }
+            = new List<ComponentTypeConstraint>();
+
+        /// <summary>Returns the existing constraint for a role, or creates and adds a new default one.</summary>
+        public ComponentTypeConstraint GetOrCreateConstraint(ComponentRole role)
+        {
+            foreach (var c in ComponentConstraints)
+                if (c.Role == role) return c;
+            var newC = new ComponentTypeConstraint { Role = role };
+            ComponentConstraints.Add(newC);
+            return newC;
+        }
     }
 }

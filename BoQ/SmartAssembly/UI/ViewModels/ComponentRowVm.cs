@@ -24,9 +24,23 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public Guid   Id              { get => _model.Id;              set { _model.Id              = value; OnPropertyChanged(); } }
         public string PozNo           { get => _model.PozNo;           set { _model.PozNo           = value; OnPropertyChanged(); } }
         public string Name            { get => _model.Name;            set { _model.Name            = value; OnPropertyChanged(); } }
-        public string RoleDisplay => _model.Role.ToString();
-        public string FamilyTag  { get => _model.FamilyTag; set { _model.FamilyTag = value; OnPropertyChanged(); } }
-        public string Malzeme    { get => _model.Malzeme;   set { _model.Malzeme   = value; OnPropertyChanged(); } }
+        public string RoleDisplay
+        {
+            get
+            {
+                switch (_model.Role)
+                {
+                    case ComponentRole.BottomElement: return "Taban";
+                    case ComponentRole.MiddleElement: return "Gövde Halkası";
+                    case ComponentRole.Reducer:       return "Konik";
+                    case ComponentRole.Adjuster:      return "Boyun bileziği";
+                    case ComponentRole.Cover:         return "Rögar Kapağı";
+                    default:                          return _model.Role.ToString();
+                }
+            }
+        }
+        public string FamilyTag  { get => _model.FamilyTag;  set { _model.FamilyTag  = value; OnPropertyChanged(); } }
+        public string Aciklama   { get => _model.Aciklama;   set { _model.Aciklama   = value; OnPropertyChanged(); } }
 
         // ── değişken (variable height) ────────────────────────────────────────
 

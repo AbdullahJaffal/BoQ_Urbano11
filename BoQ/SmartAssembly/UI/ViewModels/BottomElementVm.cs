@@ -8,8 +8,13 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
     {
         public BottomElementVm(BottomElementComponent model)
         {
-            Id      = model?.Id   ?? Guid.Empty;
-            Display = model?.Name ?? "(yok)";
+            Id = model?.Id ?? Guid.Empty;
+            if (model == null)
+                Display = "(yok)";
+            else if (model.IsVariable)
+                Display = string.Format("{0}  —  değişken", model.Name);
+            else
+                Display = string.Format("{0}  —  {1} mm", model.Name, (int)model.EffectiveHeight);
         }
 
         public Guid   Id      { get; }

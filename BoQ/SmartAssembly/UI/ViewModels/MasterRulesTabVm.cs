@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -39,10 +40,19 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public DepthTierVm SelectedDepthTier
         {
             get => _selectedDepthTier;
-            set { Set(ref _selectedDepthTier, value); OnPropertyChanged(nameof(IsTierSelected)); }
+            set
+            {
+                Set(ref _selectedDepthTier, value);
+                OnPropertyChanged(nameof(IsTierSelected));
+                RebuildTierConstraints();
+            }
         }
 
         public bool IsTierSelected => _selectedDepthTier != null;
+
+        /// <summary>Constraint rows shown in the right-side panel for the selected depth tier.</summary>
+        public ObservableCollection<ComponentConstraintVm> TierConstraints { get; }
+            = new ObservableCollection<ComponentConstraintVm>();
 
         // ── Commands ──────────────────────────────────────────────────────────
         public ICommand AddPipeRangeCommand       { get; }
@@ -53,9 +63,13 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public ICommand AddTierCommand            { get; }
         public ICommand DeleteTierCommand         { get; }
 
-        public ICommand SaveCommand   { get; }   // Kaydet    → fixed AppData path, no dialog
-        public ICommand ExportCommand { get; }   // Dışa Aktar → user picks path
-        public ICommand ImportCommand { get; }   // İçe Aktar  → user picks file
+        public ICommand SaveCommand               { get; }
+        public ICommand ExportCommand            { get; }
+        public ICommand ImportCommand            { get; }
+        public ICommand ManageSystemTypesCommand { get; }
+
+        // Sistem tipleri ComboBox kaynağı
+        public ObservableCollection<SystemType> AvailableSystemTypes => _catalog.SystemTypes;
 
         public MasterRulesTabVm(SmartAssemblyMasterCatalog catalog, PipeCatalog pipeCatalog = null)
         {
@@ -72,6 +86,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             SaveCommand               = new RelayCommand(OnSave);
             ExportCommand             = new RelayCommand(OnExport);
             ImportCommand             = new RelayCommand(OnImport);
+            ManageSystemTypesCommand  = new RelayCommand(OnManageSystemTypes);
 
             // Auto-load from fixed AppData path (silent, like PipeCatalog)
             var path = MasterCatalogXmlManager.DefaultRulesPath;
@@ -113,7 +128,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
         private PipeRangeRuleVm BuildVm(PipeRangeRule model)
         {
-            var vm = new PipeRangeRuleVm(model, _pipeCatalog);
+            var vm = new PipeRangeRuleVm(model, _pipeCatalog, _catalog.SystemTypes);
             foreach (var t in model.DepthTiers)
             {
                 var tvm = new DepthTierVm(t, ResolveBaseName);
@@ -128,6 +143,73 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             if (vm.IsCastInSitu) { vm.BaseName = "Yerinde Döküm"; return; }
             var comp = _catalog.FindById(vm.SelectedBaseId);
             vm.BaseName = comp != null ? comp.Name : (vm.SelectedBaseId == Guid.Empty ? "(seçilmedi)" : "?");
+            if (vm == _selectedDepthTier)
+                RebuildTierConstraints();
+        }
+
+        private void RebuildTierConstraints()
+        {
+            // Unsubscribe from old rows
+            foreach (var old in TierConstraints)
+                old.PropertyChanged -= OnConstraintChanged;
+            TierConstraints.Clear();
+
+            var tier = _selectedDepthTier;
+            if (tier == null) return;
+
+            // Taban is always present, always 1/1, read-only
+            var tabanC = tier.Model.GetOrCreateConstraint(ComponentRole.BottomElement);
+            tabanC.MinCount = 1;
+            tabanC.MaxCount = 1;
+            TierConstraints.Add(new ComponentConstraintVm(tabanC, isReadOnly: true, isZeroOrOne: false));
+
+            // Find the family that owns the selected base component
+            var baseComp   = _catalog.FindById(tier.SelectedBaseId);
+            var baseFamily = FindFamilyForComponent(baseComp);
+
+            if (baseFamily != null)
+            {
+                // Add remaining roles in display order, only if the family has at least one component of that type
+                var orderedRoles = new[]
+                {
+                    new { Role = ComponentRole.MiddleElement, IsZeroOrOne = false },
+                    new { Role = ComponentRole.Reducer,       IsZeroOrOne = true  },
+                    new { Role = ComponentRole.Adjuster,      IsZeroOrOne = false },
+                    new { Role = ComponentRole.Cover,         IsZeroOrOne = true  },
+                };
+                foreach (var entry in orderedRoles)
+                {
+                    bool hasRole = false;
+                    foreach (var c in baseFamily.Components)
+                        if (c.Role == entry.Role) { hasRole = true; break; }
+                    if (!hasRole) continue;
+
+                    var constraint = tier.Model.GetOrCreateConstraint(entry.Role);
+                    // ZeroOrOne types cannot be unlimited; clamp default -1 to 1
+                    if (entry.IsZeroOrOne && constraint.MaxCount == -1)
+                        constraint.MaxCount = 1;
+                    TierConstraints.Add(new ComponentConstraintVm(constraint, isReadOnly: false, isZeroOrOne: entry.IsZeroOrOne));
+                }
+            }
+
+            // Subscribe to MinCount changes on every new row, then recalculate
+            foreach (var vm in TierConstraints)
+                vm.PropertyChanged += OnConstraintChanged;
+            RecalcMinDepth();
+        }
+
+        private void OnConstraintChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(ComponentConstraintVm.MinCount))
+                RecalcMinDepth();
+        }
+
+        private void RecalcMinDepth()
+        {
+            if (_selectedDepthTier == null) return;
+            double computed = ComputeMinDepthM(_selectedDepthTier);
+            if (Math.Abs(_selectedDepthTier.MinDepthM - computed) > 1e-6)
+                _selectedDepthTier.MinDepthM = computed;
         }
 
         // ── Pipe range CRUD ───────────────────────────────────────────────────
@@ -163,14 +245,22 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                 MaxPipeId            = src.MaxPipeId
             };
             foreach (var t in src.DepthTiers)
-                clone.DepthTiers.Add(new DepthTierRule
+            {
+                var clonedTier = new DepthTierRule
                 {
                     MinDepthM      = t.MinDepthM,
                     MaxDepthM      = t.MaxDepthM,
                     SelectedBaseId = t.SelectedBaseId,
                     IsCastInSitu   = t.IsCastInSitu,
                     Notes          = t.Notes
-                });
+                };
+                foreach (var cc in t.ComponentConstraints)
+                    clonedTier.ComponentConstraints.Add(new ComponentTypeConstraint
+                    {
+                        Role = cc.Role, MinCount = cc.MinCount, MaxCount = cc.MaxCount
+                    });
+                clone.DepthTiers.Add(clonedTier);
+            }
 
             int idx = _catalog.MasterPipeRules.IndexOf(src);
             _catalog.MasterPipeRules.Insert(idx + 1, clone);
@@ -208,6 +298,11 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         {
             try
             {
+                // Load system types first so BuildVm can resolve references
+                var systemTypes = MasterCatalogXmlManager.ImportSystemTypes(path);
+                _catalog.SystemTypes.Clear();
+                foreach (var st in systemTypes) _catalog.SystemTypes.Add(st);
+
                 var rules = MasterCatalogXmlManager.ImportPipeRules(path);
                 _catalog.MasterPipeRules.Clear();
                 foreach (var r in rules) _catalog.MasterPipeRules.Add(r);
@@ -280,6 +375,12 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         {
             if (_selectedPipeRange == null) return;
             var tier = new DepthTierRule();
+
+            // MinDepthM = previous tier's MaxDepthM + 1 mm
+            var tiers = _selectedPipeRange.DepthTiers;
+            if (tiers.Count > 0)
+                tier.MinDepthM = tiers[tiers.Count - 1].Model.MaxDepthM + 0.001;
+
             _selectedPipeRange.Model.DepthTiers.Add(tier);
             var vm = new DepthTierVm(tier, ResolveBaseName);
             ResolveBaseName(vm);
@@ -294,6 +395,123 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             _selectedPipeRange.Model.DepthTiers.Remove(_selectedDepthTier.Model);
             _selectedPipeRange.DepthTiers.Remove(_selectedDepthTier);
             SelectedDepthTier = null;
+        }
+
+        // ── Min depth auto-calculation ────────────────────────────────────────
+
+        /// <summary>
+        /// Computes the theoretical minimum burial depth for a tier based on the
+        /// MinCount constraints and the effective heights of matching components.
+        /// Diameter chain: Taban.TopOpeningDiameterMm drives subsequent pieces;
+        /// Konik.TopInnerDiameterMm changes the diameter for pieces above the reducer.
+        /// </summary>
+        private double ComputeMinDepthM(DepthTierVm tier)
+        {
+            if (tier == null || tier.IsCastInSitu || tier.SelectedBaseId == Guid.Empty)
+                return tier != null ? tier.MinDepthM : 0;
+
+            var taban = _catalog.FindById(tier.SelectedBaseId) as BottomElementComponent;
+            if (taban == null) return tier.MinDepthM;
+
+            var family = FindFamilyForComponent(taban);
+            if (family == null) return tier.MinDepthM;
+
+            double minMm  = 0;
+            double diam   = taban.TopOpeningDiameterMm;
+            var    model  = tier.Model;
+
+            // Taban — always exactly 1
+            minMm += taban.EffectiveHeight;
+
+            // Gövde Halkası
+            int minGovde = GetConstraintMin(model, ComponentRole.MiddleElement);
+            if (minGovde > 0)
+            {
+                double h = MinHeightInFamily<MiddleElementComponent>(
+                    family, c => Math.Abs(c.InnerDiameterMm - diam) < 0.5);
+                minMm += minGovde * h;
+                // diam unchanged after Govde
+            }
+
+            // Konik — also updates currentDiam to its TopInnerDiameterMm
+            int minKonik = GetConstraintMin(model, ComponentRole.Reducer);
+            if (minKonik > 0)
+            {
+                ReducerComponent bestKonik = null;
+                foreach (var c in family.Components)
+                {
+                    var r = c as ReducerComponent;
+                    if (r == null || Math.Abs(r.BottomInnerDiameterMm - diam) >= 0.5) continue;
+                    if (bestKonik == null || r.EffectiveHeight < bestKonik.EffectiveHeight)
+                        bestKonik = r;
+                }
+                if (bestKonik != null)
+                {
+                    minMm += minKonik * bestKonik.EffectiveHeight;
+                    diam   = bestKonik.TopInnerDiameterMm;  // ← diameter narrows here
+                }
+            }
+
+            // Boyun bileziği
+            int minBoyun = GetConstraintMin(model, ComponentRole.Adjuster);
+            if (minBoyun > 0)
+            {
+                double h = MinHeightInFamily<AdjusterComponent>(
+                    family, c => Math.Abs(c.InnerDiameterMm - diam) < 0.5);
+                minMm += minBoyun * h;
+            }
+
+            // Rögar Kapağı
+            int minCover = GetConstraintMin(model, ComponentRole.Cover);
+            if (minCover > 0)
+            {
+                double h = MinHeightInFamily<CoverComponent>(
+                    family, c => Math.Abs(c.ClearOpeningMm - diam) < 0.5);
+                minMm += minCover * h;
+            }
+
+            return minMm / 1000.0;
+        }
+
+        private ComponentFamily FindFamilyForComponent(ManholeComponent comp)
+        {
+            if (comp == null) return null;
+            foreach (var f in _catalog.Families)
+                foreach (var c in f.Components)
+                    if (c.Id == comp.Id) return f;
+            return null;
+        }
+
+        private static int GetConstraintMin(DepthTierRule model, ComponentRole role)
+        {
+            foreach (var cc in model.ComponentConstraints)
+                if (cc.Role == role) return cc.MinCount;
+            return 0;
+        }
+
+        private static double MinHeightInFamily<T>(ComponentFamily family, Func<T, bool> match)
+            where T : ManholeComponent
+        {
+            double best = double.MaxValue;
+            foreach (var c in family.Components)
+            {
+                var t = c as T;
+                if (t != null && match(t) && t.EffectiveHeight < best)
+                    best = t.EffectiveHeight;
+            }
+            return best == double.MaxValue ? 0 : best;
+        }
+
+        // ── System type management ─────────────────────────────────────────────
+
+        private void OnManageSystemTypes(object _)
+        {
+            var win = new UrbanoMetraj.BoQ.SmartAssembly.UI.Views.SystemTypeManagerWindow(
+                          _catalog.SystemTypes);
+            win.ShowDialog();
+            // Refresh display names on all existing pipe-range VMs
+            foreach (var pr in PipeRanges)
+                pr.RefreshSystemType(_catalog.SystemTypes);
         }
     }
 }

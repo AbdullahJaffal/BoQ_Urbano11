@@ -165,6 +165,7 @@
     <Compile Include="BoQ\SmartAssembly\Models\FootprintShape.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\Footprint.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\SubPiece.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\ComponentFamily.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\ManholeComponent.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\BottomElementComponent.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\MiddleElementComponent.cs" />
@@ -174,6 +175,8 @@
     <Compile Include="BoQ\SmartAssembly\Models\AssemblyRule.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\DepthTierRule.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\PipeRangeRule.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\SystemType.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\ComponentTypeConstraint.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\ProjectTemplate.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\SmartAssemblyMasterCatalog.cs" />
     <!-- Serialization -->
@@ -190,6 +193,8 @@
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\RepositoryTabVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SubPieceRowVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\MasterRulesTabVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ComponentConstraintVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SystemTypeManagerVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ProjectSetupTabVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SmartAssemblyMainVm.cs" />
     <!-- UI – Converters -->
@@ -197,6 +202,9 @@
     <!-- UI – Views (XAML code-behind) -->
     <Compile Include="BoQ\SmartAssembly\UI\Views\SmartAssemblyWindow.xaml.cs">
       <DependentUpon>SmartAssemblyWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="BoQ\SmartAssembly\UI\Views\SystemTypeManagerWindow.xaml.cs">
+      <DependentUpon>SystemTypeManagerWindow.xaml</DependentUpon>
     </Compile>
     <!-- ═══ Manhole Excavation Catalog ══════════════════════════════════════ -->
     <Compile Include="BoQ\ManholeExcavationCatalog\Models\ManholeExcavationCatalogModels.cs" />
@@ -246,6 +254,10 @@
   <!-- Smart Assembly + Pipe Catalog XAML Pages -->
   <ItemGroup>
     <Page Include="BoQ\SmartAssembly\UI\Views\SmartAssemblyWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="BoQ\SmartAssembly\UI\Views\SystemTypeManagerWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

@@ -62,43 +62,98 @@
                  SEKME 1  —  Ana Bileşen Deposu
                  ═══════════════════════════════════════════════════════════════ -->
             <TabItem Header="Ana Bileşen Deposu">
-                <DockPanel Margin="6">
+                <Grid Margin="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="230"/>
+                        <ColumnDefinition Width="5"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="5"/>
+                        <ColumnDefinition Width="310"/>
+                    </Grid.ColumnDefinitions>
 
-                    <ToolBarTray DockPanel.Dock="Top">
-                        <ToolBar>
-                            <Label Content="Yeni tip:" VerticalAlignment="Center"/>
-                            <ComboBox Width="130"
-                                      ItemsSource="{Binding RepositoryTab.AllRoles}"
-                                      SelectedItem="{Binding RepositoryTab.NewRole}"/>
-                            <Button Content="+ Ekle"   Command="{Binding RepositoryTab.AddCommand}"       Margin="4,0,0,0"/>
-                            <Button Content="Çoğalt"   Command="{Binding RepositoryTab.DuplicateCommand}" Margin="2,0,0,0"
-                                    ToolTip="Seçili bileşeni kopyala (yeni GUID, '- Kopya' eki)"/>
-                            <Button Content="Sil"      Command="{Binding RepositoryTab.DeleteCommand}"    Margin="2,0,0,0"/>
-                            <Separator/>
-                            <Button Content="💾 Kaydet"
-                                    Command="{Binding RepositoryTab.SaveCurrentCommand}"
-                                    ToolTip="Son kullanılan dosyaya hızlı kaydet (ilk kullanımda dosya seçim ekranı açılır)"/>
-                            <Button Content="Dışa Aktar"
-                                    Command="{Binding RepositoryTab.SaveXmlCommand}"
-                                    Margin="2,0,0,0"
-                                    ToolTip="Kataloğu XML dosyasına aktar (farklı konuma)"/>
-                            <Button Content="İçe Aktar"
-                                    Command="{Binding RepositoryTab.LoadXmlCommand}"
-                                    Margin="2,0,0,0"
-                                    ToolTip="XML katalog dosyasından içe aktar"/>
-                        </ToolBar>
-                    </ToolBarTray>
+                    <!-- ── Sol panel: Bileşen Aileleri ── -->
+                    <DockPanel Grid.Column="0">
+                        <ToolBarTray DockPanel.Dock="Top">
+                            <ToolBar>
+                                <Button Content="+ Ekle"    Command="{Binding RepositoryTab.AddFamilyCommand}"
+                                        ToolTip="Yeni aile ekle"/>
+                                <Button Content="Sil"       Command="{Binding RepositoryTab.DeleteFamilyCommand}"
+                                        Margin="2,0,0,0" ToolTip="Seçili aileyi ve içeriğini sil"/>
+                                <Separator/>
+                                <Button Content="💾 Kaydet" Command="{Binding RepositoryTab.SaveCommand}"
+                                        ToolTip="Kataloğu cihaza kaydet (SmartAssemblyComponents.xml)"/>
+                                <Button Content="Dışa"      Command="{Binding RepositoryTab.ExportCommand}"
+                                        Margin="2,0,0,0" ToolTip="Dışa Aktar — farklı konuma XML olarak kaydet"/>
+                                <Button Content="İçe"       Command="{Binding RepositoryTab.ImportCommand}"
+                                        Margin="2,0,0,0" ToolTip="İçe Aktar — XML dosyasından yükle"/>
+                            </ToolBar>
+                        </ToolBarTray>
+                        <TextBlock Text="Bileşen Aileleri" FontWeight="SemiBold"
+                                   DockPanel.Dock="Top" Margin="4,6,4,2"/>
+                        <DataGrid ItemsSource="{Binding RepositoryTab.Families}"
+                                  SelectedItem="{Binding RepositoryTab.SelectedFamily}"
+                                  AutoGenerateColumns="False" CanUserAddRows="False"
+                                  SelectionMode="Single"
+                                  ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Aile Adı"
+                                    Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                    Width="*"/>
+                                <DataGridTextColumn Header="Malzeme"
+                                    Binding="{Binding Malzeme, UpdateSourceTrigger=PropertyChanged}"
+                                    Width="80"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
 
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="5"/>
-                            <ColumnDefinition Width="310"/>
-                        </Grid.ColumnDefinitions>
+                    <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
 
-                        <!-- Bileşenler — 4 sütun -->
-                        <DataGrid Grid.Column="0"
-                                  ItemsSource="{Binding RepositoryTab.Components}"
+                    <!-- ── Orta panel: Seçili Aile Detayı + Bileşenler ── -->
+                    <DockPanel Grid.Column="2">
+                        <!-- Family detail header (visible when family selected) -->
+                        <Border DockPanel.Dock="Top"
+                                Visibility="{Binding RepositoryTab.IsFamilySelected,
+                                             Converter={StaticResource BoolToVis}}"
+                                Background="#F5F5F5" BorderBrush="#CCCCCC"
+                                BorderThickness="0,0,0,1" Padding="6,5">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="120"/>
+                                </Grid.ColumnDefinitions>
+                                <Label Content="Aile Adı:" Grid.Column="0"
+                                       VerticalAlignment="Center" Padding="0,0,6,0"/>
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding RepositoryTab.SelectedFamily.Name,
+                                                UpdateSourceTrigger=PropertyChanged}"
+                                         VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <Label Content="Malzeme:" Grid.Column="2"
+                                       VerticalAlignment="Center" Padding="0,0,6,0"/>
+                                <TextBox Grid.Column="3"
+                                         Text="{Binding RepositoryTab.SelectedFamily.Malzeme,
+                                                UpdateSourceTrigger=PropertyChanged}"
+                                         VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <!-- Component toolbar -->
+                        <ToolBarTray DockPanel.Dock="Top">
+                            <ToolBar>
+                                <Label Content="Yeni tip:" VerticalAlignment="Center"/>
+                                <ComboBox Width="130"
+                                          ItemsSource="{Binding RepositoryTab.AllRoles}"
+                                          DisplayMemberPath="Display"
+                                          SelectedValue="{Binding RepositoryTab.NewRole}"
+                                          SelectedValuePath="Role"/>
+                                <Button Content="+ Ekle"  Command="{Binding RepositoryTab.AddCommand}"       Margin="4,0,0,0"/>
+                                <Button Content="Çoğalt"  Command="{Binding RepositoryTab.DuplicateCommand}" Margin="2,0,0,0"
+                                        ToolTip="Seçili bileşeni kopyala"/>
+                                <Button Content="Sil"     Command="{Binding RepositoryTab.DeleteCommand}"    Margin="2,0,0,0"/>
+                            </ToolBar>
+                        </ToolBarTray>
+                        <!-- Component DataGrid -->
+                        <DataGrid ItemsSource="{Binding RepositoryTab.Components}"
                                   SelectedItem="{Binding RepositoryTab.SelectedComponent}"
                                   AutoGenerateColumns="False" CanUserAddRows="False"
                                   SelectionMode="Single"
@@ -113,21 +168,18 @@
                                 <DataGridTextColumn Header="Yükseklik (mm)"
                                     Binding="{Binding TotalHeightMm, StringFormat=0}"
                                     IsReadOnly="True" Width="100"
-                                    ElementStyle="{x:Null}"
-                                    EditingElementStyle="{x:Null}"/>
-                                <DataGridTextColumn Header="Aile Etiketi"
-                                    Binding="{Binding FamilyTag, UpdateSourceTrigger=PropertyChanged}"
-                                    Width="130"/>
+                                    ElementStyle="{x:Null}" EditingElementStyle="{x:Null}"/>
                             </DataGrid.Columns>
                         </DataGrid>
+                    </DockPanel>
 
-                        <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+                    <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch"/>
 
-                        <!-- Detay Paneli -->
-                        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
-                            <StackPanel Margin="8"
-                                        Visibility="{Binding RepositoryTab.IsComponentSelected,
-                                                     Converter={StaticResource BoolToVis}}">
+                    <!-- ── Sağ panel: Bileşen Detayı ── -->
+                    <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="8"
+                                    Visibility="{Binding RepositoryTab.IsComponentSelected,
+                                                 Converter={StaticResource BoolToVis}}">
 
                                 <TextBlock Text="Bileşen Detayı"
                                            FontWeight="Bold" FontSize="13" Margin="0,0,0,8"/>
@@ -176,10 +228,11 @@
                                 <Label Content="Aile Etiketi:"/>
                                 <TextBox Text="{Binding RepositoryTab.SelectedComponent.FamilyTag,
                                                 UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
-                                <Label Content="Malzeme:"/>
-                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.Malzeme,
+                                <Label Content="Açıklama:"/>
+                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.Aciklama,
                                                 UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip="Malzeme türü (örn. C30/37 Beton, HDPE, Dökme Demir)"
+                                         TextWrapping="Wrap" AcceptsReturn="True"
+                                         MinHeight="48" VerticalScrollBarVisibility="Auto"
                                          Margin="0,0,0,4"/>
                                 <Label Content="Dış Hacim (m³):"
                                        ToolTip="Bileşenin toplam mekânsal hacmi"/>
@@ -346,9 +399,8 @@
                                 </StackPanel>
 
                             </StackPanel>
-                        </ScrollViewer>
-                    </Grid>
-                </DockPanel>
+                    </ScrollViewer>
+                </Grid>
             </TabItem>
 
             <!-- ═══════════════════════════════════════════════════════════════
@@ -360,6 +412,10 @@
                     <!-- Toolbar -->
                     <ToolBarTray DockPanel.Dock="Top">
                         <ToolBar>
+                            <Button Content="Sistem Tipi Ekle / Düzenle"
+                                    Command="{Binding MasterRulesTab.ManageSystemTypesCommand}"
+                                    ToolTip="Şebeke/sistem tiplerini yönet (ekle, yeniden adlandır, sil)"/>
+                            <Separator/>
                             <TextBlock Text="Boru Aralığı:" VerticalAlignment="Center"
                                        FontWeight="SemiBold" Margin="0,0,6,0"/>
                             <Button Content="+ Ekle"   Command="{Binding MasterRulesTab.AddPipeRangeCommand}"/>
@@ -414,6 +470,27 @@
                                       RowStyle="{StaticResource BoruAralikSatiri}"
                                       ColumnHeaderStyle="{StaticResource SutunBasligi}">
                                 <DataGrid.Columns>
+
+                                    <!-- 0 — System Type -->
+                                    <DataGridTemplateColumn Header="Sistem Tipi" Width="110">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding SystemTypeDisplay}"
+                                                           VerticalAlignment="Center" Padding="3,0"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                            <DataTemplate>
+                                                <ComboBox
+                                                    ItemsSource="{Binding DataContext.MasterRulesTab.AvailableSystemTypes,
+                                                                  ElementName=MasterPipeRangesGrid}"
+                                                    SelectedItem="{Binding SelectedSystemType,
+                                                                   UpdateSourceTrigger=PropertyChanged}"
+                                                    DisplayMemberPath="Name"
+                                                    IsEditable="False"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                    </DataGridTemplateColumn>
 
                                     <!-- 1 — Pipe Family -->
                                     <DataGridTemplateColumn Header="Aile" Width="110">
@@ -492,49 +569,153 @@
                                     </TextBlock.Text>
                                 </TextBlock>
                             </DockPanel>
-                            <DataGrid x:Name="MasterTiersGrid"
-                                      DockPanel.Dock="Top"
-                                      ItemsSource="{Binding MasterRulesTab.SelectedPipeRange.DepthTiers}"
-                                      SelectedItem="{Binding MasterRulesTab.SelectedDepthTier}"
-                                      AutoGenerateColumns="False" CanUserAddRows="False"
-                                      SelectionMode="Single"
-                                      RowStyle="{StaticResource DerinlikKatmanSatiri}"
-                                      ColumnHeaderStyle="{StaticResource SutunBasligi}">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Min Der. (m)"
-                                        Binding="{Binding MinDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.0}"
-                                        Width="90"/>
-                                    <DataGridTextColumn Header="Max Der. (m)"
-                                        Binding="{Binding MaxDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.0}"
-                                        Width="90"/>
-                                    <DataGridCheckBoxColumn Header="Yd. Döküm"
-                                        Binding="{Binding IsCastInSitu, UpdateSourceTrigger=PropertyChanged}"
-                                        Width="80"/>
-                                    <DataGridTemplateColumn Header="Seçilen Taban" Width="*">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding ResultDisplay}"
-                                                           VerticalAlignment="Center" Padding="2,0"/>
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                        <DataGridTemplateColumn.CellEditingTemplate>
-                                            <DataTemplate>
-                                                <ComboBox
-                                                    ItemsSource="{Binding DataContext.MasterRulesTab.AvailableBases,
-                                                                  ElementName=MasterTiersGrid}"
-                                                    SelectedValue="{Binding SelectedBaseId,
-                                                                    UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
-                                                    SelectedValuePath="Id"
-                                                    DisplayMemberPath="Display"
-                                                    IsEnabled="{Binding IsBaseSelectable}"/>
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellEditingTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Not"
-                                        Binding="{Binding Notes, UpdateSourceTrigger=PropertyChanged}"
-                                        Width="110"/>
-                                </DataGrid.Columns>
-                            </DataGrid>
+                            <!-- Tier grid + constraint panel side by side -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="5"/>
+                                    <ColumnDefinition Width="Auto" MinWidth="260"/>
+                                </Grid.ColumnDefinitions>
+
+                                <DataGrid Grid.Column="0"
+                                          x:Name="MasterTiersGrid"
+                                          ItemsSource="{Binding MasterRulesTab.SelectedPipeRange.DepthTiers}"
+                                          SelectedItem="{Binding MasterRulesTab.SelectedDepthTier}"
+                                          AutoGenerateColumns="False" CanUserAddRows="False"
+                                          SelectionMode="Single"
+                                          RowStyle="{StaticResource DerinlikKatmanSatiri}"
+                                          ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Min Der. (m)"
+                                            Binding="{Binding MinDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.000}"
+                                            Width="90"/>
+                                        <DataGridTextColumn Header="Max Der. (m)"
+                                            Binding="{Binding MaxDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.0}"
+                                            Width="90"/>
+                                        <DataGridCheckBoxColumn Header="Yd. Döküm"
+                                            Binding="{Binding IsCastInSitu, UpdateSourceTrigger=PropertyChanged}"
+                                            Width="80"/>
+                                        <DataGridTemplateColumn Header="Seçilen Taban" Width="*">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding ResultDisplay}"
+                                                               VerticalAlignment="Center" Padding="2,0"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                            <DataGridTemplateColumn.CellEditingTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox
+                                                        ItemsSource="{Binding DataContext.MasterRulesTab.AvailableBases,
+                                                                      ElementName=MasterTiersGrid}"
+                                                        SelectedValue="{Binding SelectedBaseId,
+                                                                        UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
+                                                        SelectedValuePath="Id"
+                                                        DisplayMemberPath="Display"
+                                                        IsEnabled="{Binding IsBaseSelectable}"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellEditingTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+
+                                <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+
+                                <!-- Parça Kısıtları — visible when a tier is selected -->
+                                <Border Grid.Column="2"
+                                        Visibility="{Binding MasterRulesTab.IsTierSelected,
+                                                     Converter={StaticResource BoolToVis}}"
+                                        BorderBrush="#CCCCCC" BorderThickness="1,0,0,0">
+                                    <DockPanel Margin="6,0,0,0">
+                                        <TextBlock DockPanel.Dock="Top"
+                                                   Text="Parça Kısıtları"
+                                                   FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                        <TextBlock DockPanel.Dock="Bottom"
+                                                   FontSize="10" Foreground="Gray" FontStyle="Italic"
+                                                   Text="Maks 0 = kullanma  |  Maks ∞ = yüksekliğe göre sınırsız"
+                                                   Margin="0,4,0,0"/>
+                                        <DataGrid ItemsSource="{Binding MasterRulesTab.TierConstraints}"
+                                                  AutoGenerateColumns="False" CanUserAddRows="False"
+                                                  SelectionMode="Single" HeadersVisibility="Column">
+                                            <DataGrid.RowStyle>
+                                                <Style TargetType="DataGridRow">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsReadOnly}" Value="True">
+                                                            <Setter Property="Foreground" Value="Gray"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </DataGrid.RowStyle>
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Parça Tipi"
+                                                    Binding="{Binding RoleDisplay}" IsReadOnly="True" Width="130"/>
+
+                                                <!-- Min column -->
+                                                <DataGridTemplateColumn Header="Min" Width="55">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding MinCount}"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"/>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                    <DataGridTemplateColumn.CellEditingTemplate>
+                                                        <DataTemplate>
+                                                            <Grid>
+                                                                <TextBlock Text="{Binding MinCount}"
+                                                                           HorizontalAlignment="Center"
+                                                                           VerticalAlignment="Center"
+                                                                           Visibility="{Binding IsReadOnly,
+                                                                               Converter={StaticResource BoolToVis}}"/>
+                                                                <ComboBox ItemsSource="{Binding ZeroOneOptions}"
+                                                                          SelectedItem="{Binding MinCount,
+                                                                              UpdateSourceTrigger=PropertyChanged}"
+                                                                          Visibility="{Binding IsEditableZeroOrOne,
+                                                                              Converter={StaticResource BoolToVis}}"/>
+                                                                <TextBox Text="{Binding MinCount,
+                                                                             UpdateSourceTrigger=PropertyChanged}"
+                                                                         Visibility="{Binding IsEditableFree,
+                                                                             Converter={StaticResource BoolToVis}}"/>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellEditingTemplate>
+                                                </DataGridTemplateColumn>
+
+                                                <!-- Max column: -1=∞, 0=don't use, N=at most N -->
+                                                <DataGridTemplateColumn Header="Maks" Width="*">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding MaxDisplay}"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"/>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                    <DataGridTemplateColumn.CellEditingTemplate>
+                                                        <DataTemplate>
+                                                            <Grid>
+                                                                <TextBlock Text="{Binding MaxDisplay}"
+                                                                           HorizontalAlignment="Center"
+                                                                           VerticalAlignment="Center"
+                                                                           Visibility="{Binding IsReadOnly,
+                                                                               Converter={StaticResource BoolToVis}}"/>
+                                                                <ComboBox ItemsSource="{Binding ZeroOneOptions}"
+                                                                          SelectedItem="{Binding MaxCount,
+                                                                              UpdateSourceTrigger=PropertyChanged}"
+                                                                          Visibility="{Binding IsEditableZeroOrOne,
+                                                                              Converter={StaticResource BoolToVis}}"/>
+                                                                <TextBox Text="{Binding MaxCountText,
+                                                                             UpdateSourceTrigger=PropertyChanged}"
+                                                                         ToolTip="اكتب رقماً أو ∞ للسماح بعدد غير محدود"
+                                                                         Visibility="{Binding IsEditableFree,
+                                                                             Converter={StaticResource BoolToVis}}"/>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellEditingTemplate>
+                                                </DataGridTemplateColumn>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </DockPanel>
+                                </Border>
+                            </Grid>
                         </DockPanel>
 
                         <!-- Yer tutucu: boru aralığı seçilmemiş -->

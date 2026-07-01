@@ -30,29 +30,90 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "UrbanoMetraj", "SmartAssemblyRules.xml");
 
-        // ── Components export / import ────────────────────────────────────────
+        // ── Family export / import (current format) ───────────────────────────
 
-        public static void ExportComponents(SmartAssemblyMasterCatalog catalog, string filePath)
+        public static void ExportFamilies(SmartAssemblyMasterCatalog catalog, string filePath)
         {
             EnsureDir(filePath);
-            var el = new XElement("SmartAssemblyComponents",
-                new XAttribute("Version",      "1.0"),
+            var root = new XElement("SmartAssemblyComponents",
+                new XAttribute("Version",      "2.0"),
                 new XAttribute("LastModified", UtcNow()));
-            foreach (var c in catalog.Components ?? new List<ManholeComponent>())
-                el.Add(SerializeComponent(c));
-            SaveDoc(el, filePath);
+            foreach (var f in catalog.Families)
+                root.Add(SerializeFamily(f));
+            SaveDoc(root, filePath);
         }
+
+        public static List<ComponentFamily> ImportFamilies(string filePath)
+        {
+            var result = new List<ComponentFamily>();
+            var root = XDocument.Load(filePath).Root;
+            if (root == null) return result;
+
+            // Current format (v2): <Family> children
+            foreach (var fEl in root.Elements("Family"))
+            {
+                var f = DeserializeFamily(fEl);
+                if (f != null) result.Add(f);
+            }
+
+            // Legacy format (v1): flat <Component> children — migrate into one default family
+            var legacyComps = new List<ManholeComponent>();
+            foreach (var cEl in root.Elements("Component"))
+            {
+                var c = DeserializeComponent(cEl);
+                if (c != null) legacyComps.Add(c);
+            }
+            if (legacyComps.Count > 0)
+            {
+                var migrated = new ComponentFamily { Name = "Genel", Malzeme = "" };
+                foreach (var c in legacyComps) migrated.Components.Add(c);
+                result.Insert(0, migrated);
+            }
+
+            return result;
+        }
+
+        private static XElement SerializeFamily(ComponentFamily f)
+        {
+            var el = new XElement("Family",
+                new XAttribute("Id",      f.Id),
+                new XAttribute("Name",    f.Name    ?? ""),
+                new XAttribute("Malzeme", f.Malzeme ?? ""));
+            foreach (var c in f.Components)
+                el.Add(SerializeComponent(c));
+            return el;
+        }
+
+        private static ComponentFamily DeserializeFamily(XElement el)
+        {
+            if (el == null) return null;
+            Guid id;
+            Guid.TryParse((string)el.Attribute("Id"), out id);
+            var f = new ComponentFamily
+            {
+                Id      = id == Guid.Empty ? Guid.NewGuid() : id,
+                Name    = (string)el.Attribute("Name")    ?? "",
+                Malzeme = (string)el.Attribute("Malzeme") ?? ""
+            };
+            foreach (var cEl in el.Elements("Component"))
+            {
+                var c = DeserializeComponent(cEl);
+                if (c != null) f.Components.Add(c);
+            }
+            return f;
+        }
+
+        // ── Legacy flat-components export / import (kept for backward compat) ──
+
+        public static void ExportComponents(SmartAssemblyMasterCatalog catalog, string filePath)
+            => ExportFamilies(catalog, filePath);
 
         public static List<ManholeComponent> ImportComponents(string filePath)
         {
             var result = new List<ManholeComponent>();
-            var root = XDocument.Load(filePath).Root;
-            if (root == null) return result;
-            foreach (var cEl in root.Elements("Component"))
-            {
-                var c = DeserializeComponent(cEl);
-                if (c != null) result.Add(c);
-            }
+            foreach (var f in ImportFamilies(filePath))
+                foreach (var c in f.Components)
+                    result.Add(c);
             return result;
         }
 
@@ -62,11 +123,40 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
         {
             EnsureDir(filePath);
             var el = new XElement("SmartAssemblyRules",
-                new XAttribute("Version",      "1.0"),
+                new XAttribute("Version",      "2.0"),
                 new XAttribute("LastModified", UtcNow()));
+
+            // System types block
+            var stEl = new XElement("SystemTypes");
+            foreach (var st in catalog.SystemTypes ?? new System.Collections.ObjectModel.ObservableCollection<SystemType>())
+                stEl.Add(new XElement("SystemType",
+                    new XAttribute("Id",   st.Id),
+                    new XAttribute("Name", st.Name ?? "")));
+            el.Add(stEl);
+
             foreach (var pr in catalog.MasterPipeRules ?? new List<PipeRangeRule>())
                 el.Add(SerializePipeRange(pr));
             SaveDoc(el, filePath);
+        }
+
+        public static List<SystemType> ImportSystemTypes(string filePath)
+        {
+            var result = new List<SystemType>();
+            if (!File.Exists(filePath)) return result;
+            var root = XDocument.Load(filePath).Root;
+            var stEl = root?.Element("SystemTypes");
+            if (stEl == null) return result;
+            foreach (var el in stEl.Elements("SystemType"))
+            {
+                Guid id;
+                Guid.TryParse((string)el.Attribute("Id"), out id);
+                result.Add(new SystemType
+                {
+                    Id   = id == Guid.Empty ? Guid.NewGuid() : id,
+                    Name = (string)el.Attribute("Name") ?? ""
+                });
+            }
+            return result;
         }
 
         public static List<PipeRangeRule> ImportPipeRules(string filePath)
@@ -88,11 +178,11 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
         {
             EnsureDir(filePath);
             var compsEl = new XElement("Components");
-            foreach (var c in catalog.Components ?? new List<ManholeComponent>())
+            foreach (var c in catalog.Components)
                 compsEl.Add(SerializeComponent(c));
 
             var legacyEl = new XElement("MasterRules");
-            foreach (var r in catalog.MasterRules ?? new List<AssemblyRule>())
+            foreach (var r in catalog.MasterRules)
                 legacyEl.Add(SerializeLegacyRule(r));
 
             var pipeRulesEl = new XElement("MasterPipeRules");
@@ -132,11 +222,16 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
 
             var compsEl = root.Element("Components");
             if (compsEl != null)
+            {
+                var defFamily = new ComponentFamily { Name = "Genel", Malzeme = "" };
                 foreach (var cEl in compsEl.Elements("Component"))
                 {
                     var c = DeserializeComponent(cEl);
-                    if (c != null) catalog.Components.Add(c);
+                    if (c != null) defFamily.Components.Add(c);
                 }
+                if (defFamily.Components.Count > 0)
+                    catalog.Families.Add(defFamily);
+            }
 
             var rulesEl = root.Element("MasterRules");
             if (rulesEl != null)
@@ -170,12 +265,12 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                 new XAttribute("Name",            c.Name            ?? ""),
                 new XAttribute("EffectiveHeight", c.EffectiveHeight.ToString("G", IC)),
                 new XAttribute("FamilyTag",       c.FamilyTag       ?? ""),
-                new XAttribute("Malzeme",         c.Malzeme         ?? ""),
                 new XAttribute("IsVariable",      c.IsVariable.ToString().ToLowerInvariant()),
                 new XAttribute("ZorunluParca",    c.ZorunluParca.ToString().ToLowerInvariant()),
                 new XAttribute("YukseltmeParcasi",c.YukseltmeParcasi.ToString().ToLowerInvariant()),
                 new XAttribute("ExternalVolume",  c.ExternalVolume.ToString("G", IC)),
-                new XAttribute("MaterialVolume",  c.MaterialVolume.ToString("G", IC)));
+                new XAttribute("MaterialVolume",  c.MaterialVolume.ToString("G", IC)),
+                new XAttribute("Aciklama",        c.Aciklama ?? ""));
 
             var bottom = c as BottomElementComponent;
             if (bottom != null)
@@ -322,12 +417,12 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
             comp.Name             = (string)el.Attribute("Name")     ?? "";
             comp.EffectiveHeight  = ParseDouble(el, "EffectiveHeight", 0);
             comp.FamilyTag        = (string)el.Attribute("FamilyTag") ?? "";
-            comp.Malzeme          = (string)el.Attribute("Malzeme")   ?? "";
             comp.IsVariable       = ParseBool(el, "IsVariable",       false);
             comp.ZorunluParca     = ParseBool(el, "ZorunluParca",     false);
             comp.YukseltmeParcasi = ParseBool(el, "YukseltmeParcasi", false);
             comp.ExternalVolume   = ParseDouble(el, "ExternalVolume",  0);
             comp.MaterialVolume   = ParseDouble(el, "MaterialVolume",  0);
+            comp.Aciklama         = (string)el.Attribute("Aciklama")  ?? "";
             return comp;
         }
 
@@ -354,16 +449,21 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
         private static XElement SerializePipeRange(PipeRangeRule pr)
         {
             var el = new XElement("PipeRange",
-                new XAttribute("Id",         pr.Id),
-                new XAttribute("MinPipeMm",  pr.MinPipeMm.ToString("G", IC)),
-                new XAttribute("MaxPipeMm",  pr.MaxPipeMm.ToString("G", IC)));
+                new XAttribute("Id",                   pr.Id),
+                new XAttribute("MinPipeMm",            pr.MinPipeMm.ToString("G", IC)),
+                new XAttribute("MaxPipeMm",            pr.MaxPipeMm.ToString("G", IC)),
+                new XAttribute("SelectedPipeFamilyId", pr.SelectedPipeFamilyId),
+                new XAttribute("MinPipeId",            pr.MinPipeId),
+                new XAttribute("MaxPipeId",            pr.MaxPipeId),
+                new XAttribute("SystemTypeId",         pr.SystemTypeId));
             foreach (var t in pr.DepthTiers ?? new List<DepthTierRule>())
                 el.Add(SerializeDepthTier(t));
             return el;
         }
 
-        private static XElement SerializeDepthTier(DepthTierRule t) =>
-            new XElement("DepthTier",
+        private static XElement SerializeDepthTier(DepthTierRule t)
+        {
+            var el = new XElement("DepthTier",
                 new XAttribute("Id",             t.Id),
                 new XAttribute("MinDepthM",      t.MinDepthM.ToString("G", IC)),
                 new XAttribute("MaxDepthM",      t.MaxDepthM.ToString("G", IC)),
@@ -371,16 +471,38 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                 new XAttribute("IsCastInSitu",   t.IsCastInSitu.ToString().ToLowerInvariant()),
                 new XAttribute("Notes",          t.Notes ?? ""));
 
+            if (t.ComponentConstraints != null && t.ComponentConstraints.Count > 0)
+            {
+                var ccEl = new XElement("ComponentConstraints");
+                foreach (var cc in t.ComponentConstraints)
+                    ccEl.Add(new XElement("CC",
+                        new XAttribute("Role", cc.Role.ToString()),
+                        new XAttribute("Min",  cc.MinCount),
+                        new XAttribute("Max",  cc.MaxCount)));
+                el.Add(ccEl);
+            }
+            return el;
+        }
+
         private static PipeRangeRule DeserializePipeRange(XElement el)
         {
             if (el == null) return null;
-            Guid id;
-            Guid.TryParse((string)el.Attribute("Id"), out id);
+            Guid id, familyId, minPipeId, maxPipeId;
+            Guid.TryParse((string)el.Attribute("Id"),                  out id);
+            Guid.TryParse((string)el.Attribute("SelectedPipeFamilyId"), out familyId);
+            Guid.TryParse((string)el.Attribute("MinPipeId"),            out minPipeId);
+            Guid.TryParse((string)el.Attribute("MaxPipeId"),            out maxPipeId);
+            Guid systemTypeId;
+            Guid.TryParse((string)el.Attribute("SystemTypeId"), out systemTypeId);
             var pr = new PipeRangeRule
             {
-                Id        = id == Guid.Empty ? Guid.NewGuid() : id,
-                MinPipeMm = ParseDouble(el, "MinPipeMm", 0),
-                MaxPipeMm = ParseDouble(el, "MaxPipeMm", 0)
+                Id                   = id == Guid.Empty ? Guid.NewGuid() : id,
+                MinPipeMm            = ParseDouble(el, "MinPipeMm", 0),
+                MaxPipeMm            = ParseDouble(el, "MaxPipeMm", 0),
+                SelectedPipeFamilyId = familyId,
+                MinPipeId            = minPipeId,
+                MaxPipeId            = maxPipeId,
+                SystemTypeId         = systemTypeId
             };
             foreach (var tEl in el.Elements("DepthTier"))
             {
@@ -396,7 +518,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
             Guid id, baseId;
             Guid.TryParse((string)el.Attribute("Id"),             out id);
             Guid.TryParse((string)el.Attribute("SelectedBaseId"), out baseId);
-            return new DepthTierRule
+            var tier = new DepthTierRule
             {
                 Id             = id == Guid.Empty ? Guid.NewGuid() : id,
                 MinDepthM      = ParseDouble(el, "MinDepthM",    0),
@@ -405,6 +527,24 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                 IsCastInSitu   = ParseBool  (el, "IsCastInSitu", false),
                 Notes          = (string)el.Attribute("Notes")  ?? ""
             };
+
+            var ccEl = el.Element("ComponentConstraints");
+            if (ccEl != null)
+            {
+                foreach (var ccItem in ccEl.Elements("CC"))
+                {
+                    ComponentRole role;
+                    if (!System.Enum.TryParse((string)ccItem.Attribute("Role") ?? "", out role)) continue;
+                    int min, max;
+                    int.TryParse((string)ccItem.Attribute("Min"), out min);
+                    int.TryParse((string)ccItem.Attribute("Max"), out max);
+                    tier.ComponentConstraints.Add(new ComponentTypeConstraint
+                    {
+                        Role = role, MinCount = min, MaxCount = max
+                    });
+                }
+            }
+            return tier;
         }
 
         // =====================================================================

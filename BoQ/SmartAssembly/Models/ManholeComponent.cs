@@ -24,9 +24,6 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
         /// <summary>Net concrete / HDPE volume of this component (m³) — used for material quantity take-off.</summary>
         public double MaterialVolume  { get; set; }
 
-        /// <summary>Material / product type free text (e.g. "C30/37 Beton", "HDPE", "Dökme Demir").</summary>
-        public string Malzeme          { get; set; }
-
         /// <summary>
         /// When true the assembly engine treats this component's height as variable (site-fitted).
         /// The UI disables manual height entry and, for BottomElement, disables composite sub-pieces.
@@ -38,5 +35,8 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
 
         /// <summary>Marks this ring as a height-adjustment (yükseltme) piece. Only meaningful for MiddleElement and Adjuster.</summary>
         public bool   YukseltmeParcasi { get; set; }
+
+        /// <summary>Free-text description / note for this component.</summary>
+        public string Aciklama         { get; set; }
     }
 }

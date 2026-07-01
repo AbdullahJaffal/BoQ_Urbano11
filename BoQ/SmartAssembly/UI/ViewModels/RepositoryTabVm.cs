@@ -13,8 +13,26 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
     public class RepositoryTabVm : ViewModelBase
     {
         private readonly SmartAssemblyMasterCatalog _catalog;
+        private readonly Action _onComponentsChanged;
 
-        // ── Component list (DataGrid) ──────────────────────────────────────────
+        // ── Left panel — family list ───────────────────────────────────────────
+        public ObservableCollection<ComponentFamily> Families => _catalog.Families;
+
+        private ComponentFamily _selectedFamily;
+        public ComponentFamily SelectedFamily
+        {
+            get => _selectedFamily;
+            set
+            {
+                Set(ref _selectedFamily, value);
+                OnPropertyChanged(nameof(IsFamilySelected));
+                ReloadComponents();
+            }
+        }
+
+        public bool IsFamilySelected => _selectedFamily != null;
+
+        // ── Middle panel — component list ──────────────────────────────────────
         public ObservableCollection<ComponentRowVm> Components { get; }
             = new ObservableCollection<ComponentRowVm>();
 
@@ -41,9 +59,50 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public bool IsReducerSelected          => _selectedComponent?.Model is ReducerComponent;
         public bool IsCoverSelected            => _selectedComponent?.Model is CoverComponent;
 
-        // ── Role picker (toolbar) ─────────────────────────────────────────────
-        public ComponentRole[] AllRoles { get; } = (ComponentRole[])Enum.GetValues(typeof(ComponentRole));
+        // ── Role picker ────────────────────────────────────────────────────────
+        public ComponentRoleItem[] AllRoles { get; } =
+        {
+            new ComponentRoleItem(ComponentRole.BottomElement, "Taban"),
+            new ComponentRoleItem(ComponentRole.MiddleElement, "Gövde Halkası"),
+            new ComponentRoleItem(ComponentRole.Reducer,       "Konik"),
+            new ComponentRoleItem(ComponentRole.Adjuster,      "Boyun bileziği"),
+            new ComponentRoleItem(ComponentRole.Cover,         "Rögar Kapağı"),
+        };
 
+        private ComponentRole _newRole = ComponentRole.MiddleElement;
+        public ComponentRole NewRole { get => _newRole; set { Set(ref _newRole, value); } }
+
+        // ── Sub-Pieces ─────────────────────────────────────────────────────────
+        public ObservableCollection<SubPieceRowVm> SubPieces { get; }
+            = new ObservableCollection<SubPieceRowVm>();
+
+        private SubPieceRowVm _selectedSubPiece;
+        public SubPieceRowVm SelectedSubPiece
+        {
+            get => _selectedSubPiece;
+            set { Set(ref _selectedSubPiece, value); OnPropertyChanged(nameof(IsSubPieceSelected)); }
+        }
+
+        public bool IsSubPieceSelected => _selectedSubPiece != null;
+
+        // ── Commands ───────────────────────────────────────────────────────────
+        public ICommand AddFamilyCommand    { get; }
+        public ICommand DeleteFamilyCommand { get; }
+        public ICommand AddCommand          { get; }
+        public ICommand DeleteCommand       { get; }
+        public ICommand DuplicateCommand    { get; }
+        public ICommand SaveCommand         { get; }
+        public ICommand ExportCommand       { get; }
+        public ICommand ImportCommand       { get; }
+        public ICommand AddSubPieceCommand    { get; }
+        public ICommand DeleteSubPieceCommand { get; }
+
+        // Aliases so Tab 1 XAML bindings that still use old names keep compiling
+        public ICommand SaveCurrentCommand => SaveCommand;
+        public ICommand SaveXmlCommand     => ExportCommand;
+        public ICommand LoadXmlCommand     => ImportCommand;
+
+        // ── Footprint shape picker ─────────────────────────────────────────────
         public FootprintShapeItem[] AllFootprintShapes { get; } =
         {
             new FootprintShapeItem(FootprintShape.Circular,    "Dairesel"),
@@ -59,90 +118,80 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             "kısa kenar; giriş boru yönünde"
         };
 
-        private ComponentRole _newRole = ComponentRole.MiddleElement;
-        public ComponentRole NewRole { get => _newRole; set { Set(ref _newRole, value); } }
-
-        // ── Sub-Pieces (composite BottomElement) ──────────────────────────────
-        public ObservableCollection<SubPieceRowVm> SubPieces { get; }
-            = new ObservableCollection<SubPieceRowVm>();
-
-        private SubPieceRowVm _selectedSubPiece;
-        public SubPieceRowVm SelectedSubPiece
-        {
-            get => _selectedSubPiece;
-            set { Set(ref _selectedSubPiece, value); OnPropertyChanged(nameof(IsSubPieceSelected)); }
-        }
-
-        public bool IsSubPieceSelected => _selectedSubPiece != null;
-
-        // ── Commands ──────────────────────────────────────────────────────────
-        public ICommand AddCommand            { get; }
-        public ICommand DeleteCommand         { get; }
-        public ICommand DuplicateCommand      { get; }
-        public ICommand SaveCommand           { get; }   // Kaydet    → fixed AppData path, no dialog
-        public ICommand ExportCommand         { get; }   // Dışa Aktar → user picks path
-        public ICommand ImportCommand         { get; }   // İçe Aktar  → user picks file
-
-        // Keep old names as aliases so XAML bindings in Tab 1 still compile
-        public ICommand SaveCurrentCommand    => SaveCommand;
-        public ICommand SaveXmlCommand        => ExportCommand;
-        public ICommand LoadXmlCommand        => ImportCommand;
-
-        public ICommand AddSubPieceCommand    { get; }
-        public ICommand DeleteSubPieceCommand { get; }
-
-        private readonly Action _onComponentsChanged;
-
+        // ── Constructor ────────────────────────────────────────────────────────
         public RepositoryTabVm(SmartAssemblyMasterCatalog catalog,
                                Action onComponentsChanged = null)
         {
-            _catalog              = catalog ?? throw new ArgumentNullException(nameof(catalog));
-            _onComponentsChanged  = onComponentsChanged;
+            _catalog             = catalog ?? throw new ArgumentNullException(nameof(catalog));
+            _onComponentsChanged = onComponentsChanged;
 
-            AddCommand            = new RelayCommand(OnAdd);
-            DeleteCommand         = new RelayCommand(OnDelete,      _ => IsComponentSelected);
-            DuplicateCommand      = new RelayCommand(OnDuplicate,   _ => IsComponentSelected);
-            SaveCommand           = new RelayCommand(OnSave,        _ => _catalog.Components.Count > 0);
-            ExportCommand         = new RelayCommand(OnExport,      _ => _catalog.Components.Count > 0);
-            ImportCommand         = new RelayCommand(OnImport);
+            AddFamilyCommand    = new RelayCommand(OnAddFamily);
+            DeleteFamilyCommand = new RelayCommand(OnDeleteFamily, _ => IsFamilySelected);
+            AddCommand          = new RelayCommand(OnAdd,       _ => IsFamilySelected);
+            DeleteCommand       = new RelayCommand(OnDelete,    _ => IsComponentSelected);
+            DuplicateCommand    = new RelayCommand(OnDuplicate, _ => IsComponentSelected);
+            SaveCommand         = new RelayCommand(OnSave);
+            ExportCommand       = new RelayCommand(OnExport);
+            ImportCommand       = new RelayCommand(OnImport);
             AddSubPieceCommand    = new RelayCommand(OnAddSubPiece,    _ => IsBottomElementSelected);
             DeleteSubPieceCommand = new RelayCommand(OnDeleteSubPiece, _ => IsSubPieceSelected);
 
             // Auto-load from fixed AppData path (silent, like PipeCatalog)
             var path = MasterCatalogXmlManager.DefaultComponentsPath;
             if (File.Exists(path))
-                TryLoadComponents(path, silent: true);
-            else
-                Reload();
+                TryLoadFamilies(path, silent: true);
         }
 
-        public void Reload()
+        // ── Rebuild component VM list from selected family ─────────────────────
+        private void ReloadComponents()
         {
             Components.Clear();
-            foreach (var c in _catalog.Components)
+            SelectedComponent = null;
+            if (_selectedFamily == null) return;
+            foreach (var c in _selectedFamily.Components)
                 Components.Add(new ComponentRowVm(c));
         }
 
-        // ── Component CRUD ────────────────────────────────────────────────────
+        // ── Family CRUD ────────────────────────────────────────────────────────
+
+        private void OnAddFamily(object _)
+        {
+            var family = new ComponentFamily { Name = "Yeni Aile" };
+            _catalog.Families.Add(family);
+            Application.Current?.Dispatcher?.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() => SelectedFamily = family));
+        }
+
+        private void OnDeleteFamily(object _)
+        {
+            if (_selectedFamily == null) return;
+            _catalog.Families.Remove(_selectedFamily);
+            SelectedFamily = null;
+            _onComponentsChanged?.Invoke();
+        }
+
+        // ── Component CRUD ─────────────────────────────────────────────────────
 
         private void OnAdd(object _)
         {
+            if (_selectedFamily == null) return;
             ManholeComponent comp;
             switch (_newRole)
             {
                 case ComponentRole.BottomElement:
                     comp = new BottomElementComponent { Name = "Yeni Taban",        FamilyTag = "Standard-Precast" }; break;
                 case ComponentRole.Reducer:
-                    comp = new ReducerComponent       { Name = "Yeni Konik",        FamilyTag = "Standard-Precast" }; break;
+                    comp = new ReducerComponent       { Name = "Yeni Konik",        FamilyTag = "Standard-Precast", ZorunluParca = true }; break;
                 case ComponentRole.Adjuster:
-                    comp = new AdjusterComponent      { Name = "Yeni Ayar Halkası", FamilyTag = "Standard-Precast" }; break;
+                    comp = new AdjusterComponent      { Name = "Yeni Ayar Halkası", FamilyTag = "Standard-Precast", YukseltmeParcasi = true }; break;
                 case ComponentRole.Cover:
-                    comp = new CoverComponent         { Name = "Yeni Rögar Kapağı", LoadClass = "D400" };             break;
-                default:
-                    comp = new MiddleElementComponent { Name = "Yeni Halka",        FamilyTag = "Standard-Precast" }; break;
+                    comp = new CoverComponent         { Name = "Yeni Rögar Kapağı", LoadClass = "D400",             ZorunluParca = true };    break;
+                default: // MiddleElement
+                    comp = new MiddleElementComponent { Name = "Yeni Halka",        FamilyTag = "Standard-Precast", YukseltmeParcasi = true }; break;
             }
 
-            _catalog.Components.Add(comp);
+            _selectedFamily.Components.Add(comp);
             var vm = new ComponentRowVm(comp);
             Components.Add(vm);
             Application.Current?.Dispatcher?.BeginInvoke(
@@ -152,15 +201,15 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
         private void OnDelete(object _)
         {
-            if (_selectedComponent == null) return;
-            _catalog.Components.Remove(_selectedComponent.Model);
+            if (_selectedComponent == null || _selectedFamily == null) return;
+            _selectedFamily.Components.Remove(_selectedComponent.Model);
             Components.Remove(_selectedComponent);
             SelectedComponent = null;
         }
 
         private void OnDuplicate(object _)
         {
-            if (_selectedComponent == null) return;
+            if (_selectedComponent == null || _selectedFamily == null) return;
             var src = _selectedComponent.Model;
 
             ManholeComponent clone;
@@ -177,12 +226,18 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                     WallThicknessMm      = b.WallThicknessMm,
                     TopOpeningDiameterMm = b.TopOpeningDiameterMm,
                     IsComposite          = b.IsComposite,
-                    Footprint            = new Footprint
+                    TabanKalinligiMm     = b.TabanKalinligiMm,
+                    IsVariable           = b.IsVariable,
+                    ZorunluParca         = b.ZorunluParca,
+                    YukseltmeParcasi     = b.YukseltmeParcasi,
+                    Footprint = new Footprint
                     {
-                        Shape      = b.Footprint?.Shape ?? FootprintShape.Circular,
-                        DiameterMm = b.Footprint?.DiameterMm ?? 0,
-                        LengthMm   = b.Footprint?.LengthMm   ?? 0,
-                        WidthMm    = b.Footprint?.WidthMm    ?? 0
+                        Shape                  = b.Footprint?.Shape ?? FootprintShape.Circular,
+                        DiameterMm             = b.Footprint?.DiameterMm ?? 0,
+                        SideMm                 = b.Footprint?.SideMm    ?? 0,
+                        LengthMm               = b.Footprint?.LengthMm  ?? 0,
+                        WidthMm                = b.Footprint?.WidthMm   ?? 0,
+                        RectangularOrientation = b.Footprint?.RectangularOrientation ?? ""
                     }
                 };
                 foreach (var sp in b.SubPieces)
@@ -199,7 +254,9 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                         Name = m.Name + " - Kopya", EffectiveHeight = m.EffectiveHeight,
                         FamilyTag = m.FamilyTag, ExternalVolume = m.ExternalVolume,
                         MaterialVolume = m.MaterialVolume, WallThicknessMm = m.WallThicknessMm,
-                        InnerDiameterMm = m.InnerDiameterMm
+                        InnerDiameterMm = m.InnerDiameterMm,
+                        IsVariable = m.IsVariable, ZorunluParca = m.ZorunluParca,
+                        YukseltmeParcasi = m.YukseltmeParcasi
                     };
                 else
                 {
@@ -211,7 +268,8 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                             FamilyTag = r.FamilyTag, ExternalVolume = r.ExternalVolume,
                             MaterialVolume = r.MaterialVolume, WallThicknessMm = r.WallThicknessMm,
                             BottomInnerDiameterMm = r.BottomInnerDiameterMm,
-                            TopInnerDiameterMm    = r.TopInnerDiameterMm
+                            TopInnerDiameterMm    = r.TopInnerDiameterMm,
+                            IsVariable = r.IsVariable, ZorunluParca = r.ZorunluParca
                         };
                     else
                     {
@@ -222,7 +280,9 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                                 Name = a.Name + " - Kopya", EffectiveHeight = a.EffectiveHeight,
                                 FamilyTag = a.FamilyTag, ExternalVolume = a.ExternalVolume,
                                 MaterialVolume = a.MaterialVolume, WallThicknessMm = a.WallThicknessMm,
-                                InnerDiameterMm = a.InnerDiameterMm
+                                InnerDiameterMm = a.InnerDiameterMm,
+                                IsVariable = a.IsVariable, ZorunluParca = a.ZorunluParca,
+                                YukseltmeParcasi = a.YukseltmeParcasi
                             };
                         else
                         {
@@ -233,21 +293,22 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                                 Name = cv.Name + " - Kopya", EffectiveHeight = cv.EffectiveHeight,
                                 FamilyTag = cv.FamilyTag, ExternalVolume = cv.ExternalVolume,
                                 MaterialVolume = cv.MaterialVolume,
-                                LoadClass = cv.LoadClass, ClearOpeningMm = cv.ClearOpeningMm
+                                LoadClass = cv.LoadClass, ClearOpeningMm = cv.ClearOpeningMm,
+                                IsVariable = cv.IsVariable, ZorunluParca = cv.ZorunluParca
                             };
                         }
                     }
                 }
             }
 
-            _catalog.Components.Add(clone);
+            _selectedFamily.Components.Add(clone);
             var vm = new ComponentRowVm(clone);
             Components.Add(vm);
             Application.Current?.Dispatcher?.BeginInvoke(DispatcherPriority.Background,
                 new Action(() => SelectedComponent = vm));
         }
 
-        // ── Sub-Piece CRUD ────────────────────────────────────────────────────
+        // ── Sub-Piece CRUD ─────────────────────────────────────────────────────
 
         private Action SubPieceHeightCallback() =>
             () => _selectedComponent?.RecalcEffectiveHeight();
@@ -287,29 +348,27 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             _selectedComponent?.RecalcEffectiveHeight();
         }
 
-        // ── XML persistence (PipeCatalog pattern) ────────────────────────────
+        // ── XML persistence (PipeCatalog pattern) ──────────────────────────────
 
-        private void TryLoadComponents(string path, bool silent)
+        private void TryLoadFamilies(string path, bool silent)
         {
             try
             {
-                var comps = MasterCatalogXmlManager.ImportComponents(path);
-                _catalog.Components.Clear();
-                foreach (var c in comps) _catalog.Components.Add(c);
-                Reload();
+                var families = MasterCatalogXmlManager.ImportFamilies(path);
+                _catalog.Families.Clear();
+                foreach (var f in families) _catalog.Families.Add(f);
+                SelectedFamily = null;
                 _onComponentsChanged?.Invoke();
                 if (!silent)
                     MessageBox.Show(
-                        string.Format("{0} bileşen yüklendi.", comps.Count),
+                        string.Format("{0} aile yüklendi.", families.Count),
                         "İçe Aktarma Başarılı", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
                 if (!silent)
-                    MessageBox.Show("Bileşen yükleme hatası:\n" + ex.Message,
+                    MessageBox.Show("Aile yükleme hatası:\n" + ex.Message,
                         "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
-                else
-                    Reload();
             }
         }
 
@@ -317,7 +376,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         {
             try
             {
-                MasterCatalogXmlManager.ExportComponents(_catalog,
+                MasterCatalogXmlManager.ExportFamilies(_catalog,
                     MasterCatalogXmlManager.DefaultComponentsPath);
                 StatusText = "Bileşenler kaydedildi.";
             }
@@ -331,7 +390,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             if (path == null) return;
             try
             {
-                MasterCatalogXmlManager.ExportComponents(_catalog, path);
+                MasterCatalogXmlManager.ExportFamilies(_catalog, path);
                 StatusText = "Dışa aktarıldı: " + Path.GetFileName(path);
             }
             catch (Exception ex) { ShowError("Dışa aktarma hatası", ex); }
@@ -341,10 +400,10 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         {
             var path = PickOpenPath("Bileşen Kataloğu İçe Aktar");
             if (path == null) return;
-            TryLoadComponents(path, silent: false);
+            TryLoadFamilies(path, silent: false);
         }
 
-        // ── Status bar text ───────────────────────────────────────────────────
+        // ── Status bar ─────────────────────────────────────────────────────────
         private string _statusText = "Hazır.";
         public string StatusText
         {
@@ -352,7 +411,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             set { Set(ref _statusText, value); }
         }
 
-        // ── Helpers ───────────────────────────────────────────────────────────
+        // ── Helpers ────────────────────────────────────────────────────────────
         private static string PickOpenPath(string title)
         {
             var dlg = new OpenFileDialog
@@ -379,5 +438,13 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public FootprintShape Shape   { get; }
         public string         Display { get; }
         public FootprintShapeItem(FootprintShape shape, string display) { Shape = shape; Display = display; }
+    }
+
+    /// <summary>Label+value pair for the Yeni Tip ComboBox so role names are displayed in Turkish.</summary>
+    public sealed class ComponentRoleItem
+    {
+        public ComponentRole Role    { get; }
+        public string        Display { get; }
+        public ComponentRoleItem(ComponentRole role, string display) { Role = role; Display = display; }
     }
 }

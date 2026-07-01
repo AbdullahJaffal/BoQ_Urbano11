@@ -37,5 +37,8 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
         public Guid MaxPipeId { get; set; }
 
         public List<DepthTierRule> DepthTiers { get; set; } = new List<DepthTierRule>();
+
+        /// <summary>Optional reference to a <see cref="SystemType"/> that scopes this rule to a specific network type.</summary>
+        public Guid SystemTypeId { get; set; }
     }
 }

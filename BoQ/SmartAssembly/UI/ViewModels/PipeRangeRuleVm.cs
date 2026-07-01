@@ -4,6 +4,7 @@ using System.Collections.Specialized;
 using System.Linq;
 using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
+using SystemTypeModel = UrbanoMetraj.BoQ.SmartAssembly.Models.SystemType;
 
 namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 {
@@ -22,23 +23,34 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
     {
         private readonly PipeRangeRule _model;
         private readonly PipeCatalog   _catalog;
+        private readonly ObservableCollection<SystemTypeModel> _systemTypes;
 
         // ── Catalog-cascade state ─────────────────────────────────────────────
-        private PipeFamily   _selectedFamily;
+        private PipeFamily     _selectedFamily;
         private PipeDefinition _selectedMinPipe;
         private PipeDefinition _selectedMaxPipe;
+        private SystemTypeModel _selectedSystemType;
 
         private readonly ObservableCollection<PipeDefinition> _pipesInFamily
             = new ObservableCollection<PipeDefinition>();
 
         // ── Constructors ──────────────────────────────────────────────────────
 
-        public PipeRangeRuleVm(PipeRangeRule model) : this(model, null) { }
+        public PipeRangeRuleVm(PipeRangeRule model) : this(model, null, null) { }
 
         public PipeRangeRuleVm(PipeRangeRule model, PipeCatalog catalog)
+            : this(model, catalog, null) { }
+
+        public PipeRangeRuleVm(PipeRangeRule model, PipeCatalog catalog,
+                               ObservableCollection<SystemTypeModel> systemTypes)
         {
-            _model   = model ?? throw new ArgumentNullException(nameof(model));
-            _catalog = catalog;
+            _model       = model ?? throw new ArgumentNullException(nameof(model));
+            _catalog     = catalog;
+            _systemTypes = systemTypes;
+
+            // Restore system-type selection
+            if (_systemTypes != null && model.SystemTypeId != Guid.Empty)
+                _selectedSystemType = _systemTypes.FirstOrDefault(st => st.Id == model.SystemTypeId);
 
             // Restore catalog selections persisted in the model
             if (_catalog != null && model.SelectedPipeFamilyId != Guid.Empty)
@@ -85,6 +97,29 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                 OnPropertyChanged(nameof(PipeRangeDisplay));
                 OnPropertyChanged(nameof(IsPipeRangeValid));
             }
+        }
+
+        // ── System type ───────────────────────────────────────────────────────
+
+        public SystemTypeModel SelectedSystemType
+        {
+            get => _selectedSystemType;
+            set
+            {
+                _selectedSystemType  = value;
+                _model.SystemTypeId  = value?.Id ?? Guid.Empty;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SystemTypeDisplay));
+            }
+        }
+
+        public string SystemTypeDisplay => _selectedSystemType?.Name ?? "—";
+
+        public void RefreshSystemType(ObservableCollection<SystemTypeModel> types)
+        {
+            _selectedSystemType = types.FirstOrDefault(st => st.Id == _model.SystemTypeId);
+            OnPropertyChanged(nameof(SelectedSystemType));
+            OnPropertyChanged(nameof(SystemTypeDisplay));
         }
 
         // ── Catalog cascade ───────────────────────────────────────────────────
