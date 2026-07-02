@@ -45,6 +45,11 @@
     <!-- WinForms + Drawing – required for BoQStartupDialog and file dialogs -->
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
+    <!-- WindowsFormsIntegration – GAC, not copied; used by NetworkPaletteSet to host
+         the WPF NetworkPaletteControl inside the AutoCAD PaletteSet (ElementHost). -->
+    <Reference Include="WindowsFormsIntegration">
+      <Private>false</Private>
+    </Reference>
     <!-- WPF assemblies – required for ICommand + RibbonItemEventArgs in AdWindows + XAML pages -->
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
@@ -131,6 +136,11 @@
     <Compile Include="BoQ\Services\CrossSectionDrawService.cs" />
     <Compile Include="BoQ\UI\RibbonSetup.cs" />
     <Compile Include="BoQ\UI\InputBlocker.cs" />
+    <!-- ═══ Network Panel (UrbanoLock UT_NETWORK_PANEL clone) ═════════════════ -->
+    <Compile Include="BoQ\UI\NetworkPanel\UrbanoLockBridge.cs" />
+    <Compile Include="BoQ\UI\NetworkPanel\NetworkSessionManager.cs" />
+    <Compile Include="BoQ\UI\NetworkPanel\NetworkPaletteControl.cs" />
+    <Compile Include="BoQ\UI\NetworkPanel\NetworkPaletteSet.cs" />
     <Compile Include="BoQ\UI\SolidsStartupDialog.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -159,6 +169,7 @@
     <Compile Include="BoQ\MhProbeCommand.cs" />
     <!-- ═══ Smart Assembly ══════════════════════════════════════════════════ -->
     <Compile Include="BoQ\SmartAssembly\SmartAssemblyCommand.cs" />
+    <Compile Include="BoQ\SmartAssembly\Services\SmartAssemblyCatalogStore.cs" />
     <!-- Data Foundation -->
     <!-- Models -->
     <Compile Include="BoQ\SmartAssembly\Models\ComponentRole.cs" />
@@ -210,16 +221,16 @@
     <Compile Include="BoQ\ManholeExcavationCatalog\Models\ManholeExcavationCatalogModels.cs" />
     <Compile Include="BoQ\ManholeExcavationCatalog\Services\ManholeExcavationCatalogXmlManager.cs" />
     <Compile Include="BoQ\ManholeExcavationCatalog\UI\ViewModels\ManholeExcavationMainVm.cs" />
-    <Compile Include="BoQ\ManholeExcavationCatalog\UI\Views\ManholeExcavationCatalogWindow.xaml.cs">
-      <DependentUpon>ManholeExcavationCatalogWindow.xaml</DependentUpon>
+    <Compile Include="BoQ\ManholeExcavationCatalog\UI\Views\ManholeExcavationCatalogView.xaml.cs">
+      <DependentUpon>ManholeExcavationCatalogView.xaml</DependentUpon>
     </Compile>
     <Compile Include="BoQ\ManholeExcavationCatalog\ManholeExcavationCatalogCommand.cs" />
     <!-- ═══ Pipe Trench Catalog ══════════════════════════════════════════════ -->
     <Compile Include="BoQ\PipeTrenchCatalog\Models\PipeTrenchCatalogModels.cs" />
     <Compile Include="BoQ\PipeTrenchCatalog\Services\PipeTrenchCatalogXmlManager.cs" />
     <Compile Include="BoQ\PipeTrenchCatalog\UI\ViewModels\PipeTrenchMainVm.cs" />
-    <Compile Include="BoQ\PipeTrenchCatalog\UI\Views\PipeTrenchCatalogWindow.xaml.cs">
-      <DependentUpon>PipeTrenchCatalogWindow.xaml</DependentUpon>
+    <Compile Include="BoQ\PipeTrenchCatalog\UI\Views\PipeTrenchCatalogView.xaml.cs">
+      <DependentUpon>PipeTrenchCatalogView.xaml</DependentUpon>
     </Compile>
     <Compile Include="BoQ\PipeTrenchCatalog\PipeTrenchCatalogCommand.cs" />
     <!-- ═══ Pipe Catalog ════════════════════════════════════════════════════ -->
@@ -227,8 +238,8 @@
     <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogImportService.cs" />
     <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogStore.cs" />
     <Compile Include="BoQ\PipeCatalog\UI\ViewModels\PipeCatalogMainVm.cs" />
-    <Compile Include="BoQ\PipeCatalog\UI\Views\PipeCatalogWindow.xaml.cs">
-      <DependentUpon>PipeCatalogWindow.xaml</DependentUpon>
+    <Compile Include="BoQ\PipeCatalog\UI\Views\PipeCatalogView.xaml.cs">
+      <DependentUpon>PipeCatalogView.xaml</DependentUpon>
     </Compile>
     <Compile Include="BoQ\PipeCatalog\UI\Views\SinifYoneticisiDialog.cs" />
     <Compile Include="BoQ\PipeCatalog\PipeCatalogCommand.cs" />
@@ -237,8 +248,8 @@
     <Compile Include="BoQ\SoilCatalog\Services\SoilCatalogXmlManager.cs" />
     <Compile Include="BoQ\SoilCatalog\Services\SoilCatalogStore.cs" />
     <Compile Include="BoQ\SoilCatalog\UI\ViewModels\SoilCatalogVm.cs" />
-    <Compile Include="BoQ\SoilCatalog\UI\Views\SoilCatalogWindow.xaml.cs">
-      <DependentUpon>SoilCatalogWindow.xaml</DependentUpon>
+    <Compile Include="BoQ\SoilCatalog\UI\Views\SoilCatalogView.xaml.cs">
+      <DependentUpon>SoilCatalogView.xaml</DependentUpon>
     </Compile>
     <Compile Include="BoQ\SoilCatalog\SoilCatalogCommand.cs" />
     <!-- ═══ Dolgu Catalog ════════════════════════════════════════════════════ -->
@@ -246,8 +257,8 @@
     <Compile Include="BoQ\DolguCatalog\Services\DolguCatalogXmlManager.cs" />
     <Compile Include="BoQ\DolguCatalog\Services\DolguCatalogStore.cs" />
     <Compile Include="BoQ\DolguCatalog\UI\ViewModels\DolguCatalogVm.cs" />
-    <Compile Include="BoQ\DolguCatalog\UI\Views\DolguCatalogWindow.xaml.cs">
-      <DependentUpon>DolguCatalogWindow.xaml</DependentUpon>
+    <Compile Include="BoQ\DolguCatalog\UI\Views\DolguCatalogView.xaml.cs">
+      <DependentUpon>DolguCatalogView.xaml</DependentUpon>
     </Compile>
     <Compile Include="BoQ\DolguCatalog\DolguCatalogCommand.cs" />
   </ItemGroup>
@@ -261,23 +272,23 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
-    <Page Include="BoQ\PipeCatalog\UI\Views\PipeCatalogWindow.xaml">
+    <Page Include="BoQ\PipeCatalog\UI\Views\PipeCatalogView.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
-    <Page Include="BoQ\ManholeExcavationCatalog\UI\Views\ManholeExcavationCatalogWindow.xaml">
+    <Page Include="BoQ\ManholeExcavationCatalog\UI\Views\ManholeExcavationCatalogView.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
-    <Page Include="BoQ\PipeTrenchCatalog\UI\Views\PipeTrenchCatalogWindow.xaml">
+    <Page Include="BoQ\PipeTrenchCatalog\UI\Views\PipeTrenchCatalogView.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
-    <Page Include="BoQ\SoilCatalog\UI\Views\SoilCatalogWindow.xaml">
+    <Page Include="BoQ\SoilCatalog\UI\Views\SoilCatalogView.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
-    <Page Include="BoQ\DolguCatalog\UI\Views\DolguCatalogWindow.xaml">
+    <Page Include="BoQ\DolguCatalog\UI\Views\DolguCatalogView.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

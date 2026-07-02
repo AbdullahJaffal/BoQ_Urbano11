@@ -1,15 +1,10 @@
-<Window x:Class="UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.Views.ManholeExcavationCatalogWindow"
+<UserControl x:Class="UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.Views.ManholeExcavationCatalogView"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:conv="clr-namespace:UrbanoMetraj.BoQ.SmartAssembly.UI.Converters"
-        Title="Manhole Kazı Kuralları Kataloğu"
-        Width="1060" Height="730"
-        MinWidth="840" MinHeight="540"
-        WindowStyle="ToolWindow"
-        ResizeMode="CanResizeWithGrip"
-        ShowInTaskbar="False">
+        xmlns:vm="clr-namespace:UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels">
 
-    <Window.Resources>
+    <UserControl.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
 
         <Style x:Key="ColHeader" TargetType="DataGridColumnHeader">
@@ -23,7 +18,7 @@
             <Setter Property="FontSize"   Value="12"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
-    </Window.Resources>
+    </UserControl.Resources>
 
     <DockPanel>
 
@@ -73,8 +68,15 @@
                             ToolTip="Kuralları seçilen konuma XML olarak dışa aktarır."/>
                     <Button Content="İçe Aktar"
                             Command="{Binding ImportCommand}"
-                            Padding="8,2"
+                            Padding="8,2" Margin="0,0,8,0"
                             ToolTip="Daha önce dışa aktarılmış bir XML dosyasını içe aktarır."/>
+
+                    <Separator Width="1" Height="20" Margin="0,0,8,0" Background="#BBBBBB"/>
+
+                    <Button Content="↺ Yenile"
+                            Command="{Binding RefreshCommand}"
+                            Padding="8,2"
+                            ToolTip="Smart Assembly'den eklenen yeni taban bileşenlerini ve aileleri yeniler."/>
                 </WrapPanel>
 
                 <DataGrid ItemsSource="{Binding Rules}"
@@ -83,9 +85,41 @@
                           SelectionMode="Single"
                           ColumnHeaderStyle="{StaticResource ColHeader}">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="Çap Aralığı"
-                            Binding="{Binding DiameterRangeDisplay}"
-                            IsReadOnly="True" Width="*"/>
+                        <DataGridTextColumn Header="Kural Adı"
+                            Binding="{Binding RuleName, UpdateSourceTrigger=PropertyChanged}"
+                            Width="*"/>
+                        <DataGridTemplateColumn Header="Min Ø (mm)" Width="72">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding MinBaseDiameterMm, StringFormat=Ø\{0:0\}}"
+                                               VerticalAlignment="Center" Padding="4,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding AvailableBaseDiameters}"
+                                              SelectedValue="{Binding MinBaseDiameterMm, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Value"
+                                              DisplayMemberPath="Display"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Maks Ø (mm)" Width="78">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding MaxBaseDiameterMm, StringFormat=Ø\{0:0\}}"
+                                               VerticalAlignment="Center" Padding="4,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding AvailableBaseDiameters}"
+                                              SelectedValue="{Binding MaxBaseDiameterMm, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Value"
+                                              DisplayMemberPath="Display"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
                     </DataGrid.Columns>
                 </DataGrid>
             </DockPanel>
@@ -99,29 +133,125 @@
                        Visibility="{Binding IsRuleSelected,
                                     Converter={StaticResource BoolToVis}}">
 
-                <!-- Rule header: diameter range inputs -->
+                <!-- Rule header: name + family + diameter range + zemin tipi -->
                 <Border DockPanel.Dock="Top"
                         BorderBrush="#BBBBBB" BorderThickness="1"
                         Background="#F5F5F5" Padding="10,7"
                         Margin="0,0,0,8">
                     <WrapPanel>
-                        <TextBlock Text="Min Taban Çapı (mm):"
-                                   FontWeight="SemiBold" VerticalAlignment="Center"
-                                   Margin="0,0,6,0"/>
-                        <TextBox Width="90" Padding="4,2" Margin="0,0,20,0"
-                                 Text="{Binding SelectedRule.MinBaseDiameterMm,
-                                        UpdateSourceTrigger=PropertyChanged,
-                                        StringFormat=0}"/>
-                        <TextBlock Text="Maks Taban Çapı (mm):"
-                                   FontWeight="SemiBold" VerticalAlignment="Center"
-                                   Margin="0,0,6,0"/>
-                        <TextBox Width="90" Padding="4,2" Margin="0,0,14,0"
-                                 Text="{Binding SelectedRule.MaxBaseDiameterMm,
-                                        UpdateSourceTrigger=PropertyChanged,
-                                        StringFormat=0}"/>
-                        <TextBlock Text="(0 = sınırsız üst çap)"
-                                   Foreground="Gray" FontStyle="Italic" FontSize="11"
-                                   VerticalAlignment="Center"/>
+
+                        <!-- Kural Adı -->
+                        <TextBlock Text="Kural Adı:" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <TextBox Width="150" Padding="4,2" Margin="0,0,18,0"
+                                 Text="{Binding SelectedRule.RuleName,
+                                        UpdateSourceTrigger=PropertyChanged}"/>
+
+                        <!-- Manhole Ailesi multi-select -->
+                        <TextBlock Text="Manhole Ailesi:" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <Grid VerticalAlignment="Center" Margin="0,0,18,0">
+                            <ToggleButton x:Name="FamilyDropdownBtn"
+                                          MinWidth="130" MaxWidth="260"
+                                          HorizontalContentAlignment="Left"
+                                          Padding="6,3"
+                                          IsChecked="{Binding SelectedRule.IsFamilyDropdownOpen,
+                                                      Mode=TwoWay,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                          Content="{Binding SelectedRule.SelectedFamiliesDisplay}"/>
+                            <Popup IsOpen="{Binding SelectedRule.IsFamilyDropdownOpen,
+                                           Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                   PlacementTarget="{Binding ElementName=FamilyDropdownBtn}"
+                                   Placement="Bottom" StaysOpen="False"
+                                   MinWidth="{Binding ActualWidth, ElementName=FamilyDropdownBtn}">
+                                <Border BorderBrush="#AAAAAA" BorderThickness="1"
+                                        Background="White" MinWidth="130">
+                                    <StackPanel>
+                                        <CheckBox Content="Tümü" FontWeight="SemiBold"
+                                                  IsThreeState="False"
+                                                  IsChecked="{Binding SelectedRule.AllFamiliesSelected,
+                                                              Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  Margin="8,6,8,2"/>
+                                        <Separator Margin="0,2"/>
+                                        <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+                                            <ItemsControl ItemsSource="{Binding SelectedRule.FamilyFilters}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type vm:ManholeExcavFamilyFilterVm}">
+                                                        <CheckBox Content="{Binding FamilyName}"
+                                                                  IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}"
+                                                                  Margin="8,3"/>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
+                        </Grid>
+
+                        <!-- Min Taban Ø -->
+                        <TextBlock Text="Min Taban Ø (mm):" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox Width="175" Padding="2,2" Margin="0,0,18,0"
+                                  ItemsSource="{Binding SelectedRule.AvailableBaseDiameters}"
+                                  SelectedValue="{Binding SelectedRule.MinBaseDiameterMm,
+                                                  UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Display"/>
+
+                        <!-- Maks Taban Ø -->
+                        <TextBlock Text="Maks Taban Ø (mm):" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox Width="175" Padding="2,2" Margin="0,0,10,0"
+                                  ItemsSource="{Binding SelectedRule.AvailableBaseDiameters}"
+                                  SelectedValue="{Binding SelectedRule.MaxBaseDiameterMm,
+                                                  UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Display"/>
+                        <TextBlock Text="(0 = sınırsız)" Foreground="Gray" FontStyle="Italic"
+                                   FontSize="11" VerticalAlignment="Center" Margin="0,0,18,0"/>
+
+                        <!-- Zemin Tipi multi-select -->
+                        <TextBlock Text="Zemin Tipi:" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <Grid VerticalAlignment="Center">
+                            <ToggleButton x:Name="SoilDropdownBtn"
+                                          MinWidth="130" MaxWidth="260"
+                                          HorizontalContentAlignment="Left"
+                                          Padding="6,3"
+                                          IsChecked="{Binding SelectedRule.IsSoilDropdownOpen,
+                                                      Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          Content="{Binding SelectedRule.SelectedSoilsDisplay}"/>
+                            <Popup IsOpen="{Binding SelectedRule.IsSoilDropdownOpen,
+                                           Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                   PlacementTarget="{Binding ElementName=SoilDropdownBtn}"
+                                   Placement="Bottom" StaysOpen="False"
+                                   MinWidth="{Binding ActualWidth, ElementName=SoilDropdownBtn}">
+                                <Border BorderBrush="#AAAAAA" BorderThickness="1"
+                                        Background="White" MinWidth="130">
+                                    <StackPanel>
+                                        <CheckBox Content="Tümü" FontWeight="SemiBold"
+                                                  IsThreeState="False"
+                                                  IsChecked="{Binding SelectedRule.AllSoilsSelected,
+                                                              Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  Margin="8,6,8,2"/>
+                                        <Separator Margin="0,2"/>
+                                        <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+                                            <ItemsControl ItemsSource="{Binding SelectedRule.SoilFilters}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type vm:ManholeExcavSoilFilterVm}">
+                                                        <CheckBox Content="{Binding SoilName}"
+                                                                  IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}"
+                                                                  Margin="8,3"/>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
+                        </Grid>
+
                     </WrapPanel>
                 </Border>
 
@@ -367,4 +497,4 @@
                                     ConverterParameter=invert}"/>
         </Grid>
     </DockPanel>
-</Window>
+</UserControl>

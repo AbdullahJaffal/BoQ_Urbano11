@@ -23,13 +23,9 @@ namespace UrbanoMetraj.BoQ.UI
         private const string BUTTON_ID     = "UM_BTN_BOQ";
         private const string BTN_VIEW      = "UM_BTN_BOQ_VIEW";
         private const string BTN_SOLIDS    = "UM_BTN_SOLIDS";
-        private const string BTN_MH_CAT      = "UM_BTN_MH_CATALOG";
         private const string BTN_MH_ASSIGN   = "UM_BTN_MH_ASSIGN";
         private const string BTN_SMART_ASSEM  = "UM_BTN_SMART_ASSEMBLY";
-        private const string BTN_PIPE_CAT        = "UM_BTN_PIPE_CATALOG";
-        private const string BTN_PIPE_TRENCH     = "UM_BTN_PIPE_TRENCH";
-        private const string BTN_SOIL_CAT        = "UM_BTN_SOIL_CATALOG";
-        private const string BTN_DOLGU_CAT       = "UM_BTN_DOLGU_CATALOG";
+        private const string BTN_NETWORK_PANEL   = "UM_BTN_NETWORK_PANEL";
 
         public static void Initialize()
         {
@@ -77,24 +73,6 @@ namespace UrbanoMetraj.BoQ.UI
                 }
             });
 
-            // ── Manhole Excavation Catalog button ───────────────────────────
-            panelSource.Items.Add(new RibbonButton
-            {
-                Id             = BTN_MH_CAT,
-                Text           = "Kazı\nKuralları",
-                ShowText       = true,
-                Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_manhole.png"),
-                CommandHandler = new RibbonCommandRelay("MANHOLE_EXCAV_CATALOG"),
-                ToolTip        = new RibbonToolTip
-                {
-                    Title   = "Manhole Kazı Kuralları Kataloğu",
-                    Content = "Taban çapı aralığına göre kazı kurallarını yönetir.\n" +
-                              "Her kural: derinlik kademeleri, çalışma genişliği,\n" +
-                              "şev, iksa, basamaklı kazı, alt temel ve geri dolgu katmanları."
-                }
-            });
-
             // ── Manhole Assign button ────────────────────────────────────────
             panelSource.Items.Add(new RibbonButton
             {
@@ -113,7 +91,10 @@ namespace UrbanoMetraj.BoQ.UI
                 }
             });
 
-            // ── Smart Assembly button ────────────────────────────────────────
+            // ── Akıllı Montaj button ──────────────────────────────────────────
+            // Tüm katalog pencereleri (Baca Kazı, Baca Parça, Baca-Boru Bağlantı
+            // Kuralları, Boru, Hendek, Zemin, Dolgu) tek bir çok sekmeli pencerede
+            // toplanmıştır.
             panelSource.Items.Add(new RibbonButton
             {
                 Id             = BTN_SMART_ASSEM,
@@ -124,87 +105,34 @@ namespace UrbanoMetraj.BoQ.UI
                 CommandHandler = new RibbonCommandRelay("SMART_ASSEMBLY"),
                 ToolTip        = new RibbonToolTip
                 {
-                    Title   = "Akıllı Baca Montaj Sistemi",
-                    Content = "Akıllı Baca Montaj ve Metraj Sistemi.\n" +
-                              "• Ana Bileşen Deposu: ön döküm parça kataloğu.\n" +
-                              "• Ana Kural Matrisi: boru Ø / derinlik → taban seçim matrisi.\n" +
+                    Title   = "Akıllı Montaj",
+                    Content = "Tüm katalogları tek pencerede toplayan çok sekmeli sistem:\n" +
+                              "• Baca Parça Kataloğu: ön döküm parça kataloğu.\n" +
+                              "• Baca-Boru Bağlantı Kuralları: boru Ø / derinlik → taban seçim matrisi.\n" +
                               "• Proje Kurulumu: DWG'ye özgü kural geçersiz kılmaları.\n" +
-                              "Hesaplama algoritması bir sonraki fazda eklenecektir."
+                              "• Baca Kazı Kataloğu, Boru Kataloğu, Hendek Kataloğu,\n" +
+                              "  Zemin Kataloğu, Dolgu Kataloğu."
                 }
             });
 
-            // ── Pipe Catalog button ──────────────────────────────────────────
+            // ── Network Panel button ─────────────────────────────────────────
+            // UrbanoLock'un UT_NETWORK_PANEL penceresiyle aynı paleti açar/paylaşır
+            // (bkz. NetworkPaletteSet + UrbanoLockBridge). UrbanoLock yüklüyse onun
+            // paletini gösterir; değilse bu eklentinin kendi kopyasını oluşturur.
             panelSource.Items.Add(new RibbonButton
             {
-                Id             = BTN_PIPE_CAT,
-                Text           = "Boru\nKataloğu",
+                Id             = BTN_NETWORK_PANEL,
+                Text           = "Ağ\nPaneli",
                 ShowText       = true,
                 Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_pipe_catalog.png"),
-                CommandHandler = new RibbonCommandRelay("PIPE_CATALOG"),
+                LargeImage     = LoadIcon("um_network_panel.png"),
+                CommandHandler = new RibbonCommandRelay("URBANO_NETWORK_PANEL"),
                 ToolTip        = new RibbonToolTip
                 {
-                    Title   = "Boru Kataloğu Yöneticisi",
-                    Content = "Boru ailelerini ve çap tanımlarını (DN/OD/ID/Et) yönetir.\n" +
-                              "• Mod A: Yerel XML ile içe/dışa aktarım.\n" +
-                              "• Mod B: Urbano XML dosyasından çözümleme.\n" +
-                              "• Mod C: Canlı DWG'den ARS_EXPORT_XML ile çıkarma.\n" +
-                              "Katalog, Akıllı Baca Montaj boru aralığı kurallarıyla paylaşılır."
-                }
-            });
-
-            // ── Pipe Trench Catalog button ───────────────────────────────────
-            panelSource.Items.Add(new RibbonButton
-            {
-                Id             = BTN_PIPE_TRENCH,
-                Text           = "Hendek\nKataloğu",
-                ShowText       = true,
-                Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_pipe_trench.png"),
-                CommandHandler = new RibbonCommandRelay("PIPE_TRENCH_CATALOG"),
-                ToolTip        = new RibbonToolTip
-                {
-                    Title   = "Boru Hendek Kuralları Kataloğu",
-                    Content = "Boru çapı aralığına ve derinlik kademesine göre hendek\n" +
-                              "geometrisini (genişlik boşluğu, şev, iksa) tanımlar.\n" +
-                              "Her kademe altında yataklama ve geri dolgu katman yığınları\n" +
-                              "ayrı ayrı yapılandırılabilir. Kurallar XML olarak kaydedilir."
-                }
-            });
-
-            // ── Soil Classification Catalog button ───────────────────────────
-            panelSource.Items.Add(new RibbonButton
-            {
-                Id             = BTN_SOIL_CAT,
-                Text           = "Zemin\nKataloğu",
-                ShowText       = true,
-                Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_soil_catalog.png"),
-                CommandHandler = new RibbonCommandRelay("SOIL_CATALOG"),
-                ToolTip        = new RibbonToolTip
-                {
-                    Title   = "Zemin Sınıfı Kataloğu",
-                    Content = "Zemin türlerini ve kabarma katsayılarını yönetir.\n" +
-                              "Her kayıt: zemin adı, kabarma katsayısı (örn. 1.20)\n" +
-                              "ve poz numarası. Katalog XML olarak kaydedilir."
-                }
-            });
-
-            // ── Dolgu Catalog button ─────────────────────────────────────────
-            panelSource.Items.Add(new RibbonButton
-            {
-                Id             = BTN_DOLGU_CAT,
-                Text           = "Dolgu\nKataloğu",
-                ShowText       = true,
-                Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_dolgu_catalog.png"),
-                CommandHandler = new RibbonCommandRelay("DOLGU_CATALOG"),
-                ToolTip        = new RibbonToolTip
-                {
-                    Title   = "Dolgu Kataloğu",
-                    Content = "Dolgu malzemelerini ve poz numaralarını yönetir.\n" +
-                              "Her kayıt: poz no, dolgu malzemesi adı ve açıklama.\n" +
-                              "Katalog XML olarak kaydedilir."
+                    Title   = "Ağ Seçim Paneli",
+                    Content = "Çizimdeki ağları listeler; her ağ için Aktif ve\n" +
+                              "Görünürlük durumunu ayrı ayrı kontrol eder.\n" +
+                              "UrbanoLock kuruluysa aynı paleti paylaşır."
                 }
             });
 

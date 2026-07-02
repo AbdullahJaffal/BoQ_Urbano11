@@ -2,11 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models;
 using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Services;
+using UrbanoMetraj.BoQ.SmartAssembly.Models;
+using UrbanoMetraj.BoQ.SmartAssembly.Services;
+using UrbanoMetraj.BoQ.SoilCatalog.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;  // ViewModelBase, RelayCommand
 
 using Exception = System.Exception;
@@ -315,9 +319,266 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
             AddTierCommand       = new RelayCommand(OnAddTier);
             DuplicateTierCommand = new RelayCommand(OnDuplicateTier, _ => _selectedTier != null);
             DeleteTierCommand    = new RelayCommand(OnDeleteTier,    _ => _selectedTier != null);
+
+            BuildFamilyFilters();
+            RebuildDiameterList();
+            BuildSoilFilters();
         }
 
         public ManholeExcavationRule Model => _model;
+
+        // ── Rule name ─────────────────────────────────────────────────────────
+
+        public string RuleName
+        {
+            get => _model.RuleName;
+            set { _model.RuleName = value; OnPropertyChanged(); }
+        }
+
+        // ── Manhole family filter + available base diameters ──────────────────
+
+        public ObservableCollection<ManholeExcavFamilyFilterVm> FamilyFilters { get; }
+            = new ObservableCollection<ManholeExcavFamilyFilterVm>();
+
+        private bool _suppressFamilyRebuild;
+        private bool _isFamilyDropdownOpen;
+
+        public bool IsFamilyDropdownOpen
+        {
+            get => _isFamilyDropdownOpen;
+            set
+            {
+                Set(ref _isFamilyDropdownOpen, value);
+                // Re-read the catalog each time the dropdown opens so that families/tabans
+                // added in SMART_ASSEMBLY during the same session appear immediately.
+                if (value) { BuildFamilyFilters(); RebuildDiameterList(); }
+            }
+        }
+
+        public string SelectedFamiliesDisplay
+        {
+            get
+            {
+                if (FamilyFilters.Count == 0) return "Tüm Aileler";
+                var sel = FamilyFilters.Where(f => f.IsSelected).ToList();
+                if (sel.Count == FamilyFilters.Count) return "Tüm Aileler";
+                if (sel.Count == 0) return "(Seçim yok)";
+                return string.Join(", ", sel.Select(f => f.FamilyName));
+            }
+        }
+
+        public bool? AllFamiliesSelected
+        {
+            get
+            {
+                if (FamilyFilters.Count == 0) return true;
+                int n = FamilyFilters.Count(f => f.IsSelected);
+                if (n == FamilyFilters.Count) return true;
+                if (n == 0) return false;
+                return null;
+            }
+            set
+            {
+                bool target = value ?? true;
+                _suppressFamilyRebuild = true;
+                foreach (var f in FamilyFilters) f.IsSelected = target;
+                _suppressFamilyRebuild = false;
+                _model.SelectedFamilyNames.Clear();
+                RebuildDiameterList();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SelectedFamiliesDisplay));
+            }
+        }
+
+        public ObservableCollection<TabanSizeOption> AvailableBaseDiameters { get; }
+            = new ObservableCollection<TabanSizeOption>();
+
+        private void BuildFamilyFilters()
+        {
+            _suppressFamilyRebuild = true;
+            FamilyFilters.Clear();
+            bool useStored = _model.SelectedFamilyNames.Count > 0;
+            foreach (var family in SmartAssemblyCatalogStore.Current.Families)
+            {
+                bool sel = !useStored || _model.SelectedFamilyNames.Contains(family.Name);
+                var vm = new ManholeExcavFamilyFilterVm(family.Name) { OnChanged = OnFamilyFilterChanged };
+                vm.IsSelected = sel;
+                FamilyFilters.Add(vm);
+            }
+            _suppressFamilyRebuild = false;
+            OnPropertyChanged(nameof(AllFamiliesSelected));
+            OnPropertyChanged(nameof(SelectedFamiliesDisplay));
+        }
+
+        private void RebuildDiameterList()
+        {
+            var seen = new System.Collections.Generic.Dictionary<string, TabanSizeOption>();
+            var selNames = new HashSet<string>(
+                FamilyFilters.Where(f => f.IsSelected).Select(f => f.FamilyName));
+            bool useFilter = FamilyFilters.Count > 0 && selNames.Count < FamilyFilters.Count;
+
+            foreach (var family in SmartAssemblyCatalogStore.Current.Families)
+            {
+                if (useFilter && !selNames.Contains(family.Name)) continue;
+                foreach (var comp in family.Components)
+                {
+                    var bottom = comp as BottomElementComponent;
+                    if (bottom == null) continue;
+
+                    TabanSizeOption opt = null;
+                    switch (bottom.Footprint.Shape)
+                    {
+                        case FootprintShape.Circular:
+                        {
+                            double d = bottom.Footprint.DiameterMm;
+                            if (d > 0)
+                            {
+                                string key = string.Format("C:{0:0}", d);
+                                if (!seen.ContainsKey(key))
+                                    opt = new TabanSizeOption(d,
+                                        string.Format("Ø{0:0} mm (Daire)", d), d, key);
+                            }
+                            break;
+                        }
+                        case FootprintShape.Square:
+                        {
+                            double s = bottom.Footprint.SideMm;
+                            if (s > 0)
+                            {
+                                string key = string.Format("S:{0:0}", s);
+                                if (!seen.ContainsKey(key))
+                                    opt = new TabanSizeOption(s,
+                                        string.Format("{0:0}×{0:0} mm (Kare)", s), s, key);
+                            }
+                            break;
+                        }
+                        case FootprintShape.Rectangular:
+                        {
+                            double l = bottom.Footprint.LengthMm;
+                            double w = bottom.Footprint.WidthMm;
+                            if (l > 0 && w > 0)
+                            {
+                                // Normalise: longer side first so L×W and W×L share one key
+                                double bigSide   = Math.Max(l, w);
+                                double smallSide = Math.Min(l, w);
+                                string key = string.Format("R:{0:0}x{1:0}", bigSide, smallSide);
+                                if (!seen.ContainsKey(key))
+                                    opt = new TabanSizeOption(bigSide,
+                                        string.Format("{0:0}×{1:0} mm (Dikdörtgen)", bigSide, smallSide),
+                                        bigSide, key);
+                            }
+                            break;
+                        }
+                    }
+                    if (opt != null) seen[opt.Key] = opt;
+                }
+            }
+
+            AvailableBaseDiameters.Clear();
+            foreach (var opt in seen.Values.OrderBy(o => o.SortKey).ThenBy(o => o.Key))
+                AvailableBaseDiameters.Add(opt);
+        }
+
+        /// <summary>
+        /// Re-reads the Smart Assembly catalog (live VM or disk) and rebuilds the
+        /// family filter list + available diameter list. Preserves existing selections.
+        /// </summary>
+        public void RefreshFromSmartAssembly()
+        {
+            BuildFamilyFilters();
+            RebuildDiameterList();
+        }
+
+        private void OnFamilyFilterChanged()
+        {
+            if (_suppressFamilyRebuild) return;
+            _model.SelectedFamilyNames.Clear();
+            int selCount = FamilyFilters.Count(f => f.IsSelected);
+            if (selCount < FamilyFilters.Count)
+                foreach (var f in FamilyFilters.Where(f => f.IsSelected))
+                    _model.SelectedFamilyNames.Add(f.FamilyName);
+            RebuildDiameterList();
+            OnPropertyChanged(nameof(AllFamiliesSelected));
+            OnPropertyChanged(nameof(SelectedFamiliesDisplay));
+        }
+
+        // ── Zemin-tipi filter ─────────────────────────────────────────────────
+
+        public ObservableCollection<ManholeExcavSoilFilterVm> SoilFilters { get; }
+            = new ObservableCollection<ManholeExcavSoilFilterVm>();
+
+        private bool _suppressSoilRebuild;
+        private bool _isSoilDropdownOpen;
+
+        public bool IsSoilDropdownOpen
+        {
+            get => _isSoilDropdownOpen;
+            set { Set(ref _isSoilDropdownOpen, value); }
+        }
+
+        public string SelectedSoilsDisplay
+        {
+            get
+            {
+                if (SoilFilters.Count == 0) return "Tüm Zeminler";
+                var sel = SoilFilters.Where(f => f.IsSelected).ToList();
+                if (sel.Count == SoilFilters.Count) return "Tüm Zeminler";
+                if (sel.Count == 0) return "(Seçim yok)";
+                return string.Join(", ", sel.Select(f => f.SoilName));
+            }
+        }
+
+        public bool? AllSoilsSelected
+        {
+            get
+            {
+                if (SoilFilters.Count == 0) return true;
+                int n = SoilFilters.Count(f => f.IsSelected);
+                if (n == SoilFilters.Count) return true;
+                if (n == 0) return false;
+                return null;
+            }
+            set
+            {
+                bool target = value ?? true;
+                _suppressSoilRebuild = true;
+                foreach (var f in SoilFilters) f.IsSelected = target;
+                _suppressSoilRebuild = false;
+                _model.SelectedSoilNames.Clear();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SelectedSoilsDisplay));
+            }
+        }
+
+        private void BuildSoilFilters()
+        {
+            _suppressSoilRebuild = true;
+            SoilFilters.Clear();
+            bool useStored = _model.SelectedSoilNames.Count > 0;
+            foreach (var soil in SoilCatalogStore.Items)
+            {
+                if (string.IsNullOrEmpty(soil.SoilName)) continue;
+                bool sel = !useStored || _model.SelectedSoilNames.Contains(soil.SoilName);
+                var vm = new ManholeExcavSoilFilterVm(soil.SoilName) { OnChanged = OnSoilFilterChanged };
+                vm.IsSelected = sel;
+                SoilFilters.Add(vm);
+            }
+            _suppressSoilRebuild = false;
+            OnPropertyChanged(nameof(AllSoilsSelected));
+            OnPropertyChanged(nameof(SelectedSoilsDisplay));
+        }
+
+        private void OnSoilFilterChanged()
+        {
+            if (_suppressSoilRebuild) return;
+            _model.SelectedSoilNames.Clear();
+            int selCount = SoilFilters.Count(f => f.IsSelected);
+            if (selCount < SoilFilters.Count)
+                foreach (var f in SoilFilters.Where(f => f.IsSelected))
+                    _model.SelectedSoilNames.Add(f.SoilName);
+            OnPropertyChanged(nameof(AllSoilsSelected));
+            OnPropertyChanged(nameof(SelectedSoilsDisplay));
+        }
 
         // ── Diameter range ────────────────────────────────────────────────────
 
@@ -338,6 +599,14 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
             get => _model.MaxBaseDiameterMm;
             set
             {
+                if (value > 0 && value < _model.MinBaseDiameterMm)
+                {
+                    MessageBox.Show(
+                        $"Maks taban çapı (Ø{value:0} mm), Min çapından (Ø{_model.MinBaseDiameterMm:0} mm) küçük olamaz.",
+                        "Geçersiz Değer", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    OnPropertyChanged();
+                    return;
+                }
                 _model.MaxBaseDiameterMm = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(DiameterRangeDisplay));
@@ -430,9 +699,9 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
             foreach (var l in src.BackfillLayers)
                 clone.BackfillLayers.Add(new ManholeBackfillLayer
                 {
-                    LayerName      = l.LayerName,
-                    MaterialType   = l.MaterialType,
-                    ThicknessM     = l.ThicknessM,
+                    LayerName       = l.LayerName,
+                    MaterialType    = l.MaterialType,
+                    ThicknessM      = l.ThicknessM,
                     IsFillToSurface = l.IsFillToSurface
                 });
             return clone;
@@ -483,6 +752,7 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
         public ICommand SaveCommand          { get; }
         public ICommand ExportCommand        { get; }
         public ICommand ImportCommand        { get; }
+        public ICommand RefreshCommand       { get; }
 
         // ── Constructor ───────────────────────────────────────────────────────
 
@@ -513,9 +783,10 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
             AddRuleCommand       = new RelayCommand(OnAddRule);
             DuplicateRuleCommand = new RelayCommand(OnDuplicateRule, _ => IsRuleSelected);
             DeleteRuleCommand    = new RelayCommand(OnDeleteRule,    _ => IsRuleSelected);
-            SaveCommand          = new RelayCommand(OnSave,   _ => _backingRules.Count > 0);
-            ExportCommand        = new RelayCommand(OnExport, _ => _backingRules.Count > 0);
+            SaveCommand          = new RelayCommand(OnSave,    _ => _backingRules.Count > 0);
+            ExportCommand        = new RelayCommand(OnExport,  _ => _backingRules.Count > 0);
             ImportCommand        = new RelayCommand(OnImport);
+            RefreshCommand       = new RelayCommand(OnRefresh);
         }
 
         // ── Rule CRUD ─────────────────────────────────────────────────────────
@@ -535,9 +806,14 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
             if (_selectedRule == null) return;
             var clone = new ManholeExcavationRule
             {
+                RuleName          = _selectedRule.Model.RuleName + " (Kopya)",
                 MinBaseDiameterMm = _selectedRule.Model.MinBaseDiameterMm,
                 MaxBaseDiameterMm = _selectedRule.Model.MaxBaseDiameterMm
             };
+            foreach (var name in _selectedRule.Model.SelectedFamilyNames)
+                clone.SelectedFamilyNames.Add(name);
+            foreach (var name in _selectedRule.Model.SelectedSoilNames)
+                clone.SelectedSoilNames.Add(name);
             foreach (var t in _selectedRule.Model.DepthTiers)
                 clone.DepthTiers.Add(ManholeExcavationRuleVm.DeepCloneTier(t));
             _backingRules.Add(clone);
@@ -628,7 +904,111 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
             => MessageBox.Show(context + ":\n" + ex.Message, "Hata",
                                MessageBoxButton.OK, MessageBoxImage.Error);
 
+        /// <summary>
+        /// Re-reads the Smart Assembly catalog for every rule VM.
+        /// Invalidates the disk cache first so that components saved in SMART_ASSEMBLY
+        /// during the same session are visible even if the SA window is currently closed.
+        /// </summary>
+        public void RefreshSmartAssemblyData()
+        {
+            // Force the disk-cached copy to be reloaded on the next access.
+            // When SA is open, Current returns the live VM catalog anyway, so
+            // Invalidate() has no effect in that case.
+            SmartAssemblyCatalogStore.Invalidate();
+            foreach (var ruleVm in Rules)
+                ruleVm.RefreshFromSmartAssembly();
+        }
+
+        private void OnRefresh(object _)
+        {
+            RefreshSmartAssemblyData();
+            StatusText = "Bileşen kataloğu yenilendi.";
+        }
+
         /// <summary>Returns the backing model list for persistence (NOD, XML, etc.).</summary>
         public IReadOnlyList<ManholeExcavationRule> GetRules() => _backingRules;
+    }
+
+    // =========================================================================
+    // ManholeExcavFamilyFilterVm – one checkbox row in the manhole-family filter
+    // =========================================================================
+
+    public sealed class ManholeExcavFamilyFilterVm : ViewModelBase
+    {
+        private bool _isSelected = true;
+
+        public string FamilyName { get; }
+
+        internal Action OnChanged { get; set; }
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                OnPropertyChanged();
+                OnChanged?.Invoke();
+            }
+        }
+
+        public ManholeExcavFamilyFilterVm(string name) => FamilyName = name;
+    }
+
+    // =========================================================================
+    // ManholeExcavSoilFilterVm – one checkbox row in the zemin-tipi filter
+    // =========================================================================
+
+    public sealed class ManholeExcavSoilFilterVm : ViewModelBase
+    {
+        private bool _isSelected = true;
+
+        public string SoilName { get; }
+
+        internal Action OnChanged { get; set; }
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                OnPropertyChanged();
+                OnChanged?.Invoke();
+            }
+        }
+
+        public ManholeExcavSoilFilterVm(string name) => SoilName = name;
+    }
+
+    // =========================================================================
+    // TabanSizeOption – one item in the Min/Max Taban Ø ComboBox
+    // Carries both the numeric value (stored in the rule) and a human-readable
+    // display string that shows shape type: Daire / Kare / Dikdörtgen.
+    // =========================================================================
+
+    public sealed class TabanSizeOption
+    {
+        /// <summary>Numeric size used for MinBaseDiameterMm / MaxBaseDiameterMm.</summary>
+        public double Value   { get; }
+
+        /// <summary>Label shown in the ComboBox, e.g. "Ø1400 mm (Daire)" or "1000×1000 mm (Kare)".</summary>
+        public string Display { get; }
+
+        /// <summary>Primary dimension used for sort order.</summary>
+        public double SortKey { get; }
+
+        /// <summary>Deduplication key — prevents identical (shape + dimensions) from appearing twice.</summary>
+        public string Key     { get; }
+
+        public TabanSizeOption(double value, string display, double sortKey, string key)
+        {
+            Value   = value;
+            Display = display;
+            SortKey = sortKey;
+            Key     = key;
+        }
     }
 }

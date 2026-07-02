@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 
 namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models
@@ -105,11 +106,26 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models
     {
         public Guid Id { get; set; } = Guid.NewGuid();
 
+        /// <summary>Human-readable rule name (e.g. "Standart Beton Manhole Kazısı").</summary>
+        public string RuleName { get; set; } = "";
+
         /// <summary>Lower bound of the applicable manhole base diameter (mm, inclusive).</summary>
         public double MinBaseDiameterMm { get; set; }
 
         /// <summary>Upper bound of the applicable manhole base diameter (mm, inclusive). 0 = unlimited.</summary>
         public double MaxBaseDiameterMm { get; set; }
+
+        /// <summary>
+        /// Manhole component family names this rule applies to.
+        /// Empty = all families (default). Persisted in XML.
+        /// </summary>
+        public List<string> SelectedFamilyNames { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Zemin (soil) names this rule applies to.
+        /// Empty = all soil types (default). Persisted in XML.
+        /// </summary>
+        public List<string> SelectedSoilNames { get; set; } = new List<string>();
 
         public ObservableCollection<ManholeExcavationDepthTier> DepthTiers { get; set; }
             = new ObservableCollection<ManholeExcavationDepthTier>();

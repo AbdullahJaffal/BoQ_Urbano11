@@ -5,19 +5,26 @@ using UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels;
 
 namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.Views
 {
-    public partial class PipeCatalogWindow : Window
+    // DataContext is supplied by the hosting TabItem's binding (see SmartAssemblyWindow.xaml),
+    // so this view only needs a parameterless constructor for XAML instantiation.
+    public partial class PipeCatalogView : UserControl
     {
-        private readonly PipeCatalogMainVm _vm;
+        private bool _classManagerWired;
 
-        public PipeCatalogWindow(PipeCatalogMainVm vm)
+        public PipeCatalogView()
         {
             InitializeComponent();
-            _vm = vm;
-            DataContext = vm;
+            DataContextChanged += OnDataContextChanged;
+        }
 
-            vm.OpenClassManagerRequested += (s, e) =>
+        private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (_classManagerWired || !(e.NewValue is PipeCatalogMainVm vm)) return;
+            _classManagerWired = true;
+
+            vm.OpenClassManagerRequested += (s, ev) =>
             {
-                var dlg = new SinifYoneticisiDialog(_vm.CatalogClasses, this);
+                var dlg = new SinifYoneticisiDialog(vm.CatalogClasses, Window.GetWindow(this));
                 dlg.Show();
             };
         }

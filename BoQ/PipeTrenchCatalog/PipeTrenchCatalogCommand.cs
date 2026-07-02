@@ -1,7 +1,7 @@
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Runtime;
-using UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels;
-using UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.Views;
+using UrbanoMetraj.BoQ.SmartAssembly;
+using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
 
 using Exception = System.Exception;
 
@@ -12,14 +12,11 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog
     /// <summary>
     /// Commands
     /// ─────────────────────────────────────────────────────────────
-    ///  PIPE_TRENCH_CATALOG   Open the Pipe Trench Rules Catalog window.
-    ///                        Re-activates the existing window if already open.
+    ///  PIPE_TRENCH_CATALOG   Opens the shared Akıllı Montaj window on the
+    ///                        "Hendek Kataloğu" tab (formerly a standalone window).
     /// </summary>
     public class PipeTrenchCatalogCommand
     {
-        private static PipeTrenchCatalogWindow _window;
-        private static PipeTrenchMainVm        _vm;
-
         [CommandMethod("PIPE_TRENCH_CATALOG")]
         public void OpenPipeTrenchCatalog()
         {
@@ -29,15 +26,7 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog
 
             try
             {
-                if (_window != null && _window.IsLoaded)
-                {
-                    _window.Activate();
-                    return;
-                }
-
-                _vm     = new PipeTrenchMainVm();
-                _window = new PipeTrenchCatalogWindow(_vm);
-                Application.ShowModelessWindow(_window);
+                SmartAssemblyCommand.ShowWindowOnTab(SmartAssemblyMainVm.TAB_PIPE_TRENCH);
             }
             catch (Exception ex)
             {

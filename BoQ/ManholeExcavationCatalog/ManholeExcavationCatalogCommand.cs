@@ -1,7 +1,7 @@
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Runtime;
-using UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels;
-using UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.Views;
+using UrbanoMetraj.BoQ.SmartAssembly;
+using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
 
 using Exception = System.Exception;
 
@@ -12,14 +12,11 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog
     /// <summary>
     /// Commands
     /// ─────────────────────────────────────────────────────────────
-    ///  MANHOLE_EXCAV_CATALOG   Open the Manhole Excavation Rules Catalog window.
-    ///                          Re-activates the existing window if already open.
+    ///  MANHOLE_EXCAV_CATALOG   Opens the shared Akıllı Montaj window on the
+    ///                          "Baca Kazı Kataloğu" tab (formerly a standalone window).
     /// </summary>
     public class ManholeExcavationCatalogCommand
     {
-        private static ManholeExcavationCatalogWindow _window;
-        private static ManholeExcavationMainVm        _vm;
-
         [CommandMethod("MANHOLE_EXCAV_CATALOG")]
         public void OpenExcavationCatalog()
         {
@@ -29,15 +26,7 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog
 
             try
             {
-                if (_window != null && _window.IsLoaded)
-                {
-                    _window.Activate();
-                    return;
-                }
-
-                _vm     = new ManholeExcavationMainVm();
-                _window = new ManholeExcavationCatalogWindow(_vm);
-                Application.ShowModelessWindow(_window);
+                SmartAssemblyCommand.ShowWindowOnTab(SmartAssemblyMainVm.TAB_MANHOLE_EXCAV);
             }
             catch (Exception ex)
             {

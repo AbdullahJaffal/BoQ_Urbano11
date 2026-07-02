@@ -26,13 +26,57 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
     {
         // Static reference keeps the modeless window alive across command calls
         // and prevents the GC from collecting it when the command method returns.
+        // This is the single shared "Akıllı Montaj" window — every catalog that used
+        // to open its own standalone window (Kazı Kuralları, Boru/Hendek/Zemin/Dolgu
+        // Katalogları) now lives here as an additional tab.
         private static SmartAssemblyWindow    _window;
         private static SmartAssemblyMainVm    _mainVm;
 
         /// <summary>Returns the live ViewModel so PIPE_CATALOG_LIVE_EXTRACT can
-        /// push catalog updates without re-opening the Smart Assembly window.</summary>
+        /// push catalog updates without re-opening the Akıllı Montaj window.</summary>
         internal static SmartAssemblyMainVm GetMainVm() =>
             (_window != null && _window.IsLoaded) ? _mainVm : null;
+
+        /// <summary>Ensures the shared window exists (building it if necessary) and returns its ViewModel.</summary>
+        internal static SmartAssemblyMainVm EnsureMainVm()
+        {
+            if (_window != null && _window.IsLoaded) return _mainVm;
+
+            // Build the shared catalog + load any project templates already in NOD.
+            var catalog = new SmartAssemblyMasterCatalog();
+            _mainVm = new SmartAssemblyMainVm(catalog, PipeCatalogStore.Current);
+
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc != null)
+            {
+                var existingTemplates = ProjectTemplateNodManager.LoadAllTemplates(doc.Database);
+                foreach (var t in existingTemplates)
+                    _mainVm.ProjectSetupTab.Templates.Add(t);
+            }
+
+            _window = new SmartAssemblyWindow(_mainVm);
+
+            // ShowModelessWindow integrates the WPF window into AutoCAD's
+            // message pump so keyboard/mouse input reaches it correctly.
+            Application.ShowModelessWindow(_window);
+            return _mainVm;
+        }
+
+        /// <summary>Opens (or re-activates) the shared window without changing the active tab.</summary>
+        internal static void ShowWindow()
+        {
+            EnsureMainVm();
+            _window.Activate();
+        }
+
+        /// <summary>Opens (or re-activates) the shared window and jumps to the given tab
+        /// (see the TAB_* constants on <see cref="SmartAssemblyMainVm"/>).</summary>
+        internal static void ShowWindowOnTab(int tabIndex)
+        {
+            var vm = EnsureMainVm();
+            vm.SelectedTabIndex = tabIndex;
+            _window.Activate();
+        }
 
         // =====================================================================
         // SMART_ASSEMBLY
@@ -47,26 +91,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
 
             try
             {
-                // Re-activate existing window instead of opening a second copy.
-                if (_window != null && _window.IsLoaded)
-                {
-                    _window.Activate();
-                    return;
-                }
-
-                // Build the shared catalog + load any project templates already in NOD.
-                var catalog = new SmartAssemblyMasterCatalog();
-                _mainVm = new SmartAssemblyMainVm(catalog, PipeCatalogStore.Current);
-
-                var existingTemplates = ProjectTemplateNodManager.LoadAllTemplates(doc.Database);
-                foreach (var t in existingTemplates)
-                    _mainVm.ProjectSetupTab.Templates.Add(t);
-
-                _window = new SmartAssemblyWindow(_mainVm);
-
-                // ShowModelessWindow integrates the WPF window into AutoCAD's
-                // message pump so keyboard/mouse input reaches it correctly.
-                Application.ShowModelessWindow(_window);
+                ShowWindow();
             }
             catch (Exception ex)
             {

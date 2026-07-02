@@ -2,9 +2,14 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:conv="clr-namespace:UrbanoMetraj.BoQ.SmartAssembly.UI.Converters"
-        Title="Akıllı Baca Montaj Sistemi"
-        Width="1100" Height="720"
-        MinWidth="900" MinHeight="580"
+        xmlns:mhExcav="clr-namespace:UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.Views"
+        xmlns:pipeCat="clr-namespace:UrbanoMetraj.BoQ.PipeCatalogs.UI.Views"
+        xmlns:pipeTrench="clr-namespace:UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.Views"
+        xmlns:soilCat="clr-namespace:UrbanoMetraj.BoQ.SoilCatalog.UI.Views"
+        xmlns:dolguCat="clr-namespace:UrbanoMetraj.BoQ.DolguCatalog.UI.Views"
+        Title="Akıllı Montaj"
+        Width="1350" Height="760"
+        MinWidth="1050" MinHeight="580"
         WindowStyle="ToolWindow"
         ResizeMode="CanResizeWithGrip"
         ShowInTaskbar="False">
@@ -59,9 +64,9 @@
         <TabControl SelectedIndex="{Binding SelectedTabIndex}" Margin="4">
 
             <!-- ═══════════════════════════════════════════════════════════════
-                 SEKME 1  —  Ana Bileşen Deposu
+                 SEKME 1  —  Baca Parça Kataloğu
                  ═══════════════════════════════════════════════════════════════ -->
-            <TabItem Header="Ana Bileşen Deposu">
+            <TabItem Header="Baca Parça Kataloğu">
                 <Grid Margin="6">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="230"/>
@@ -404,9 +409,9 @@
             </TabItem>
 
             <!-- ═══════════════════════════════════════════════════════════════
-                 SEKME 2  —  Ana Kural Matrisi  (Hiyerarşik: Boru → Derinlik)
+                 SEKME 2  —  Baca-Boru Bağlantı Kuralları  (Hiyerarşik: Boru → Derinlik)
                  ═══════════════════════════════════════════════════════════════ -->
-            <TabItem Header="Ana Kural Matrisi">
+            <TabItem Header="Baca-Boru Bağlantı Kuralları">
                 <DockPanel Margin="6">
 
                     <!-- Toolbar -->
@@ -1002,6 +1007,41 @@
                                             Converter={StaticResource BoolToVis},
                                             ConverterParameter=invert}"/>
                 </Grid>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 4  —  Baca Kazı Kataloğu  (eski: Manhole Kazı Kuralları)
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Baca Kazı Kataloğu">
+                <mhExcav:ManholeExcavationCatalogView DataContext="{Binding ManholeExcavTab}"/>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 5  —  Boru Kataloğu
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Boru Kataloğu">
+                <pipeCat:PipeCatalogView DataContext="{Binding PipeCatalogTab}"/>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 6  —  Hendek Kataloğu
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Hendek Kataloğu">
+                <pipeTrench:PipeTrenchCatalogView DataContext="{Binding PipeTrenchTab}"/>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 7  —  Zemin Kataloğu
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Zemin Kataloğu">
+                <soilCat:SoilCatalogView DataContext="{Binding SoilCatalogTab}"/>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 8  —  Dolgu Kataloğu
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Dolgu Kataloğu">
+                <dolguCat:DolguCatalogView DataContext="{Binding DolguCatalogTab}"/>
             </TabItem>
         </TabControl>
     </DockPanel>

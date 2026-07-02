@@ -48,9 +48,12 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.Services
             foreach (var rule in rules)
             {
                 var ruleEl = new XElement("Rule",
-                    new XAttribute("id",         rule.Id.ToString("D")),
-                    new XAttribute("minDiamMm",  rule.MinBaseDiameterMm.ToString("G")),
-                    new XAttribute("maxDiamMm",  rule.MaxBaseDiameterMm.ToString("G")));
+                    new XAttribute("id",               rule.Id.ToString("D")),
+                    new XAttribute("ruleName",         rule.RuleName ?? ""),
+                    new XAttribute("minDiamMm",        rule.MinBaseDiameterMm.ToString("G")),
+                    new XAttribute("maxDiamMm",        rule.MaxBaseDiameterMm.ToString("G")),
+                    new XAttribute("selectedFamilies", string.Join(";", rule.SelectedFamilyNames ?? new System.Collections.Generic.List<string>())),
+                    new XAttribute("selectedSoils",    string.Join(";", rule.SelectedSoilNames   ?? new System.Collections.Generic.List<string>())));
 
                 foreach (var tier in rule.DepthTiers)
                 {
@@ -103,9 +106,20 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.Services
                 var rule = new ManholeExcavationRule
                 {
                     Id                = ruleId == Guid.Empty ? Guid.NewGuid() : ruleId,
+                    RuleName          = (string)ruleEl.Attribute("ruleName") ?? "",
                     MinBaseDiameterMm = ParseDouble((string)ruleEl.Attribute("minDiamMm")),
                     MaxBaseDiameterMm = ParseDouble((string)ruleEl.Attribute("maxDiamMm"))
                 };
+
+                // Restore family + soil selections
+                string famStr  = (string)ruleEl.Attribute("selectedFamilies") ?? "";
+                string soilStr = (string)ruleEl.Attribute("selectedSoils")    ?? "";
+                if (!string.IsNullOrEmpty(famStr))
+                    foreach (var n in famStr.Split(';'))
+                        if (!string.IsNullOrEmpty(n)) rule.SelectedFamilyNames.Add(n);
+                if (!string.IsNullOrEmpty(soilStr))
+                    foreach (var n in soilStr.Split(';'))
+                        if (!string.IsNullOrEmpty(n)) rule.SelectedSoilNames.Add(n);
 
                 foreach (var tierEl in ruleEl.Elements("Tier"))
                 {

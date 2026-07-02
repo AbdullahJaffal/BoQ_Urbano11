@@ -1,26 +1,21 @@
 using Autodesk.AutoCAD.Runtime;
-using UrbanoMetraj.BoQ.DolguCatalog.UI.ViewModels;
-using UrbanoMetraj.BoQ.DolguCatalog.UI.Views;
-using AcApp = Autodesk.AutoCAD.ApplicationServices.Application;
+using UrbanoMetraj.BoQ.SmartAssembly;
+using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
 
 [assembly: CommandClass(typeof(UrbanoMetraj.BoQ.DolguCatalog.DolguCatalogCommand))]
 
 namespace UrbanoMetraj.BoQ.DolguCatalog
 {
+    /// <summary>
+    /// DOLGU_CATALOG   Opens the shared Akıllı Montaj window on the
+    ///                 "Dolgu Kataloğu" tab (formerly a standalone window).
+    /// </summary>
     public class DolguCatalogCommand
     {
-        private static DolguCatalogWindow _window;
-        private static DolguCatalogVm     _vm;
-
         [CommandMethod("DOLGU_CATALOG")]
         public void ShowDolguCatalog()
         {
-            if (_window == null || !_window.IsLoaded)
-            {
-                _vm     = new DolguCatalogVm();
-                _window = new DolguCatalogWindow(_vm);
-            }
-            AcApp.ShowModelessWindow(_window);
+            SmartAssemblyCommand.ShowWindowOnTab(SmartAssemblyMainVm.TAB_DOLGU_CATALOG);
         }
     }
 }

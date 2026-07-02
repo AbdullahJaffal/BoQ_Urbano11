@@ -4,12 +4,10 @@ using System.Threading;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
-using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 using UrbanoMetraj.BoQ.PipeCatalogs.Services;
-using UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels;
-using UrbanoMetraj.BoQ.PipeCatalogs.UI.Views;
 using UrbanoMetraj.BoQ.Services;
 using UrbanoMetraj.BoQ.SmartAssembly;
+using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
 using UrbanoMetraj.BoQ.UI;
 
 using Exception = System.Exception;
@@ -21,7 +19,8 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
     /// <summary>
     /// Commands
     /// ────────────────────────────────────────────────────────────
-    ///  PIPE_CATALOG              — opens the modeless Pipe Catalog window.
+    ///  PIPE_CATALOG              — opens the shared Akıllı Montaj window on the
+    ///                              "Boru Kataloğu" tab (formerly a standalone window).
     ///
     ///  PIPE_CATALOG_LIVE_EXTRACT — triggers ARS_EXPORT_XML on an STA thread
     ///                              and parses the resulting XML for pipe
@@ -37,21 +36,17 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
     ///  5. When the STA thread confirms the XML is written, it registers a
     ///     one-shot Application.Idle handler and exits.
     ///  6. The Idle handler fires on the main thread: parses the XML, updates
-    ///     PipeCatalogStore, refreshes open windows, hides InputBlocker.
+    ///     PipeCatalogStore, refreshes the Akıllı Montaj window, hides InputBlocker.
     /// </summary>
     public class PipeCatalogCommand
     {
-        // ── Modeless window state ─────────────────────────────────────────────
-        private static PipeCatalogWindow _window;
-        private static PipeCatalogMainVm _vm;
-
         // ── Shared state  (main thread ↔ Idle callback) ───────────────────────
         private static string       _exportXmlPath;
         private static Editor       _editor;
         private static EventHandler _idleHandler;
 
         // =====================================================================
-        // PIPE_CATALOG  — open / activate the catalog manager window
+        // PIPE_CATALOG  — open / activate the catalog manager tab
         // =====================================================================
 
         [CommandMethod("PIPE_CATALOG")]
@@ -63,15 +58,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
 
             try
             {
-                if (_window != null && _window.IsLoaded)
-                {
-                    _window.Activate();
-                    return;
-                }
-
-                _vm     = new PipeCatalogMainVm(PipeCatalogStore.Current);
-                _window = new PipeCatalogWindow(_vm);
-                Application.ShowModelessWindow(_window);
+                SmartAssemblyCommand.ShowWindowOnTab(SmartAssemblyMainVm.TAB_PIPE_CATALOG);
             }
             catch (Exception ex)
             {
@@ -124,7 +111,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
 
             ed.WriteMessage(
                 "\n[PipeCatalog] Dialog otomasyonu başlatıldı. " +
-                "XML ayrıştırıldıktan sonra katalog penceresi otomatik güncellenir.\n");
+                "XML ayrıştırıldıktan sonra katalog sekmesi otomatik güncellenir.\n");
         }
 
         // =====================================================================
@@ -177,12 +164,11 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
                     "\n[PipeCatalog] {0} aile çıkarıldı.",
                     extracted.Families.Count));
 
-                // Propagate to open Smart Assembly window
-                SmartAssemblyCommand.GetMainVm()?.RefreshPipeCatalog(extracted);
-
-                // Refresh or open the Pipe Catalog window directly —
-                // Application.Idle fires on the main thread so ShowModelessWindow is safe here.
-                RefreshOrOpenWindow(extracted);
+                // Push into the shared Akıllı Montaj window (creates it if not already open)
+                // and jump to the Boru Kataloğu tab so the user sees the result immediately.
+                var mainVm = SmartAssemblyCommand.EnsureMainVm();
+                mainVm.RefreshPipeCatalog(extracted);
+                SmartAssemblyCommand.ShowWindowOnTab(SmartAssemblyMainVm.TAB_PIPE_CATALOG);
             }
             catch (Exception ex)
             {
@@ -211,31 +197,6 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
         // =====================================================================
         // Helpers
         // =====================================================================
-
-        internal static PipeCatalogMainVm GetVm() => _vm;
-
-        private static void RefreshOrOpenWindow(PipeCatalog catalog)
-        {
-            try
-            {
-                if (_window != null && _window.IsLoaded)
-                {
-                    _vm?.ApplyExtractedCatalog(catalog);
-                    _window.Activate();
-                }
-                else
-                {
-                    _vm     = new PipeCatalogMainVm(catalog);
-                    _window = new PipeCatalogWindow(_vm);
-                    Application.ShowModelessWindow(_window);
-                }
-            }
-            catch (Exception ex)
-            {
-                Application.DocumentManager.MdiActiveDocument?
-                    .Editor.WriteMessage("\n[PipeCatalog] Pencere yenileme hatası: " + ex.Message);
-            }
-        }
 
         private static void TryDelete(string path)
         {

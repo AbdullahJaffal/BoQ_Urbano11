@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
 using UrbanoMetraj.BoQ.SmartAssembly.Serialization;
+using UrbanoMetraj.BoQ.SmartAssembly.Services;
 
 namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 {
@@ -378,6 +379,10 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             {
                 MasterCatalogXmlManager.ExportFamilies(_catalog,
                     MasterCatalogXmlManager.DefaultComponentsPath);
+                // Invalidate the shared disk cache so the next consumer that reads
+                // SmartAssemblyCatalogStore.Current (e.g. MANHOLE_EXCAV_CATALOG)
+                // reloads from disk and sees the freshly saved families/components.
+                SmartAssemblyCatalogStore.Invalidate();
                 StatusText = "Bileşenler kaydedildi.";
             }
             catch (Exception ex) { ShowError("Kayıt hatası", ex); }

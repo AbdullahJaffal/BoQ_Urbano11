@@ -1,15 +1,9 @@
-<Window x:Class="UrbanoMetraj.BoQ.SoilCatalog.UI.Views.SoilCatalogWindow"
+<UserControl x:Class="UrbanoMetraj.BoQ.DolguCatalog.UI.Views.DolguCatalogView"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:conv="clr-namespace:UrbanoMetraj.BoQ.SmartAssembly.UI.Converters"
-        Title="Zemin Sınıfı Kataloğu"
-        Width="680" Height="480"
-        MinWidth="500" MinHeight="340"
-        WindowStyle="ToolWindow"
-        ResizeMode="CanResizeWithGrip"
-        ShowInTaskbar="False">
+        xmlns:conv="clr-namespace:UrbanoMetraj.BoQ.SmartAssembly.UI.Converters">
 
-    <Window.Resources>
+    <UserControl.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
 
         <Style x:Key="ColHeader" TargetType="DataGridColumnHeader">
@@ -22,7 +16,7 @@
             <Setter Property="Padding" Value="10,3"/>
             <Setter Property="Margin"  Value="0,0,4,0"/>
         </Style>
-    </Window.Resources>
+    </UserControl.Resources>
 
     <DockPanel>
 
@@ -39,7 +33,6 @@
                 Background="#F8F8F8" Padding="6,5">
             <WrapPanel>
 
-                <!-- CRUD -->
                 <Button Content="+ Ekle"  Command="{Binding AddCommand}"
                         Style="{StaticResource ActionBtn}"/>
                 <Button Content="Çoğalt"  Command="{Binding DuplicateCommand}"
@@ -49,18 +42,14 @@
 
                 <Separator Width="1" Height="22" Margin="6,0" Background="#CCCCCC"/>
 
-                <!-- ── XML Persistence ──────────────────────────────────────── -->
-                <!-- Kaydet: serializes to the fixed internal %APPDATA% path    -->
                 <Button Content="💾 Kaydet" Command="{Binding SaveCommand}"
                         Style="{StaticResource ActionBtn}"
-                        ToolTip="Zemin kataloğunu dahili konuma kaydeder&#x0a;(%APPDATA%\UrbanoMetraj\SoilCatalog.xml)"/>
+                        ToolTip="Dolgu kataloğunu dahili konuma kaydeder&#x0a;(%APPDATA%\UrbanoMetraj\DolguCatalog.xml)"/>
 
-                <!-- Dışa Aktar: SaveFileDialog → user-chosen path              -->
                 <Button Content="Dışa Aktar" Command="{Binding ExportCommand}"
                         Style="{StaticResource ActionBtn}"
-                        ToolTip="Kataloğu seçilen konuma XML olarak dışa aktarır.&#x0a;Yedekleme veya ekip paylaşımı için kullanın."/>
+                        ToolTip="Kataloğu seçilen konuma XML olarak dışa aktarır."/>
 
-                <!-- İçe Aktar: OpenFileDialog → merge or replace               -->
                 <Button Content="İçe Aktar" Command="{Binding ImportCommand}"
                         Style="{StaticResource ActionBtn}"
                         ToolTip="Daha önce dışa aktarılmış bir XML dosyasını içe aktarır."/>
@@ -81,19 +70,9 @@
                     Binding="{Binding BoqItemCode, UpdateSourceTrigger=PropertyChanged}"
                     Width="110"/>
 
-                <DataGridTextColumn Header="Zemin Adı"
-                    Binding="{Binding SoilName, UpdateSourceTrigger=PropertyChanged}"
+                <DataGridTextColumn Header="Dolgu Malzemesi"
+                    Binding="{Binding DolguAdi, UpdateSourceTrigger=PropertyChanged}"
                     Width="*"/>
-
-                <DataGridTextColumn Header="Kabarma Katsayısı"
-                    Binding="{Binding BulkingFactor,
-                              UpdateSourceTrigger=PropertyChanged,
-                              StringFormat=0.000}"
-                    Width="130"/>
-
-                <DataGridTextColumn Header="Kazı Tipi"
-                    Binding="{Binding KaziTipi, UpdateSourceTrigger=PropertyChanged}"
-                    Width="120"/>
 
                 <DataGridTextColumn Header="Açıklama"
                     Binding="{Binding Aciklama, UpdateSourceTrigger=PropertyChanged}"
@@ -103,4 +82,4 @@
         </DataGrid>
 
     </DockPanel>
-</Window>
+</UserControl>
