@@ -23,6 +23,9 @@
     <Compile Include="Program.cs" />
     <Compile Include="..\..\BoQ\Models\TrenchGeometry.cs" />
     <Compile Include="..\..\BoQ\Models\BoQModels.cs" />
+    <Compile Include="..\..\BoQ\ManholeExcavationCatalog\Models\ManholeExcavationCatalogModels.cs" />
+    <Compile Include="..\..\BoQ\SmartAssembly\Models\Footprint.cs" />
+    <Compile Include="..\..\BoQ\SmartAssembly\Models\FootprintShape.cs" />
     <Compile Include="..\..\BoQ\Services\ClipperGeo.cs" />
     <Compile Include="..\..\BoQ\Services\BoQOverlapResolver.cs" />
   </ItemGroup>

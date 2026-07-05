@@ -394,6 +394,20 @@
                                             Binding="{Binding LayerName,
                                                       UpdateSourceTrigger=PropertyChanged}"
                                             Width="*"/>
+                                        <DataGridTemplateColumn Header="Malzeme" Width="130">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding MaterialType}"
+                                                               VerticalAlignment="Center" Padding="4,0"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                            <DataGridTemplateColumn.CellEditingTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding AvailableDolguMaterials}"
+                                                              SelectedValue="{Binding MaterialType, UpdateSourceTrigger=PropertyChanged}"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellEditingTemplate>
+                                        </DataGridTemplateColumn>
                                         <DataGridTextColumn Header="Kalınlık (mm)"
                                             Binding="{Binding ThicknessMm,
                                                       UpdateSourceTrigger=PropertyChanged,
@@ -433,10 +447,20 @@
                                             Binding="{Binding LayerName,
                                                       UpdateSourceTrigger=PropertyChanged}"
                                             Width="*"/>
-                                        <DataGridTextColumn Header="Malzeme"
-                                            Binding="{Binding MaterialType,
-                                                      UpdateSourceTrigger=PropertyChanged}"
-                                            Width="80"/>
+                                        <DataGridTemplateColumn Header="Malzeme" Width="130">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding MaterialType}"
+                                                               VerticalAlignment="Center" Padding="4,0"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                            <DataGridTemplateColumn.CellEditingTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding AvailableDolguMaterials}"
+                                                              SelectedValue="{Binding MaterialType, UpdateSourceTrigger=PropertyChanged}"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellEditingTemplate>
+                                        </DataGridTemplateColumn>
 
                                         <!-- Thickness: greyed out when IsFillToSurface -->
                                         <DataGridTemplateColumn Header="Kalınlık (m)" Width="80">

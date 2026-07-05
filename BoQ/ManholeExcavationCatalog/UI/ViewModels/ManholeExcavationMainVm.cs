@@ -10,6 +10,7 @@ using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models;
 using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
 using UrbanoMetraj.BoQ.SmartAssembly.Services;
+using UrbanoMetraj.BoQ.DolguCatalog.Services;
 using UrbanoMetraj.BoQ.SoilCatalog.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;  // ViewModelBase, RelayCommand
 
@@ -36,11 +37,20 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
             set { _model.LayerName = value; OnPropertyChanged(); }
         }
 
+        public string MaterialType
+        {
+            get => _model.MaterialType;
+            set { _model.MaterialType = value; OnPropertyChanged(); }
+        }
+
         public double ThicknessMm
         {
             get => _model.ThicknessMm;
             set { _model.ThicknessMm = value; OnPropertyChanged(); }
         }
+
+        public IEnumerable<string> AvailableDolguMaterials
+            => DolguCatalogStore.Items.Select(d => d.DolguAdi);
     }
 
     // =========================================================================
@@ -87,6 +97,9 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
 
         /// <summary>Drives IsEnabled on the ThicknessM control — irrelevant when filling to surface.</summary>
         public bool IsThicknessEnabled => !_model.IsFillToSurface;
+
+        public IEnumerable<string> AvailableDolguMaterials
+            => DolguCatalogStore.Items.Select(d => d.DolguAdi);
     }
 
     // =========================================================================
@@ -234,7 +247,7 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
         {
             if (_selectedSubBaseLayer == null) return;
             var src   = _selectedSubBaseLayer.Model;
-            var clone = new SubBaseLayer { LayerName = src.LayerName, ThicknessMm = src.ThicknessMm };
+            var clone = new SubBaseLayer { LayerName = src.LayerName, MaterialType = src.MaterialType, ThicknessMm = src.ThicknessMm };
             _model.SubBaseLayers.Add(clone);
             var vm = new SubBaseLayerVm(clone);
             SubBaseLayers.Add(vm);
@@ -695,7 +708,7 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
                 StepBermWidthM     = src.StepBermWidthM
             };
             foreach (var l in src.SubBaseLayers)
-                clone.SubBaseLayers.Add(new SubBaseLayer { LayerName = l.LayerName, ThicknessMm = l.ThicknessMm });
+                clone.SubBaseLayers.Add(new SubBaseLayer { LayerName = l.LayerName, MaterialType = l.MaterialType, ThicknessMm = l.ThicknessMm });
             foreach (var l in src.BackfillLayers)
                 clone.BackfillLayers.Add(new ManholeBackfillLayer
                 {
@@ -839,6 +852,11 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.ViewModels
             try
             {
                 ManholeExcavationCatalogXmlManager.SaveInternal(_backingRules);
+                // _backingRules is a private copy (see constructor) — without this,
+                // ManholeExcavationCatalogStore.Current keeps returning whatever was
+                // cached at its first access this session, silently ignoring the
+                // freshly saved rules until AutoCAD restarts.
+                ManholeExcavationCatalogStore.Current = _backingRules;
                 StatusText = $"Kaydedildi → {ManholeExcavationCatalogXmlManager.InternalPath}";
             }
             catch (Exception ex) { ShowError("Kayıt hatası", ex); }

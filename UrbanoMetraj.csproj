@@ -130,8 +130,11 @@
     <Compile Include="BoQ\Services\BoQScenarioAggregator.cs" />
     <Compile Include="BoQ\Services\ManholeConfigService.cs" />
     <Compile Include="BoQ\Services\ManholeAIService.cs" />
+    <Compile Include="BoQ\Services\ManholeConnectionLinkService.cs" />
     <Compile Include="BoQ\Services\ManholeExcavOverlapService.cs" />
+    <Compile Include="BoQ\Services\ManholeExcavationGeometry.cs" />
     <Compile Include="BoQ\Services\ExcelExportService.cs" />
+    <Compile Include="BoQ\Services\ManholeKesifExportService.cs" />
     <Compile Include="BoQ\Services\SolidBuilderService.cs" />
     <Compile Include="BoQ\Services\CrossSectionDrawService.cs" />
     <Compile Include="BoQ\UI\RibbonSetup.cs" />
@@ -157,6 +160,7 @@
     <Compile Include="BoQ\BoQViewCommand.cs" />
     <Compile Include="BoQ\BoQSimplifiedTestCommand.cs" />
     <Compile Include="BoQ\BoQSimplifiedTestV2Command.cs" />
+    <Compile Include="BoQ\BacaKesifTablosuCommand.cs" />
     <Compile Include="BoQ\SolidsCommand.cs" />
     <Compile Include="BoQ\SectionsCommand.cs" />
     <Compile Include="BoQ\SectionsDbCommand.cs" />
@@ -220,6 +224,7 @@
     <!-- ═══ Manhole Excavation Catalog ══════════════════════════════════════ -->
     <Compile Include="BoQ\ManholeExcavationCatalog\Models\ManholeExcavationCatalogModels.cs" />
     <Compile Include="BoQ\ManholeExcavationCatalog\Services\ManholeExcavationCatalogXmlManager.cs" />
+    <Compile Include="BoQ\ManholeExcavationCatalog\Services\ManholeExcavationCatalogStore.cs" />
     <Compile Include="BoQ\ManholeExcavationCatalog\UI\ViewModels\ManholeExcavationMainVm.cs" />
     <Compile Include="BoQ\ManholeExcavationCatalog\UI\Views\ManholeExcavationCatalogView.xaml.cs">
       <DependentUpon>ManholeExcavationCatalogView.xaml</DependentUpon>
@@ -228,11 +233,20 @@
     <!-- ═══ Pipe Trench Catalog ══════════════════════════════════════════════ -->
     <Compile Include="BoQ\PipeTrenchCatalog\Models\PipeTrenchCatalogModels.cs" />
     <Compile Include="BoQ\PipeTrenchCatalog\Services\PipeTrenchCatalogXmlManager.cs" />
+    <Compile Include="BoQ\PipeTrenchCatalog\Services\PipeTrenchCatalogStore.cs" />
     <Compile Include="BoQ\PipeTrenchCatalog\UI\ViewModels\PipeTrenchMainVm.cs" />
     <Compile Include="BoQ\PipeTrenchCatalog\UI\Views\PipeTrenchCatalogView.xaml.cs">
       <DependentUpon>PipeTrenchCatalogView.xaml</DependentUpon>
     </Compile>
     <Compile Include="BoQ\PipeTrenchCatalog\PipeTrenchCatalogCommand.cs" />
+    <!-- ═══ Type Mapping (Urbano catalog ↔ our catalogs) ═══════════════════════ -->
+    <Compile Include="BoQ\TypeMapping\Models\TypeMappingModels.cs" />
+    <Compile Include="BoQ\TypeMapping\Services\TypeMappingNodManager.cs" />
+    <Compile Include="BoQ\TypeMapping\Services\TypeMappingStore.cs" />
+    <Compile Include="BoQ\TypeMapping\UI\ViewModels\TypeMappingTabVm.cs" />
+    <Compile Include="BoQ\TypeMapping\UI\Views\TypeMappingTabView.xaml.cs">
+      <DependentUpon>TypeMappingTabView.xaml</DependentUpon>
+    </Compile>
     <!-- ═══ Pipe Catalog ════════════════════════════════════════════════════ -->
     <Compile Include="BoQ\PipeCatalog\Models\PipeCatalogModels.cs" />
     <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogImportService.cs" />
@@ -285,6 +299,10 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="BoQ\SoilCatalog\UI\Views\SoilCatalogView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="BoQ\TypeMapping\UI\Views\TypeMappingTabView.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

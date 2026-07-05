@@ -15,8 +15,16 @@ namespace UrbanoMetraj.BoQ.UI
     /// DWG and lets the user:
     ///   • choose the Kazı (excavation) and Dolgu (bedding+surround+backfill)
     ///     calculation method (50/50 · Üst · Alt) from two drop-downs,
-    ///   • press "Hesapla" to recompute the tables from the cache (no Clipper),
-    ///   • "Metraj Verisi Güncelle" to recompute + re-save the data (re-runs BoQ),
+    ///   • press "Sonuçları Göster" to re-aggregate the tables from the cache
+    ///     (no Clipper, no re-save — just a display refresh for the chosen
+    ///     Kazı/Dolgu/Baca Kazısı preference),
+    ///   • "Metraj Verisi Güncelle" (URBANO_BOQ) to pull fresh data from Urbano
+    ///     and refresh the discovered-catalog-item list for Tür Eşleştirme —
+    ///     no geometry/Manhole AI runs here, so this is safe to do before
+    ///     linking is complete,
+    ///   • "Hesapla" (URBANO_BOQ_HESAPLA) to run the actual geometry + Manhole
+    ///     AI calculation and save it — meant to be pressed after Tür
+    ///     Eşleştirme / Baca-Boru Bağlantı Kuralları links are set up,
     ///   • build the 3-D solids for the selected method,
     ///   • export to Excel.
     /// </summary>
@@ -231,13 +239,16 @@ namespace UrbanoMetraj.BoQ.UI
             _cmbBacaKazi.Items.AddRange(new object[] { "Hesapla", "Yoksay" });
             _cmbBacaKazi.SelectedIndex = (_savedSettings?.BacaKaziHesapla ?? false) ? 0 : 1;
 
-            var btnHesapla = new Button
+            // Cheap re-aggregate (BoQScenarioAggregator.Apply) over already-computed
+            // KU/KL/SP data — no Clipper, no re-save. Renamed from "Hesapla" (was
+            // misleading — it never runs the real calculation) since it really just
+            // rebuilds the tabs for the chosen Kazı/Dolgu/Baca Kazısı preference.
+            var btnGosterSonuc = new Button
             {
-                Text = "Hesapla", Left = MARGIN + 650, Top = row1 - 1, Width = 90, Height = 28,
-                BackColor = Color.FromArgb(0, 70, 127), ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+                Text = "Sonuçları Göster", Left = MARGIN + 650, Top = row1 - 1, Width = 150, Height = 28,
+                FlatStyle = FlatStyle.Flat
             };
-            btnHesapla.Click += (s, e) => Recalculate();
+            btnGosterSonuc.Click += (s, e) => Recalculate();
 
             // ── Row 2: action buttons ─────────────────────────────────────────
             int row2 = 66;
@@ -303,11 +314,28 @@ namespace UrbanoMetraj.BoQ.UI
                 _doc.SendStringToExecute("URBANO_SECTIONS\n", true, false, true);
             };
 
+            // The real calculation (geometry + Manhole AI + save), meant to be run
+            // after Tür Eşleştirme / Baca-Boru Bağlantı Kuralları links are set up.
+            // Takes over the prominent styling the old "Hesapla" button had, since
+            // this is the action that actually deserves it now.
+            var btnHesapla = new Button
+            {
+                Text = "Hesapla", Left = MARGIN + 478, Top = row2 - 1, Width = 90, Height = 28,
+                BackColor = Color.FromArgb(0, 70, 127), ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+            };
+            btnHesapla.Click += (s, e) =>
+            {
+                BoQSimplifiedTestV2Command.RequestReopenView();
+                _doc.SendStringToExecute("URBANO_BOQ_HESAPLA\n", true, false, true);
+                Close();
+            };
+
             Controls.AddRange(new Control[]
             {
                 lblKazi, _cmbKazi, lblDolgu, _cmbDolgu,
-                lblBaca, _cmbBaca, lblBacaKazi, _cmbBacaKazi, btnHesapla,
-                btnRefresh, btnSolids, btnSettings, btnSections
+                lblBaca, _cmbBaca, lblBacaKazi, _cmbBacaKazi, btnGosterSonuc,
+                btnRefresh, btnSolids, btnSettings, btnSections, btnHesapla
             });
         }
 
@@ -384,6 +412,8 @@ namespace UrbanoMetraj.BoQ.UI
             Add(grid, "Toplam geri dolgu (m³)",     $"{_report.TotalBackfillVolume:N3}");
             Add(grid, "Toplam baca kazısı (m³)",
                 BacaKaziHesapla ? $"{_report.TotalManholeExcavationVolume:N3}" : "0,000");
+            Add(grid, "Toplam baca geri dolgu (m³)",
+                BacaKaziHesapla ? $"{_report.TotalManholeBackfillVolume:N3}" : "0,000");
             Add(grid, "Çakışmadan düşülen kazı (m³)",  $"{_report.TotalOverlapExcavDeducted:N3}");
             Add(grid, "Çakışmadan düşülen dolgu (m³)", $"{_report.TotalOverlapBackfillDeducted:N3}");
             Add(grid, "İstasyon verisi",
@@ -525,7 +555,7 @@ namespace UrbanoMetraj.BoQ.UI
             foreach (string col in new[]
             {
                 "Ad", "Tip", "Çap (mm)", "Derinlik (m)",
-                "Kazı Derin. (m)", "Kazı Hacmi (m³)",
+                "Kazı Derin. (m)", "Kazı Hacmi (m³)", "Geri Dolgu (m³)",
                 "X (m)", "Y (m)", "Zemin Z (m)"
             })
                 grid.Columns.Add(col, col);
@@ -534,17 +564,19 @@ namespace UrbanoMetraj.BoQ.UI
             grid.Columns[2].Width = 70;
             grid.Columns[3].Width = 90;
             grid.Columns[4].Width = 100;
-            grid.Columns[5].Width = 110;
-            for (int i = 6; i < grid.Columns.Count; i++) grid.Columns[i].Width = 90;
+            grid.Columns[5].Width = 105;
+            grid.Columns[6].Width = 105;
+            for (int i = 7; i < grid.Columns.Count; i++) grid.Columns[i].Width = 90;
 
             bool showMhExcav = BacaKaziHesapla;
             foreach (var m in sys.Manholes)
             {
                 grid.Rows.Add(
-                    m.NodeName, m.SmartTypeName ?? "", m.Diameter,
+                    m.NodeName, m.SmartTypeName ?? "", m.DiameterDisplay,
                     m.Depth.ToString("N2"),
-                    showMhExcav ? m.ExcavationDepth.ToString("N3") : "0,000",
+                    showMhExcav ? m.ExcavationDepth.ToString("N3")  : "0,000",
                     showMhExcav ? m.ExcavationVolume.ToString("N3") : "0,000",
+                    showMhExcav ? m.BackfillVolume.ToString("N3")   : "0,000",
                     m.X.ToString("N3"), m.Y.ToString("N3"),
                     m.TerrainElevation.ToString("N3"));
             }
@@ -562,12 +594,20 @@ namespace UrbanoMetraj.BoQ.UI
 
             if (isPreCast)
             {
-                grid.Columns.Add("Part",  "Parça / Malzeme");
-                grid.Columns.Add("Qty",   "Adet");
-                grid.Columns.Add("Unit",  "Birim");
-                grid.Columns[0].Width = 280;
-                grid.Columns[1].Width = 80;
+                grid.Columns.Add("Part",     "Parça / Malzeme");
+                grid.Columns.Add("Qty",      "Adet");
+                grid.Columns.Add("Unit",     "Birim");
+                grid.Columns.Add("PozNo",    "Poz No");
+                grid.Columns.Add("Aciklama", "Açıklama");
+                grid.Columns.Add("MatVol",   "Malzeme Hacmi (m³)");
+                grid.Columns.Add("ExtVol",   "Dış Hacim (m³)");
+                grid.Columns[0].Width = 220;
+                grid.Columns[1].Width = 60;
                 grid.Columns[2].Width = 60;
+                grid.Columns[3].Width = 90;
+                grid.Columns[4].Width = 160;
+                grid.Columns[5].Width = 110;
+                grid.Columns[6].Width = 110;
 
                 var bomGroups = ManholeAIService.BuildBomBySystem(_report,
                     new BoQSettings { ManholeType = ManholeType.PreCast });
@@ -575,12 +615,15 @@ namespace UrbanoMetraj.BoQ.UI
                 {
                     if (bomGroups.Count > 1)
                     {
-                        int r = grid.Rows.Add($"── {grp.SystemName} ──", "", "");
+                        int r = grid.Rows.Add($"── {grp.SystemName} ──", "", "", "", "", "", "");
                         grid.Rows[r].DefaultCellStyle.BackColor = Color.FromArgb(220, 230, 245);
                         grid.Rows[r].DefaultCellStyle.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
                     }
                     foreach (var line in grp.Lines)
-                        grid.Rows.Add(line.Description, line.Quantity, line.Unit);
+                        grid.Rows.Add(line.Description, line.Quantity, line.Unit,
+                            line.PozNo, line.Aciklama,
+                            line.TotalMaterialVolume.ToString("N4"),
+                            line.TotalExternalVolume.ToString("N4"));
                 }
             }
             else

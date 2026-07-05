@@ -161,7 +161,11 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
 
             BackfillLayers = new ObservableCollection<TrenchLayerVm>();
             foreach (var l in model.BackfillLayers)
-                BackfillLayers.Add(new TrenchLayerVm(l));
+            {
+                var vm = new TrenchLayerVm(l);
+                vm.PropertyChanged += OnBackfillLayerPropertyChanged;
+                BackfillLayers.Add(vm);
+            }
 
             GomleklemeLayers = new ObservableCollection<GomleklemeLayerVm>();
             foreach (var l in model.GomleklemeLayers)
@@ -340,13 +344,31 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
             var layer = new TrenchLayer { LayerName = "Geri Dolgu", MaterialType = "Seçme Malzeme", ThicknessM = 0.3 };
             _model.BackfillLayers.Add(layer);
             var vm = new TrenchLayerVm(layer);
+            vm.PropertyChanged += OnBackfillLayerPropertyChanged;
             BackfillLayers.Add(vm);
             SelectedBackfillLayer = vm;
+        }
+
+        /// <summary>
+        /// Only one Geri Dolgu row may be "Yüzeye Doldur" at a time — its real
+        /// thickness is resolved as whatever remains of the average excavation-driven
+        /// backfill height once every other configured layer is accounted for
+        /// (see BoQParserService's Geri Dolgu layer split), which is only
+        /// well-defined for a single such row.
+        /// </summary>
+        private void OnBackfillLayerPropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(TrenchLayerVm.IsFillToSurface)) return;
+            if (!(sender is TrenchLayerVm changed) || !changed.IsFillToSurface) return;
+            foreach (var other in BackfillLayers)
+                if (!ReferenceEquals(other, changed) && other.IsFillToSurface)
+                    other.IsFillToSurface = false;
         }
 
         private void OnDeleteBackfillLayer(object _)
         {
             if (_selectedBackfillLayer == null) return;
+            _selectedBackfillLayer.PropertyChanged -= OnBackfillLayerPropertyChanged;
             _model.BackfillLayers.Remove(_selectedBackfillLayer.Model);
             BackfillLayers.Remove(_selectedBackfillLayer);
             SelectedBackfillLayer = null;
@@ -881,6 +903,11 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
             try
             {
                 PipeTrenchCatalogXmlManager.SaveInternal(_backingRules);
+                // _backingRules is a private copy (see constructor) — without this,
+                // PipeTrenchCatalogStore.Current keeps returning whatever was cached
+                // at its first access this session, so BoQParserService's trench
+                // geometry would silently use stale rules until AutoCAD restarts.
+                PipeTrenchCatalogStore.Current = _backingRules;
                 StatusText = $"Kaydedildi → {PipeTrenchCatalogXmlManager.InternalPath}";
             }
             catch (Exception ex) { ShowError("Kayıt hatası", ex); }

@@ -154,7 +154,15 @@
       "PowerShell(cmd /c \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v38.bat\")",
       "Bash(gh auth *)",
       "Bash(git fetch *)",
-      "Bash(git rev-list *)"
+      "Bash(git rev-list *)",
+      "Bash(find . -name \"extract-text*\")",
+      "Bash(extract-text --format xlsx \"D:\\\\OneDrive\\\\OneDrive - 76774176ELSA PROJE MÜHENDİSLİK VE İNŞAAT LTD.ŞTİ\\\\Belgeler\\\\Downloads\\\\Ведомость  п. э. колод. 30 H1_TR.xlsx\")",
+      "Bash(find / -iname \"extract-text*\" 2>/dev/null | head -20)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)",
+      "Bash(git -C \"D:/Abdullah-ElsaProje/Software/UrbanoMetraj\" status --short)",
+      "Bash(xargs grep -l \"class.*Command\")",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v42.bat\")",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v43.bat\")"
     ]
   }
 }

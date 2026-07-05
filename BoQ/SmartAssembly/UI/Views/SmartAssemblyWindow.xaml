@@ -7,6 +7,7 @@
         xmlns:pipeTrench="clr-namespace:UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.Views"
         xmlns:soilCat="clr-namespace:UrbanoMetraj.BoQ.SoilCatalog.UI.Views"
         xmlns:dolguCat="clr-namespace:UrbanoMetraj.BoQ.DolguCatalog.UI.Views"
+        xmlns:typeMap="clr-namespace:UrbanoMetraj.BoQ.TypeMapping.UI.Views"
         Title="Akıllı Montaj"
         Width="1350" Height="760"
         MinWidth="1050" MinHeight="580"
@@ -249,6 +250,12 @@
                                 <TextBox Text="{Binding RepositoryTab.SelectedComponent.MaterialVolume,
                                                 UpdateSourceTrigger=PropertyChanged, StringFormat=0.0000}"
                                          Margin="0,0,0,4"/>
+                                <TextBlock Text="değişken: girilen hacim 1 m yükseklik içindir — gerçek hacim, hesaplanan yüksekliğe göre orantılanır"
+                                           FontSize="10" Foreground="Gray" FontStyle="Italic"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,4"
+                                           Visibility="{Binding RepositoryTab.SelectedComponent.IsVariable,
+                                                        Converter={StaticResource BoolToVis}}"/>
 
                                 <!-- Zorunlu Parça — tüm tipler için BottomElement hariç -->
                                 <CheckBox Content="Zorunlu Parça"
@@ -1042,6 +1049,13 @@
                  ═══════════════════════════════════════════════════════════════ -->
             <TabItem Header="Dolgu Kataloğu">
                 <dolguCat:DolguCatalogView DataContext="{Binding DolguCatalogTab}"/>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 9  —  Tür Eşleştirme (Type Mapping)
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Tür Eşleştirme">
+                <typeMap:TypeMappingTabView DataContext="{Binding TypeMappingTab}"/>
             </TabItem>
         </TabControl>
     </DockPanel>

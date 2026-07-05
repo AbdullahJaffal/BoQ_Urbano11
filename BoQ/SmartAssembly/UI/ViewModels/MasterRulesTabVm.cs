@@ -9,6 +9,7 @@ using Microsoft.Win32;
 using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
 using UrbanoMetraj.BoQ.SmartAssembly.Serialization;
+using UrbanoMetraj.BoQ.SmartAssembly.Services;
 
 namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 {
@@ -328,6 +329,11 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             {
                 MasterCatalogXmlManager.ExportPipeRules(_catalog,
                     MasterCatalogXmlManager.DefaultRulesPath);
+                // Invalidate the shared disk cache so the next consumer that reads
+                // SmartAssemblyCatalogStore.Current with Akıllı Montaj closed (e.g.
+                // URBANO_BOQ_HESAPLA / ManholeAIService) reloads from disk and sees
+                // the freshly saved rules — mirrors RepositoryTabVm.OnSave.
+                SmartAssemblyCatalogStore.Invalidate();
                 MessageBox.Show("Kurallar kaydedildi.", "Kayıt Başarılı",
                     MessageBoxButton.OK, MessageBoxImage.Information);
             }

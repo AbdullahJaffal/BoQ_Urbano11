@@ -24,6 +24,7 @@ namespace UrbanoMetraj.BoQ.UI
         private const string BTN_VIEW      = "UM_BTN_BOQ_VIEW";
         private const string BTN_SOLIDS    = "UM_BTN_SOLIDS";
         private const string BTN_MH_ASSIGN   = "UM_BTN_MH_ASSIGN";
+        private const string BTN_BACA_KESIF  = "UM_BTN_BACA_KESIF";
         private const string BTN_SMART_ASSEM  = "UM_BTN_SMART_ASSEMBLY";
         private const string BTN_NETWORK_PANEL   = "UM_BTN_NETWORK_PANEL";
 
@@ -66,10 +67,14 @@ namespace UrbanoMetraj.BoQ.UI
                 ToolTip        = new RibbonToolTip
                 {
                     Title   = "Metraj (BoQ)",
-                    Content = "Metraj penceresini açar.\n" +
-                              "Pencere içinden: verileri güncelle (Metraj Verisi\n" +
-                              "Güncelle), Kazı/Dolgu hesap yöntemini seç, Hesapla ile\n" +
-                              "tabloları doldur, Excel'e aktar ve 3B katı üret."
+                    Content = "Metraj penceresini açar. Pencere içinden sırasıyla:\n" +
+                              "1) Metraj Verisi Güncelle: Urbano'dan veri çek.\n" +
+                              "2) Akıllı Montaj'da Tür Eşleştirme / Baca-Boru\n" +
+                              "   Bağlantı Kuralları ile eşleştirmeleri tamamla.\n" +
+                              "3) Hesapla: geometri + Baca AI hesabını çalıştır.\n" +
+                              "4) Sonuçları Göster ile Kazı/Dolgu yöntemini\n" +
+                              "   değiştirip tabloları yenile, Excel'e aktar,\n" +
+                              "   3B katı üret."
                 }
             });
 
@@ -88,6 +93,25 @@ namespace UrbanoMetraj.BoQ.UI
                     Content = "Seçilen baca entity'lerine (AG_GUID) bir kazı kataloğu\n" +
                               "grubu atar ve eşleşmeyi DWG'ye kaydeder.\n" +
                               "Bu eşleşme BoQ hesabında XML verileriyle ilişkilendirilir."
+                }
+            });
+
+            // ── Baca Keşif Tablosu button ─────────────────────────────────────
+            panelSource.Items.Add(new RibbonButton
+            {
+                Id             = BTN_BACA_KESIF,
+                Text           = "Baca Keşif\nTablosu",
+                ShowText       = true,
+                Size           = RibbonItemSize.Large,
+                LargeImage     = LoadIcon("um_baca_kesif.png"),
+                CommandHandler = new RibbonCommandRelay("BACA_KESIF_TABLOSU"),
+                ToolTip        = new RibbonToolTip
+                {
+                    Title   = "Baca Keşif Tablosu",
+                    Content = "URBANO_BOQ_HESAPLA ile kaydedilmiş BoQ verisinden,\n" +
+                              "her baca için bir satır olacak şekilde ayrı bir\n" +
+                              "Excel keşif tablosu (giriş/çıkış boru, kot, derinlik,\n" +
+                              "kazı hacmi, parça dökümü) üretir."
                 }
             });
 

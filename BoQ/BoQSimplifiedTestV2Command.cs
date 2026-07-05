@@ -6,13 +6,15 @@ using System.Threading;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
-using OfficeOpenXml;
-using OfficeOpenXml.Style;
 using UrbanoMetraj.BoQ.Models;
 using UrbanoMetraj.BoQ.Services;
+using UrbanoMetraj.BoQ.TypeMapping.Services;
 using UrbanoMetraj.BoQ.UI;
 
 using Exception = System.Exception;
+using MessageBox = System.Windows.Forms.MessageBox;
+using MessageBoxButtons = System.Windows.Forms.MessageBoxButtons;
+using MessageBoxIcon = System.Windows.Forms.MessageBoxIcon;
 
 [assembly: CommandClass(typeof(UrbanoMetraj.BoQ.BoQSimplifiedTestV2Command))]
 
@@ -21,11 +23,17 @@ namespace UrbanoMetraj.BoQ
     /// <summary>
     /// BOQ_SIMPLIFIED_V2 — Angle-aware cross-section pipeline (development branch).
     ///
-    /// Identical to BOQ_SIMPLIFIED_TEST (V1) as a starting point.
-    /// Future additions: bisector-frame cross-sections for non-parallel pipes,
-    /// accumulated deductions for simultaneous multi-pipe overlaps, wedge corrections.
-    ///
-    /// Run both commands on the same drawing and compare Excel outputs to validate.
+    /// Split (2026-07-04, user-directed) into two independent commands so
+    /// engineering data linking (Tür Eşleştirme / Baca-Boru Bağlantı Kuralları)
+    /// happens BEFORE the real calculation, not silently mid-run:
+    ///   • URBANO_BOQ         — pulls Urbano's export + parses it just enough
+    ///                          to refresh the discovered-catalog-item list for
+    ///                          linking. No geometry, no Manhole AI, no save.
+    ///   • URBANO_BOQ_HESAPLA — re-parses the last export and runs the full
+    ///                          geometry + Manhole AI pipeline + save. No
+    ///                          Urbano dialog automation needed here.
+    /// Both surface any linking gaps (unlinked pipes, missing trench/Baca-Boru
+    /// rules) via DiscoveryNotes — see PrintNotes.
     /// </summary>
     public class BoQSimplifiedTestV2Command
     {
@@ -49,11 +57,9 @@ namespace UrbanoMetraj.BoQ
             Document doc = Application.DocumentManager.MdiActiveDocument;
             Editor   ed  = doc.Editor;
 
-            ed.WriteMessage("\n[BoQ] >>> URBANO_BOQ (V2 engine) starting <<<");
-
             if (_idleHandler != null)
             {
-                ed.WriteMessage("\n[BoQ] Already running — wait for completion.\n");
+                ed.WriteMessage("\n[BoQ] Zaten çalışıyor — tamamlanmasını bekleyin.\n");
                 return;
             }
 
@@ -91,10 +97,6 @@ namespace UrbanoMetraj.BoQ
 
             InputBlocker.Show();
             doc.SendStringToExecute("_ARS_EXPORT_XML\n", true, false, true);
-
-            ed.WriteMessage(
-                "\n[SimplifiedBoQV2] Dialog automation started. " +
-                "Results will appear in the command window when complete.\n");
         }
 
         // =====================================================================
@@ -111,7 +113,7 @@ namespace UrbanoMetraj.BoQ
             { _editor?.WriteMessage($"\n[SimplifiedBoQV2] Automation error: {ex.Message}"); }
             finally { cts.Dispose(); }
 
-            _idleHandler = success ? (EventHandler)OnIdleCompute : OnIdleAbort;
+            _idleHandler = success ? (EventHandler)OnIdleExtractOnly : OnIdleAbort;
             Application.Idle += _idleHandler;
         }
 
@@ -124,30 +126,173 @@ namespace UrbanoMetraj.BoQ
         }
 
         // =====================================================================
-        // Main computation — AutoCAD main thread (Idle callback)
+        // Data extraction only — AutoCAD main thread (Idle callback)
+        //
+        // URBANO_BOQ's job is now limited to: pull Urbano's XML export, parse it
+        // (Phase 1 only — no geometry/clash/Manhole AI), and refresh the
+        // discovered-catalog-item list so Tür Eşleştirme can link them. Running
+        // the full geometry+Manhole AI pipeline before linking is complete
+        // produces silently incomplete results (unresolved PozNo/Sınıf, manhole
+        // diameter/BOM) — see URBANO_BOQ_HESAPLA for the actual calculation,
+        // meant to be run only after linking is done.
         // =====================================================================
 
-        private static void OnIdleCompute(object sender, EventArgs e)
+        private static void OnIdleExtractOnly(object sender, EventArgs e)
         {
             Application.Idle -= _idleHandler;
             _idleHandler = null;
 
-            Editor      ed       = _editor;
-            string      xmlPath  = _exportXmlPath;
-            BoQSettings settings = _settings;
+            Editor      ed      = _editor;
+            string      xmlPath = _exportXmlPath;
 
             try
             {
+                var mappingDoc = Application.DocumentManager.MdiActiveDocument;
+                if (mappingDoc != null) TypeMappingStore.LoadFromDwg(mappingDoc.Database);
+
+                var parser = new BoQParserService(enableClashDetection: false);
+                BoQReport report = parser.Parse(xmlPath, ed);
+
+                var activeDoc = Application.DocumentManager.MdiActiveDocument;
+                using (activeDoc.LockDocument())
+                {
+                    // Discovered Urbano catalog items live inside the DWG (not the
+                    // %TEMP% export file) so the Type Mapping tab works even after
+                    // the DWG is moved to another machine — refreshed every run.
+                    TypeMappingNodManager.SaveDiscoveredItems(activeDoc.Database, report.CatalogItems);
+                }
+
+                PrintNotes(ed, report.DiscoveryNotes);
+
+                ed.WriteMessage("\n[BoQ] Veri çekme tamamlandı.\n");
+            }
+            catch (Exception ex)
+            {
+                ed.WriteMessage($"\n[BoQ ERROR] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+            }
+            finally
+            {
+                InputBlocker.Hide();
+                // NOTE: the export XML is intentionally NOT deleted here — both
+                // URBANO_BOQ_HESAPLA and the Tür Eşleştirme tab read it after this
+                // command finishes. It's cleaned up at the START of the next
+                // URBANO_BOQ run (see the File.Delete a few lines above Run()'s
+                // beginning), so at most one stale file ever lingers, always
+                // representing "the last successful export".
+
+                bool reopen = _reopenViewAfterSave;
+                _reopenViewAfterSave = false;
+                _settings      = null;
+                _editor        = null;
+                _exportXmlPath = null;
+
+                if (reopen)
+                    Application.DocumentManager.MdiActiveDocument?
+                        .SendStringToExecute("URBANO_BOQ_VIEW\n", true, false, true);
+            }
+        }
+
+        // Prints DiscoveryNotes (pipe/manhole linking-completeness warnings collected
+        // during Parse/ManholeAI) in a clearly delimited block — previously collected
+        // but never surfaced anywhere, so incomplete linking failed silently.
+        private static void PrintNotes(Editor ed, List<string> notes)
+        {
+            if (notes == null || notes.Count == 0) return;
+            ed.WriteMessage("\n[BoQ] ── Uyarılar ───────────────────────────────────────────");
+            foreach (var n in notes) ed.WriteMessage("\n  " + n);
+            ed.WriteMessage("\n[BoQ] ──────────────────────────────────────────────────────────");
+        }
+
+        // =====================================================================
+        // URBANO_BOQ_HESAPLA — full calculation command entry point
+        //
+        // No Urbano dialog automation here: reuses the XML from the last
+        // successful URBANO_BOQ extraction. Meant to be run AFTER Tür
+        // Eşleştirme / Baca-Boru Bağlantı Kuralları links are complete —
+        // running it earlier still works (graceful degrade) but the linking
+        // warnings below (and the BOM's own "(Catalog not found)" fallback
+        // lines) will flag whatever is still missing.
+        // =====================================================================
+
+        [CommandMethod("URBANO_BOQ_HESAPLA", CommandFlags.Modal)]
+        public void RunCalculate()
+        {
+            Document doc = Application.DocumentManager.MdiActiveDocument;
+            Editor   ed  = doc.Editor;
+
+            if (_idleHandler != null)
+            {
+                ed.WriteMessage("\n[BoQ] Zaten çalışıyor — tamamlanmasını bekleyin.\n");
+                return;
+            }
+
+            string xmlPath = Path.Combine(Path.GetTempPath(), "urbano_boq_export.xml");
+            if (!File.Exists(xmlPath))
+            {
+                MessageBox.Show(
+                    "Henüz Urbano'dan veri çekilmemiş.\n\n" +
+                    "Önce \"Metraj Verisi Güncelle\" (URBANO_BOQ) ile Urbano ağ verisini çekin, " +
+                    "gerekli eşleştirmeleri tamamlayın, sonra tekrar Hesapla'ya basın.",
+                    "Veri Bulunamadı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            BoQSettings settings;
+            if (DwgBoQStore.HasData(doc.Database))
+            {
+                try   { (_, settings) = DwgBoQStore.Load(doc.Database); settings = settings ?? new BoQSettings(); }
+                catch { settings = new BoQSettings(); }
+            }
+            else
+            {
+                settings = new BoQSettings();
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.ManholeConfigPath))
+            {
+                try { settings.ManholeConfigPath = ManholeConfigService.EnsureCatalogExists(); }
+                catch (Exception ex) { ed.WriteMessage($"\n[BoQ] Catalog check failed: {ex.Message}\n"); }
+            }
+
+            InputBlocker.Show();
+            try
+            {
+                RunFullCalculation(ed, xmlPath, settings);
+            }
+            finally
+            {
+                InputBlocker.Hide();
+                bool reopen = _reopenViewAfterSave;
+                _reopenViewAfterSave = false;
+
+                if (reopen)
+                    Application.DocumentManager.MdiActiveDocument?
+                        .SendStringToExecute("URBANO_BOQ_VIEW\n", true, false, true);
+            }
+        }
+
+        // =====================================================================
+        // Full geometry + Manhole AI pipeline — shared body for URBANO_BOQ_HESAPLA
+        // =====================================================================
+
+        private static void RunFullCalculation(Editor ed, string xmlPath, BoQSettings settings)
+        {
+            try
+            {
+                // Type Mapping links live in THIS document's DWG NOD — load them now
+                // (don't rely on Akıllı Montaj having been opened this session) so
+                // ParseSections can resolve PozNo/Sınıf for linked pipes below.
+                var mappingDoc = Application.DocumentManager.MdiActiveDocument;
+                if (mappingDoc != null) TypeMappingStore.LoadFromDwg(mappingDoc.Database);
+
                 // ── Phase 1: Parse ───────────────────────────────────────────────
-                ed.WriteMessage("\n[BoQ] Parsing Urbano XML…");
                 var parser = new BoQParserService(enableClashDetection: false);
                 BoQReport report = parser.Parse(xmlPath, ed);
                 var rows = report.SectionDebug;
 
-                ed.WriteMessage($"\n[BoQ] {rows.Count} section(s) parsed.");
                 if (rows.Count == 0)
                 {
-                    ed.WriteMessage("\n[BoQ] No sections — aborting.\n");
+                    ed.WriteMessage("\n[BoQ] Hata: boru kesiti bulunamadı, işlem durduruldu.\n");
                     return;
                 }
 
@@ -168,13 +313,6 @@ namespace UrbanoMetraj.BoQ
                 var pairZones    = ComputePairZones(corridors, pairs);
                 var perPipeZones = BuildPerPipeZones(pairZones, rows.Count);
 
-                ed.WriteMessage($"\n[BoQ] Corridor scan: {pairZones.Count} overlapping pair(s).");
-                foreach (var pz0 in pairZones)
-                    ed.WriteMessage(
-                        $"\n   Pair: [{rows[pz0.PipeA].PipeName}] ↔ [{rows[pz0.PipeB].PipeName}]" +
-                        $"  angle={pz0.AngleXYDeg:F1}°" +
-                        (pz0.UseBisectorFrame ? "  [bisector+wedge]" : "  [parallel]"));
-
                 // ── Phase 5: Adaptive station generation (initial, per pipe) ─────
                 var allStations = new List<List<SimplifiedStation>>(rows.Count);
                 for (int i = 0; i < rows.Count; i++)
@@ -190,10 +328,10 @@ namespace UrbanoMetraj.BoQ
                 // ── Phase 8a: Bisector-frame processing for crossing pairs ───────
                 // Builds scaled bisector stations and stores them in pz.BisStationsA/B.
                 // Boundary stations remain OtherInvertZ=NaN (out-of-zone for IntegrateVolumes).
-                ProcessBisectorPairs(rows, pairZones, allStations, ed);
+                ProcessBisectorPairs(rows, pairZones, allStations);
 
                 // ── Phase 8: Pair scenario processing (parallel pairs only) ──────
-                ProcessPairScenarios(rows, pairZones, allStations, ed);
+                ProcessPairScenarios(rows, pairZones, allStations);
 
                 // ── Phase 8c: Boundary station duplication (parallel pairs only) ──
                 InjectBoundaryDuplicates(allStations, perPipeZones, rows, pairZones);
@@ -207,7 +345,7 @@ namespace UrbanoMetraj.BoQ
                 // ── Phase 9b: Bisector zone independent integration ──────────────
                 // Treats each crossing zone as a separate entity. Per-slice volumes
                 // are computed and verified (KU=KL guaranteed structurally).
-                IntegrateBisectorZones(pairZones, rows, results, ed);
+                IntegrateBisectorZones(pairZones, results);
 
                 // ── Phase 9b.5: Transfer V2 volumes to rows for DWG storage ─────
                 // After all integration phases are complete, copy final KU/KL/SP
@@ -235,96 +373,63 @@ namespace UrbanoMetraj.BoQ
                 // profiles). This is what DwgBoQStore persists and VIEW/SECTIONS read.
                 PopulateReportStations(report, rows, allStations, pairZones);
 
-                // ── Phase 10: Report ─────────────────────────────────────────────
-                PrintReport(ed, results);
-                SaveReport(ed, rows, allStations, results, pairZones);
-
                 // ── Phase 11: Manhole AI ──────────────────────────────────────────
-                ed.WriteMessage("\n[BoQ] Running Manhole AI (topology + stacking)…");
                 try
                 {
-                    var catalog = ManholeAIService.ReadCatalog(settings.ManholeConfigPath);
-                    ManholeAIService.Process(report, settings, catalog);
-                    ed.WriteMessage($"\n[BoQ] Manhole AI complete: {report.TotalManholeCount} manholes processed.");
+                    // Stacking source is our own ComponentFamily catalog, resolved per
+                    // manhole via its Type Mapping link — no separate Excel file needed.
+                    ManholeAIService.Process(report, settings);
                 }
                 catch (Exception aiEx)
                 {
-                    ed.WriteMessage($"\n[BoQ] Manhole AI warning: {aiEx.Message} (continues without BOM data)");
+                    ed.WriteMessage($"\n[BoQ] Uyarı: Baca AI hatası: {aiEx.Message} (BOM verisi eksik kalabilir)");
                 }
 
-                // ── Phase 11.5: Manhole–Trench Overlap Diagnostic ────────────────
-                ed.WriteMessage("\n[BoQ] Computing manhole excavation / pipe trench overlaps…");
-                try
-                {
-                    var overlapLines = ManholeExcavOverlapService.Compute(report);
-                    if (overlapLines.Count == 0)
-                    {
-                        ed.WriteMessage("\n[BoQ] No manhole–trench overlaps found.");
-                    }
-                    else
-                    {
-                        ed.WriteMessage("\n[BoQ] ── Manhole Excavation / Pipe Trench Overlap ────────────");
-                        foreach (var line in overlapLines)
-                            ed.WriteMessage(line);
-                        ed.WriteMessage("\n[BoQ] ──────────────────────────────────────────────────────────");
-                    }
-                }
+                // ── Phase 11.7: Linking-completeness warnings ────────────────────
+                // Collected during Parse (unlinked pipes/missing catalog or trench
+                // rules) and Manhole AI (unresolved Baca-Boru Bağlantı Kuralı match).
+                PrintNotes(ed, report.DiscoveryNotes);
+
+                // ── Phase 11.5/11.6: Manhole–Trench / Manhole–Manhole Overlap ────
+                // Diagnostic-only return values are discarded — the real work here
+                // is the side effect (populating ManholeExcavDeducted/BackfillVolume/
+                // BackfillLayerSplits on the report), not the printed detail.
+                try { ManholeExcavOverlapService.Compute(report); }
                 catch (Exception ovEx)
-                {
-                    ed.WriteMessage($"\n[BoQ] Overlap diagnostic warning: {ovEx.Message}");
-                }
+                { ed.WriteMessage($"\n[BoQ] Uyarı: Baca-boru kesişim hatası: {ovEx.Message}"); }
 
-                // ── Phase 11.6: Manhole–Manhole Overlap Diagnostic ───────────────
-                ed.WriteMessage("\n[BoQ] Computing manhole vs manhole excavation overlaps…");
-                try
-                {
-                    var mhMhLines = ManholeExcavOverlapService.ComputeManholeVsManhole(report);
-                    if (mhMhLines.Count == 0)
-                    {
-                        ed.WriteMessage("\n[BoQ] No manhole–manhole overlaps found.");
-                    }
-                    else
-                    {
-                        ed.WriteMessage("\n[BoQ] ── Manhole vs Manhole Excavation Overlap ───────────────");
-                        foreach (var line in mhMhLines)
-                            ed.WriteMessage(line);
-                        ed.WriteMessage("\n[BoQ] ──────────────────────────────────────────────────────────");
-                    }
-                }
+                try { ManholeExcavOverlapService.ComputeManholeVsManhole(report); }
                 catch (Exception mhEx)
-                {
-                    ed.WriteMessage($"\n[BoQ] Manhole–manhole overlap warning: {mhEx.Message}");
-                }
+                { ed.WriteMessage($"\n[BoQ] Uyarı: Baca-baca kesişim hatası: {mhEx.Message}"); }
 
                 // ── Phase 12: Save to DWG ────────────────────────────────────────
-                ed.WriteMessage("\n[BoQ] Saving results to DWG database…");
                 var activeDoc = Application.DocumentManager.MdiActiveDocument;
                 using (activeDoc.LockDocument())
                 {
                     DwgBoQStore.Save(activeDoc.Database, report, settings);
+                    // Discovered Urbano catalog items live inside the DWG (not the
+                    // %TEMP% export file) so the Type Mapping tab works even after
+                    // the DWG is moved to another machine — refreshed every run.
+                    TypeMappingNodManager.SaveDiscoveredItems(activeDoc.Database, report.CatalogItems);
                 }
-                ed.WriteMessage(
-                    $"\n[BoQ] Done. {report.SectionDebug?.Count ?? 0} section(s) stored in DWG.\n" +
-                    "[BoQ] Use URBANO_BOQ_VIEW to view quantities and export to Excel.\n");
+                ed.WriteMessage("\n[BoQ] Hesaplama tamamlandı.\n");
+
+                if (report.DiscoveryNotes.Count > 0)
+                {
+                    MessageBox.Show(
+                        "Hesaplama tamamlandı, ancak bazı veriler eksik veya bağlı değil:\n\n" +
+                        string.Join("\n", report.DiscoveryNotes) +
+                        "\n\nEksik eşleştirmeler nedeniyle Poz No/Sınıf, baca çapı veya " +
+                        "Prefabrik Malzeme Listesi hatalı/eksik olabilir. Devam etmeden önce " +
+                        "Akıllı Montaj'dan (Tür Eşleştirme / Baca-Boru Bağlantı Kuralları) " +
+                        "eşleştirmeleri tamamlamanız önerilir.",
+                        "Eksik Eşleştirme Uyarısı",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
             }
             catch (Exception ex)
             {
                 ed.WriteMessage($"\n[BoQ ERROR] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
-            }
-            finally
-            {
-                InputBlocker.Hide();
-                try { if (xmlPath != null && File.Exists(xmlPath)) File.Delete(xmlPath); } catch { }
-
-                bool reopen = _reopenViewAfterSave;
-                _reopenViewAfterSave = false;
-                _settings      = null;
-                _editor        = null;
-                _exportXmlPath = null;
-
-                if (reopen)
-                    Application.DocumentManager.MdiActiveDocument?
-                        .SendStringToExecute("URBANO_BOQ_VIEW\n", true, false, true);
             }
         }
 
@@ -762,8 +867,7 @@ namespace UrbanoMetraj.BoQ
         private static void ProcessBisectorPairs(
             List<SectionDebugRow>         rows,
             List<PairZone>                pairZones,
-            List<List<SimplifiedStation>> allStations,
-            Editor                        ed)
+            List<List<SimplifiedStation>> allStations)
         {
             foreach (var pz in pairZones)
             {
@@ -984,10 +1088,6 @@ namespace UrbanoMetraj.BoQ
                 // Store paired station lists in the zone for IntegrateBisectorZones
                 pz.BisStationsA.Clear(); pz.BisStationsA.AddRange(bStationsA);
                 pz.BisStationsB.Clear(); pz.BisStationsB.AddRange(bStationsB);
-
-                ed.WriteMessage(
-                    $"\n[Bisector] {rowA.PipeName}↔{rowB.PipeName}: " +
-                    $"{bStationsA.Count} paired stations  angle={pz.AngleXYDeg:F1}°  cos(θ/2)={cosHalf:F4}");
             }
         }
 
@@ -1075,8 +1175,7 @@ namespace UrbanoMetraj.BoQ
         private static void ProcessPairScenarios(
             List<SectionDebugRow>         rows,
             List<PairZone>                pairZones,
-            List<List<SimplifiedStation>> allStations,
-            Editor                        ed)
+            List<List<SimplifiedStation>> allStations)
         {
             foreach (var pz in pairZones)
             {
@@ -1105,8 +1204,6 @@ namespace UrbanoMetraj.BoQ
                                 s.StationDist <= pz.EnterA + maxOffset + 1e-6)
                     .OrderBy(s => s.StationDist)
                     .ToList();
-
-                int pairHits = 0;
 
                 foreach (var sA in zoneStationsA)
                 {
@@ -1165,9 +1262,6 @@ namespace UrbanoMetraj.BoQ
                         sA.AreaExcavDeductedKL = Math.Max(0, sA.AreaExcav - overlapE);
                         sB.AreaExcavDeductedKL = Math.Max(0, sB.AreaExcav - overlapE);
 
-                        double aDeductedE = sA.AreaExcavDeducted;
-                        double bDeductedE = sB.AreaExcavDeducted;
-
                         bool   aIsUpper   = sA.InvertZ >= sB.InvertZ;
                         double upperHW    = aIsUpper ? (rowA.TrWidth * 0.5) : (rowB.TrWidth * 0.5);
                         double upperCtrU  = aIsUpper ? 0.0 : uBc;
@@ -1215,15 +1309,6 @@ namespace UrbanoMetraj.BoQ
                         sB.AreaExcavSP = Math.Max(0, sB.AreaExcav
                             - ClipperGeo.Area(sB.ExcavSPLosePoly));
 
-                        double vKU = aIsUpper ? (aDeductedE + bGrossE) : (aGrossE + bDeductedE);
-                        double vKL = aIsUpper
-                            ? (sA.AreaExcavDeductedKL + bGrossE)
-                            : (aGrossE + sB.AreaExcavDeductedKL);
-                        double vSP = sA.AreaExcavSP + sB.AreaExcavSP;
-                        ed.WriteMessage(
-                            $"\n   [E] combined={combinedE:F4}" +
-                            $"  KU={vKU:F4}  KL={vKL:F4}  SP={vSP:F4}" +
-                            $"  ov={overlapE:F4}  splitU={splitU:F3}");
                     }
 
                     // ── Backfill ─────────────────────────────────────────────────
@@ -1305,16 +1390,7 @@ namespace UrbanoMetraj.BoQ
 
                     sA.OtherInvertZ = sB.InvertZ;
                     sB.OtherInvertZ = sA.InvertZ;
-
-                    pairHits++;
                 }
-
-                ed.WriteMessage(
-                    $"\n[SimplifiedBoQV2] Pair [{rowA.PipeName}]↔[{rowB.PipeName}]: " +
-                    $"{pairHits} station pair(s) processed." +
-                    (pz.UseBisectorFrame
-                        ? $"  angle={pz.AngleXYDeg:F1}° → wedge correction pending"
-                        : $"  angle={pz.AngleXYDeg:F1}°"));
             }
         }
 
@@ -1570,9 +1646,7 @@ namespace UrbanoMetraj.BoQ
 
         private static void IntegrateBisectorZones(
             List<PairZone>                pairZones,
-            List<SectionDebugRow>         rows,
-            List<SimplifiedSectionResult> results,
-            Editor                        ed)
+            List<SimplifiedSectionResult> results)
         {
             foreach (var pz in pairZones)
             {
@@ -1581,12 +1655,6 @@ namespace UrbanoMetraj.BoQ
 
                 var resA = results[pz.PipeA];
                 var resB = results[pz.PipeB];
-
-                ed.WriteMessage(
-                    $"\n[BisZone] {rows[pz.PipeA].PipeName}↔{rows[pz.PipeB].PipeName}" +
-                    $"  {pz.BisStationsA.Count} stations  angle={pz.AngleXYDeg:F1}°");
-
-                double cumKU_A = 0, cumKL_A = 0, cumKU_B = 0, cumKL_B = 0;
 
                 for (int k = 0; k < pz.BisStationsA.Count - 1; k++)
                 {
@@ -1609,8 +1677,6 @@ namespace UrbanoMetraj.BoQ
                     double ov1 = sA1.AreaExcav - sA1.AreaExcavDeductedKL;
                     double vOverlap = Math.Max(0, (ov0 + ov1) * 0.5 * dXY);
 
-                    double vUnion = vA + vB - vOverlap;
-
                     bool aIsUpper = (sA0.InvertZ + sA1.InvertZ) >= (sB0.InvertZ + sB1.InvertZ);
 
                     // Excav KU/KL/SP
@@ -1624,9 +1690,6 @@ namespace UrbanoMetraj.BoQ
                     resA.VExcavSP += vA - vOverlap * 0.5;
                     resB.VExcavSP += vB - vOverlap * 0.5;
                     resA.VExcavGross += vA;  resB.VExcavGross += vB;
-
-                    cumKU_A += sliceKU_A; cumKL_A += sliceKL_A;
-                    cumKU_B += sliceKU_B; cumKL_B += sliceKL_B;
 
                     // Backfill KU/KL/SP
                     double bvA = (sA0.AreaBackfill + sA1.AreaBackfill) * 0.5 * dXY;
@@ -1642,26 +1705,7 @@ namespace UrbanoMetraj.BoQ
                     resA.VBackfillSP += bvA - bvOverlap * 0.5;
                     resB.VBackfillSP += bvB - bvOverlap * 0.5;
                     resA.VBackfillGross += bvA;  resB.VBackfillGross += bvB;
-
-                    // Per-slice verification
-                    double sliceCombinedKU = sliceKU_A + sliceKU_B;
-                    double sliceCombinedKL = sliceKL_A + sliceKL_B;
-                    bool ok = Math.Abs(sliceCombinedKU - sliceCombinedKL) < 1e-9;
-                    ed.WriteMessage(
-                        $"\n  [{k}→{k+1}] dXY={dXY:F3}m" +
-                        $"  vA={vA:F4}  vB={vB:F4}  vOv={vOverlap:F4}  vUnion={vUnion:F4}" +
-                        $"  upper={( aIsUpper ? rows[pz.PipeA].PipeName : rows[pz.PipeB].PipeName )}" +
-                        $"  KU={sliceCombinedKU:F4}  KL={sliceCombinedKL:F4}" +
-                        $"  {(ok ? "✓" : "MISMATCH!")}");
                 }
-
-                ed.WriteMessage(
-                    $"\n  Zone total A: KU={cumKU_A:F4}  KL={cumKL_A:F4}  Δ={cumKU_A-cumKL_A:F4}");
-                ed.WriteMessage(
-                    $"\n  Zone total B: KU={cumKU_B:F4}  KL={cumKL_B:F4}  Δ={cumKU_B-cumKL_B:F4}");
-                ed.WriteMessage(
-                    $"\n  Zone combined: KU={cumKU_A+cumKU_B:F4}  KL={cumKL_A+cumKL_B:F4}" +
-                    $"  Δ={cumKU_A+cumKU_B-(cumKL_A+cumKL_B):F6}");
             }
         }
 
@@ -1789,54 +1833,6 @@ namespace UrbanoMetraj.BoQ
         }
 
         // =====================================================================
-        // Phase 10 — Report
-        // =====================================================================
-
-        private static void PrintReport(
-            Editor ed, List<SimplifiedSectionResult> results)
-        {
-            ed.WriteMessage("\n\n══════════════ BOQ_SIMPLIFIED_V2 RESULTS ══════════════");
-            ed.WriteMessage("\n  Area conservation invariant:  A_net + B_net = Area(A∪B)");
-            ed.WriteMessage("\n  Per-segment upper/lower:      segment-average invert Z");
-            ed.WriteMessage("\n  Symbols: KU=KeepUpper  KL=KeepLower  SP=Split 50/50\n");
-
-            double sumExcavKU = 0, sumExcavKL = 0, sumExcavSP = 0;
-            double sumBed     = 0, sumSurr     = 0;
-            double sumBfKU    = 0, sumBfKL     = 0, sumBfSP    = 0;
-
-            foreach (var r in results)
-            {
-                ed.WriteMessage(
-                    $"\n── {r.PipeName}  Ø{r.DiameterMm}mm {r.Material}" +
-                    $"  L={r.Length2D:F2}m  [{r.SegmentCount} segs]");
-                ed.WriteMessage(
-                    $"\n   Excavation: KU={r.VExcavKU:F2}  KL={r.VExcavKL:F2}  SP={r.VExcavSP:F2} m³");
-                ed.WriteMessage(
-                    $"\n   Bedding:    {r.VBedding:F2} m³");
-                ed.WriteMessage(
-                    $"\n   Surround:   {r.VSurround:F2} m³  (net, pipe void deducted)");
-                ed.WriteMessage(
-                    $"\n   Backfill:   KU={r.VBackfillKU:F2}  KL={r.VBackfillKL:F2}  SP={r.VBackfillSP:F2} m³");
-
-                sumExcavKU += r.VExcavKU; sumExcavKL += r.VExcavKL; sumExcavSP += r.VExcavSP;
-                sumBed     += r.VBedding; sumSurr    += r.VSurround;
-                sumBfKU    += r.VBackfillKU; sumBfKL += r.VBackfillKL; sumBfSP += r.VBackfillSP;
-            }
-
-            ed.WriteMessage("\n\n── COMBINED TOTALS (all pipes summed) ────────────────────");
-            ed.WriteMessage($"\n   Excavation: KU={sumExcavKU:F2}  KL={sumExcavKL:F2}  SP={sumExcavSP:F2} m³");
-            ed.WriteMessage($"\n   Bedding:    {sumBed:F2} m³");
-            ed.WriteMessage($"\n   Surround:   {sumSurr:F2} m³");
-            ed.WriteMessage($"\n   Backfill:   KU={sumBfKU:F2}  KL={sumBfKL:F2}  SP={sumBfSP:F2} m³");
-
-            ed.WriteMessage("\n\n── INVARIANT CHECK (KU + KL difference) ─────────────────");
-            ed.WriteMessage($"\n   Δ Excavation (KU - KL): {sumExcavKU - sumExcavKL:F4} m³");
-            ed.WriteMessage($"\n   Δ Backfill   (KU - KL): {sumBfKU - sumBfKL:F4} m³");
-            ed.WriteMessage("\n   (Should be 0.0000)\n");
-            ed.WriteMessage("\n══════════════════════════════════════════════════════════\n");
-        }
-
-        // =====================================================================
         // Utilities
         // =====================================================================
 
@@ -1934,10 +1930,6 @@ namespace UrbanoMetraj.BoQ
             result.VBackfillKU -= vWedgeBf;
             result.VBackfillKL -= vWedgeBf;
             result.VBackfillSP -= vWedgeBf;
-
-            ed.WriteMessage(
-                $"\n   [Wedge] {pipeName} {side}" +
-                $"  excav={vWedgeE:F4} m³  backfill={vWedgeBf:F4} m³");
         }
 
         // V_full = H × (hw1² + hw1·hw2 + hw2²) / 3 × tan(X/2)
@@ -1945,385 +1937,6 @@ namespace UrbanoMetraj.BoQ
         private static double WedgeVolume(double hw1, double hw2, double H, double tanHalfAngle)
         {
             return H * (hw1 * hw1 + hw1 * hw2 + hw2 * hw2) / 3.0 * tanHalfAngle;
-        }
-
-        // =====================================================================
-        // Phase 10b — Save to Excel
-        // =====================================================================
-
-        private static void SaveReport(
-            Editor                        ed,
-            List<SectionDebugRow>         rows,
-            List<List<SimplifiedStation>> allStations,
-            List<SimplifiedSectionResult> results,
-            List<PairZone>                pairZones)
-        {
-            try
-            {
-                string desktop   = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                string path      = Path.Combine(desktop, $"BOQ_Simplified_V2_{timestamp}.xlsx");
-
-                using (var pkg = new ExcelPackage())
-                {
-                    // ── Sheet 1 — Per-station detail ─────────────────────────────
-                    {
-                        var ws = pkg.Workbook.Worksheets.Add("Stations");
-
-                        string[] hdr =
-                        {
-                            "Pipe Name",
-                            "Station (m)", "Dist to Next (m)",
-                            "Terrain Z (m)", "Invert Z (m)", "Depth (m)",
-                            "Zone",
-                            "Excav Gross (m2)", "Excav Deducted (m2)", "Excav SP (m2)",
-                            "Bedding (m2)", "Surround (m2)",
-                            "Backfill Gross (m2)", "Backfill Deducted (m2)", "Backfill SP (m2)"
-                        };
-
-                        for (int c = 0; c < hdr.Length; c++)
-                        {
-                            var cell = ws.Cells[1, c + 1];
-                            cell.Value = hdr[c];
-                            cell.Style.Font.Bold = true;
-                            cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
-                            cell.Style.Fill.BackgroundColor.SetColor(
-                                System.Drawing.Color.FromArgb(31, 78, 121));
-                            cell.Style.Font.Color.SetColor(System.Drawing.Color.White);
-                            cell.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
-                        }
-
-                        var pipeColours = new[]
-                        {
-                            System.Drawing.Color.FromArgb(255, 255, 255),
-                            System.Drawing.Color.FromArgb(217, 225, 242)
-                        };
-                        var zoneColour = System.Drawing.Color.FromArgb(255, 230, 153);
-
-                        int row = 2;
-                        for (int pi = 0; pi < rows.Count; pi++)
-                        {
-                            var pipe     = rows[pi];
-                            var stations = allStations[pi];
-                            var bg       = pipeColours[pi % pipeColours.Length];
-
-                            for (int si = 0; si < stations.Count; si++)
-                            {
-                                var st = stations[si];
-                                if (st.ExcavPoly == null) continue;
-
-                                double distNext = 0;
-                                if (si < stations.Count - 1)
-                                {
-                                    var sn = stations[si + 1];
-                                    distNext = Math.Sqrt(
-                                        (sn.WorldX - st.WorldX) * (sn.WorldX - st.WorldX) +
-                                        (sn.WorldY - st.WorldY) * (sn.WorldY - st.WorldY));
-                                }
-                                bool inZone = !double.IsNaN(st.OtherInvertZ);
-
-                                ws.Cells[row,  1].Value = pipe.PipeName;
-                                ws.Cells[row,  2].Value = st.StationDist;
-                                ws.Cells[row,  3].Value = si < stations.Count - 1
-                                    ? (object)distNext : null;
-                                ws.Cells[row,  4].Value = st.TerrainZ;
-                                ws.Cells[row,  5].Value = st.InvertZ;
-                                ws.Cells[row,  6].Value = st.TrueDepth;
-                                ws.Cells[row,  7].Value = inZone ? "Y" : "";
-                                ws.Cells[row,  8].Value = st.AreaExcav;
-                                ws.Cells[row,  9].Value = st.AreaExcavDeducted;
-                                ws.Cells[row, 10].Value = st.AreaExcavSP;
-                                ws.Cells[row, 11].Value = st.AreaBedding;
-                                ws.Cells[row, 12].Value = st.AreaSurround;
-                                ws.Cells[row, 13].Value = st.AreaBackfill;
-                                ws.Cells[row, 14].Value = st.AreaBackfillDeducted;
-                                ws.Cells[row, 15].Value = st.AreaBackfillSP;
-
-                                for (int c = 2; c <= 6; c++)
-                                    ws.Cells[row, c].Style.Numberformat.Format = "0.000";
-                                for (int c = 8; c <= 15; c++)
-                                    ws.Cells[row, c].Style.Numberformat.Format = "0.0000";
-
-                                var rowBg = inZone ? zoneColour : bg;
-                                for (int c = 1; c <= 15; c++)
-                                {
-                                    ws.Cells[row, c].Style.Fill.PatternType = ExcelFillStyle.Solid;
-                                    ws.Cells[row, c].Style.Fill.BackgroundColor.SetColor(rowBg);
-                                }
-                                if (inZone)
-                                    ws.Cells[row, 7].Style.Font.Bold = true;
-
-                                row++;
-                            }
-                        }
-
-                        ws.Column(1).Width  = 26;
-                        ws.Column(2).Width  = 14;
-                        ws.Column(3).Width  = 16;
-                        ws.Column(4).Width  = 14;
-                        ws.Column(5).Width  = 14;
-                        ws.Column(6).Width  = 12;
-                        ws.Column(7).Width  =  8;
-                        for (int c = 8; c <= 15; c++)
-                            ws.Column(c).Width = 19;
-
-                        ws.View.FreezePanes(2, 2);
-                    }
-
-                    // ── Sheet 2 — Volume summary ──────────────────────────────────
-                    {
-                        var ws = pkg.Workbook.Worksheets.Add("Volumes");
-
-                        string[] headers =
-                        {
-                            "Pipe Name", "Dia (mm)", "Material", "Length 2D (m)", "Segments",
-                            "Excav KU (m3)", "Excav KL (m3)", "Excav SP (m3)",
-                            "Bedding (m3)", "Surround (m3)",
-                            "Backfill KU (m3)", "Backfill KL (m3)", "Backfill SP (m3)"
-                        };
-
-                        for (int c = 0; c < headers.Length; c++)
-                        {
-                            var cell = ws.Cells[1, c + 1];
-                            cell.Value = headers[c];
-                            cell.Style.Font.Bold = true;
-                            cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
-                            cell.Style.Fill.BackgroundColor.SetColor(
-                                System.Drawing.Color.FromArgb(68, 114, 196));
-                            cell.Style.Font.Color.SetColor(System.Drawing.Color.White);
-                            cell.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
-                        }
-
-                        double sumExcavKU = 0, sumExcavKL = 0, sumExcavSP = 0;
-                        double sumBed = 0, sumSurr = 0;
-                        double sumBfKU = 0, sumBfKL = 0, sumBfSP = 0;
-
-                        int row = 2;
-                        foreach (var r in results)
-                        {
-                            ws.Cells[row,  1].Value = r.PipeName;
-                            ws.Cells[row,  2].Value = r.DiameterMm;
-                            ws.Cells[row,  3].Value = r.Material;
-                            ws.Cells[row,  4].Value = r.Length2D;
-                            ws.Cells[row,  5].Value = r.SegmentCount;
-                            ws.Cells[row,  6].Value = r.VExcavKU;
-                            ws.Cells[row,  7].Value = r.VExcavKL;
-                            ws.Cells[row,  8].Value = r.VExcavSP;
-                            ws.Cells[row,  9].Value = r.VBedding;
-                            ws.Cells[row, 10].Value = r.VSurround;
-                            ws.Cells[row, 11].Value = r.VBackfillKU;
-                            ws.Cells[row, 12].Value = r.VBackfillKL;
-                            ws.Cells[row, 13].Value = r.VBackfillSP;
-
-                            ws.Cells[row, 4].Style.Numberformat.Format = "0.00";
-                            for (int c = 6; c <= 13; c++)
-                                ws.Cells[row, c].Style.Numberformat.Format = "0.00";
-
-                            if (row % 2 == 0)
-                            {
-                                for (int c = 1; c <= 13; c++)
-                                {
-                                    ws.Cells[row, c].Style.Fill.PatternType = ExcelFillStyle.Solid;
-                                    ws.Cells[row, c].Style.Fill.BackgroundColor.SetColor(
-                                        System.Drawing.Color.FromArgb(242, 242, 242));
-                                }
-                            }
-
-                            sumExcavKU += r.VExcavKU; sumExcavKL += r.VExcavKL;
-                            sumExcavSP += r.VExcavSP;
-                            sumBed     += r.VBedding;  sumSurr    += r.VSurround;
-                            sumBfKU    += r.VBackfillKU; sumBfKL  += r.VBackfillKL;
-                            sumBfSP    += r.VBackfillSP;
-                            row++;
-                        }
-
-                        ws.Cells[row,  1].Value = "TOTAL";
-                        ws.Cells[row,  6].Value = sumExcavKU;
-                        ws.Cells[row,  7].Value = sumExcavKL;
-                        ws.Cells[row,  8].Value = sumExcavSP;
-                        ws.Cells[row,  9].Value = sumBed;
-                        ws.Cells[row, 10].Value = sumSurr;
-                        ws.Cells[row, 11].Value = sumBfKU;
-                        ws.Cells[row, 12].Value = sumBfKL;
-                        ws.Cells[row, 13].Value = sumBfSP;
-
-                        for (int c = 1; c <= 13; c++)
-                        {
-                            ws.Cells[row, c].Style.Font.Bold = true;
-                            ws.Cells[row, c].Style.Fill.PatternType = ExcelFillStyle.Solid;
-                            ws.Cells[row, c].Style.Fill.BackgroundColor.SetColor(
-                                System.Drawing.Color.FromArgb(221, 235, 247));
-                            if (c >= 6)
-                                ws.Cells[row, c].Style.Numberformat.Format = "0.00";
-                        }
-
-                        ws.Column(1).Width = 28;
-                        ws.Column(2).Width = 10;
-                        ws.Column(3).Width = 14;
-                        ws.Column(4).Width = 15;
-                        ws.Column(5).Width = 10;
-                        for (int c = 6; c <= 13; c++)
-                            ws.Column(c).Width = 16;
-
-                        ws.View.FreezePanes(2, 1);
-                    }
-
-                    // ── Sheet 3 — Bisector zone audit (one row per bisector station + slice) ──
-                    if (pairZones.Any(pz => pz.UseBisectorFrame && pz.BisStationsA.Count >= 2))
-                    {
-                        var wb3 = pkg.Workbook.Worksheets.Add("BisZone");
-
-                        string[] h3 = {
-                            "Pair", "k",
-                            "BisDist (m)", "WorldX", "WorldY",
-                            "tA (m)", "tB (m)",
-                            "InvZ_A (m)", "InvZ_B (m)",
-                            "A_Gross (m²)", "B_Gross (m²)", "OverlapE (m²)",
-                            "→ dXY (m)", "→ vA (m³)", "→ vB (m³)",
-                            "→ vOverlap (m³)", "→ vUnion (m³)",
-                            "Upper", "→ KU_A", "→ KL_A", "→ KU_B", "→ KL_B",
-                            "→ KU_combined", "→ KL_combined", "→ Δ (KU-KL)"
-                        };
-                        for (int c = 0; c < h3.Length; c++)
-                        {
-                            var hc = wb3.Cells[1, c + 1];
-                            hc.Value = h3[c];
-                            hc.Style.Font.Bold = true;
-                            hc.Style.Fill.PatternType = ExcelFillStyle.Solid;
-                            hc.Style.Fill.BackgroundColor.SetColor(
-                                System.Drawing.Color.FromArgb(31, 78, 121));
-                            hc.Style.Font.Color.SetColor(System.Drawing.Color.White);
-                            hc.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
-                        }
-
-                        var bgPair = new[]
-                        {
-                            System.Drawing.Color.FromArgb(255, 255, 255),
-                            System.Drawing.Color.FromArgb(217, 225, 242)
-                        };
-                        var okColour   = System.Drawing.Color.FromArgb(198, 239, 206);
-                        var badColour  = System.Drawing.Color.FromArgb(255, 199, 206);
-                        var sliceBg    = System.Drawing.Color.FromArgb(255, 255, 204);
-
-                        int r3 = 2;
-                        int pairIdx = 0;
-                        foreach (var pz in pairZones)
-                        {
-                            if (!pz.UseBisectorFrame || pz.BisStationsA.Count < 2)
-                            { pairIdx++; continue; }
-
-                            string pairName = rows[pz.PipeA].PipeName + "↔" + rows[pz.PipeB].PipeName;
-                            var bg = bgPair[pairIdx % bgPair.Length];
-
-                            for (int k = 0; k < pz.BisStationsA.Count; k++)
-                            {
-                                var sA = pz.BisStationsA[k];
-                                var sB = pz.BisStationsB[k];
-
-                                double ovE = sA.AreaExcav - sA.AreaExcavDeductedKL;
-
-                                // Station row
-                                wb3.Cells[r3,  1].Value = pairName;
-                                wb3.Cells[r3,  2].Value = k;
-                                wb3.Cells[r3,  3].Value = sA.BisectorDist;
-                                wb3.Cells[r3,  4].Value = sA.WorldX;
-                                wb3.Cells[r3,  5].Value = sA.WorldY;
-                                wb3.Cells[r3,  6].Value = sA.StationDist;    // tA
-                                wb3.Cells[r3,  7].Value = sB.StationDist;    // tB
-                                wb3.Cells[r3,  8].Value = sA.InvertZ;
-                                wb3.Cells[r3,  9].Value = sB.InvertZ;
-                                wb3.Cells[r3, 10].Value = sA.AreaExcav;
-                                wb3.Cells[r3, 11].Value = sB.AreaExcav;
-                                wb3.Cells[r3, 12].Value = ovE;
-
-                                // Slice columns: [k → k+1]
-                                if (k < pz.BisStationsA.Count - 1)
-                                {
-                                    var sA1 = pz.BisStationsA[k + 1];
-                                    var sB1 = pz.BisStationsB[k + 1];
-
-                                    double dXY3 = Math.Sqrt(
-                                        (sA1.WorldX - sA.WorldX) * (sA1.WorldX - sA.WorldX) +
-                                        (sA1.WorldY - sA.WorldY) * (sA1.WorldY - sA.WorldY));
-
-                                    double vA3       = (sA.AreaExcav + sA1.AreaExcav) * 0.5 * dXY3;
-                                    double vB3       = (sB.AreaExcav + sB1.AreaExcav) * 0.5 * dXY3;
-                                    double ov1       = sA1.AreaExcav - sA1.AreaExcavDeductedKL;
-                                    double vOv3      = Math.Max(0, (ovE + ov1) * 0.5 * dXY3);
-                                    double vUnion3   = vA3 + vB3 - vOv3;
-
-                                    bool aUp = (sA.InvertZ + sA1.InvertZ) >= (sB.InvertZ + sB1.InvertZ);
-                                    string upperName = aUp ? rows[pz.PipeA].PipeName : rows[pz.PipeB].PipeName;
-
-                                    double kuA = aUp ? vA3 : vA3 - vOv3;
-                                    double klA = aUp ? vA3 - vOv3 : vA3;
-                                    double kuB = aUp ? vB3 - vOv3 : vB3;
-                                    double klB = aUp ? vB3 : vB3 - vOv3;
-
-                                    double kuComb = kuA + kuB;
-                                    double klComb = klA + klB;
-                                    double delta3  = kuComb - klComb;
-
-                                    wb3.Cells[r3, 13].Value = dXY3;
-                                    wb3.Cells[r3, 14].Value = vA3;
-                                    wb3.Cells[r3, 15].Value = vB3;
-                                    wb3.Cells[r3, 16].Value = vOv3;
-                                    wb3.Cells[r3, 17].Value = vUnion3;
-                                    wb3.Cells[r3, 18].Value = upperName;
-                                    wb3.Cells[r3, 19].Value = kuA;
-                                    wb3.Cells[r3, 20].Value = klA;
-                                    wb3.Cells[r3, 21].Value = kuB;
-                                    wb3.Cells[r3, 22].Value = klB;
-                                    wb3.Cells[r3, 23].Value = kuComb;
-                                    wb3.Cells[r3, 24].Value = klComb;
-                                    wb3.Cells[r3, 25].Value = delta3;
-
-                                    bool sliceOk = Math.Abs(delta3) < 1e-9;
-                                    var sliceFill = sliceOk ? okColour : badColour;
-                                    for (int c = 13; c <= 25; c++)
-                                    {
-                                        wb3.Cells[r3, c].Style.Fill.PatternType = ExcelFillStyle.Solid;
-                                        wb3.Cells[r3, c].Style.Fill.BackgroundColor.SetColor(sliceFill);
-                                    }
-                                }
-
-                                // Format numbers
-                                for (int c = 3; c <= 12; c++)
-                                    wb3.Cells[r3, c].Style.Numberformat.Format = "0.0000";
-                                for (int c = 13; c <= 25; c++)
-                                    if (c != 18)
-                                        wb3.Cells[r3, c].Style.Numberformat.Format = "0.000000";
-
-                                // Row background (station area)
-                                for (int c = 1; c <= 12; c++)
-                                {
-                                    wb3.Cells[r3, c].Style.Fill.PatternType = ExcelFillStyle.Solid;
-                                    wb3.Cells[r3, c].Style.Fill.BackgroundColor.SetColor(bg);
-                                }
-
-                                r3++;
-                            }
-
-                            pairIdx++;
-                        }
-
-                        // Column widths
-                        int[] w3 = { 22, 4, 10, 10, 10, 10, 10, 10, 10, 12, 12, 12, 10, 10, 10, 12, 12, 14, 10, 10, 10, 10, 14, 14, 14 };
-                        for (int c = 0; c < w3.Length && c < h3.Length; c++)
-                            wb3.Column(c + 1).Width = w3[c];
-
-                        wb3.View.FreezePanes(2, 3);
-                    }
-
-                    pkg.SaveAs(new FileInfo(path));
-                }
-
-                ed.WriteMessage($"\n[SimplifiedBoQV2] Excel saved -> {path}\n");
-            }
-            catch (Exception ex)
-            {
-                ed.WriteMessage($"\n[SimplifiedBoQV2] Excel save failed: {ex.Message}\n");
-            }
         }
 
         // =====================================================================

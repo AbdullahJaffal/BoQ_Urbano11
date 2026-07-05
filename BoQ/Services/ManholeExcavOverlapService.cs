@@ -19,12 +19,14 @@ namespace UrbanoMetraj.BoQ.Services
     /// </summary>
     public static class ManholeExcavOverlapService
     {
-        // ── Hardcoded manhole excavation parameters (Step 1 constants) ────────
-        private const double MhWorkingSpace = 0.5;          // m each side
-        private const double MhDiam         = 1.0;          // m
-        // Half-side at the very base = radius + working space = 0.5 + 0.5 = 1.0 m
-        private const double MhBaseHalfSide = (MhDiam / 2.0) + MhWorkingSpace;
-        private const double MhSlopeH       = 1.0 / 3.0;   // 1H:3V → Δhalf-side per metre of height
+        // Excavation pit geometry (base side, H:V slope) is no longer hardcoded
+        // here — Phase 7 resolves it per-manhole from ManholeExcavationCatalog in
+        // ManholeAIService.ProcessManhole and stores it on ManholeItem
+        // (ExcavBaseSideM/ExcavSlopeRatio), so both this diagnostic and the real
+        // BoQ volume always build the exact same pit, never two copies that can
+        // drift apart. A manhole with no matching catalog rule has both at 0,
+        // which ManholeSquareAt already handles gracefully (returns null → zero
+        // overlap contribution, no crash).
 
         // =====================================================================
         // Public API
@@ -42,7 +44,13 @@ namespace UrbanoMetraj.BoQ.Services
             if (report?.Systems == null || report.SectionDebug == null) return lines;
 
             // Reset before accumulating (safe to call multiple times).
-            foreach (var s in report.SectionDebug) s.ManholeExcavDeducted = 0;
+            foreach (var s in report.SectionDebug)
+            {
+                s.ManholeExcavDeducted    = 0;
+                s.ManholeBeddingDeducted  = 0;
+                s.ManholeSurroundDeducted = 0;
+                s.ManholeBackfillDeducted = 0;
+            }
 
             // Index sections by node name for fast lookup.
             // "outlet" = pipe that STARTS at this manhole (water flows out).
@@ -107,17 +115,24 @@ namespace UrbanoMetraj.BoQ.Services
                     if (Hmh <= 1e-6) continue;
 
                     // At each slice: manhole square polygon
-                    var mhBot = ManholeSquareAt(mh.X, mh.Y, zBottom, zBottom, rotAngle);
-                    var mhMid = ManholeSquareAt(mh.X, mh.Y, zBottom, zManhMid, rotAngle);
-                    var mhTop = ManholeSquareAt(mh.X, mh.Y, zBottom, zTop,     rotAngle);
+                    var mhBot = ManholeSquareAt(mh.X, mh.Y, zBottom, zBottom, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio);
+                    var mhMid = ManholeSquareAt(mh.X, mh.Y, zBottom, zManhMid, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio);
+                    var mhTop = ManholeSquareAt(mh.X, mh.Y, zBottom, zTop,     rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio);
 
                     // Per-pipe intersection polygons at each slice (union across all pipes)
                     var unionBot = new List<List<double[]>>();
                     var unionMid = new List<List<double[]>>();
                     var unionTop = new List<List<double[]>>();
 
-                    // Per-pipe individual intersection volumes (Value 1 & 2 per pipe)
-                    var perPipeVolumes = new List<(string label, double vol)>();
+                    // Per-pipe individual intersection volumes (Value 1 & 2 per pipe) —
+                    // TEMPORARY diagnostic fields (user request 2026-07-05) carry the
+                    // bedding/surround/backfill overlap alongside the excavation overlap
+                    // so Compute()'s printed lines show the full per-layer breakdown.
+                    var perPipeVolumes = new List<(string label, double excavVol, double bedVol, double surrVol, double bfVol)>();
+
+                    // Accumulate bedding + surround overlaps for this manhole's BackfillVolume.
+                    double mhBeddingSum  = 0;
+                    double mhSurroundSum = 0;
 
                     foreach (var (sdr, invertAtMh, dirX, dirY) in connectedPipes)
                     {
@@ -136,10 +151,81 @@ namespace UrbanoMetraj.BoQ.Services
 
                         double pipeVol = (Hmh / 6.0) * (aBot + 4.0 * aMid + aTop);
                         string lbl = $"{sdr.StartNodeName}→{sdr.EndNodeName}";
-                        perPipeVolumes.Add((lbl, pipeVol));
 
                         // Accumulate into the section row for BoQ deduction.
                         sdr.ManholeExcavDeducted += pipeVol;
+
+                        // Per-pipe bedding/surround/backfill overlap — 0 unless the
+                        // corresponding Z-range below actually overlaps this manhole's
+                        // excavation span (populated further down, diagnostic only).
+                        double bedVolDbg = 0, surrVolDbg = 0, bfVolDbg = 0;
+
+                        // ── Bedding overlap ───────────────────────────────────
+                        // Bedding occupies Z: [invertAtMh − TrBedHeight, invertAtMh].
+                        // Fixed width TrWidth (no slope) → reuse TrenchRectAt with slopeRatio=0.
+                        double bedZBot = invertAtMh - sdr.TrBedHeight;
+                        double bedZTop = invertAtMh;
+                        double bedZLo  = Math.Max(zBottom, bedZBot);
+                        double bedZHi  = Math.Min(zTop,    bedZTop);
+                        if (bedZHi - bedZLo > 1e-6)
+                        {
+                            double bedZMid = (bedZLo + bedZHi) * 0.5;
+                            double Hbed    = bedZHi - bedZLo;
+                            var bBot = TrenchRectAt(mh.X, mh.Y, bedZLo,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                            var bMid = TrenchRectAt(mh.X, mh.Y, bedZMid, invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                            var bTop = TrenchRectAt(mh.X, mh.Y, bedZHi,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                            double abBot = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bedZLo,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bBot);
+                            double abMid = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bedZMid, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bMid);
+                            double abTop = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bedZHi,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bTop);
+                            double bedVol = (Hbed / 6.0) * (abBot + 4.0 * abMid + abTop);
+                            sdr.ManholeBeddingDeducted += bedVol;
+                            mhBeddingSum               += bedVol;
+                            bedVolDbg                    = bedVol;
+                        }
+
+                        // ── Surround overlap ──────────────────────────────────
+                        // Surround occupies Z: [invertAtMh, invertAtMh + PipeOD + TrSandOverPipe].
+                        // Fixed width TrWidth (no slope).
+                        double surrZBot = invertAtMh;
+                        double surrZTop = invertAtMh + sdr.PipeOuterDiamM + sdr.TrSandOverPipe;
+                        double surrZLo  = Math.Max(zBottom, surrZBot);
+                        double surrZHi  = Math.Min(zTop,    surrZTop);
+                        if (surrZHi - surrZLo > 1e-6)
+                        {
+                            double surrZMid = (surrZLo + surrZHi) * 0.5;
+                            double Hsurr    = surrZHi - surrZLo;
+                            var sBot = TrenchRectAt(mh.X, mh.Y, surrZLo,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                            var sMid = TrenchRectAt(mh.X, mh.Y, surrZMid, invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                            var sTop = TrenchRectAt(mh.X, mh.Y, surrZHi,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                            double asBot = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, surrZLo,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sBot);
+                            double asMid = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, surrZMid, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sMid);
+                            double asTop = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, surrZHi,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sTop);
+                            double surrVol = (Hsurr / 6.0) * (asBot + 4.0 * asMid + asTop);
+                            sdr.ManholeSurroundDeducted += surrVol;
+                            mhSurroundSum               += surrVol;
+                            surrVolDbg                    = surrVol;
+                        }
+
+                        // ── Backfill overlap ──────────────────────────────────
+                        // Backfill occupies Z: [invertAtMh + PipeOD + TrSandOverPipe, zTop].
+                        // Width grows with SlopeRatio (same as excavation trench).
+                        double bfZLo = Math.Max(zBottom, invertAtMh + sdr.PipeOuterDiamM + sdr.TrSandOverPipe);
+                        double bfZHi = zTop;
+                        if (bfZHi - bfZLo > 1e-6)
+                        {
+                            double bfZMid = (bfZLo + bfZHi) * 0.5;
+                            double Hbf    = bfZHi - bfZLo;
+                            var fBot = TrenchRectAt(mh.X, mh.Y, bfZLo,  invertAtMh, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
+                            var fMid = TrenchRectAt(mh.X, mh.Y, bfZMid, invertAtMh, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
+                            var fTop = TrenchRectAt(mh.X, mh.Y, bfZHi,  invertAtMh, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
+                            double afBot = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bfZLo,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), fBot);
+                            double afMid = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bfZMid, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), fMid);
+                            double afTop = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bfZHi,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), fTop);
+                            bfVolDbg = (Hbf / 6.0) * (afBot + 4.0 * afMid + afTop);
+                            sdr.ManholeBackfillDeducted += bfVolDbg;
+                        }
+
+                        perPipeVolumes.Add((lbl, pipeVol, bedVolDbg, surrVolDbg, bfVolDbg));
 
                         // Accumulate into union (for Value 3 calculation)
                         if (trBot != null) unionBot.Add(trBot);
@@ -147,24 +233,104 @@ namespace UrbanoMetraj.BoQ.Services
                         if (trTop != null) unionTop.Add(trTop);
                     }
 
+                    // ── Baca Geri Dolgu ───────────────────────────────────────
+                    // = ExcavationVolume − ManholeStructureVolume − Σbedding − Σsurround
+                    // ManholeStructureVolume = the resolved precast stack's own external
+                    // volume (Phase 7c) — 0 until the catalog's part volumes are filled in,
+                    // same graceful-degrade convention as everything else in this pass.
+                    double manholeStructureVolume = mh.StackPreCast?.Parts?
+                        .Sum(p => p.UnitExternalVolume * p.Count) ?? 0.0;
+                    mh.BackfillVolume = Math.Max(0,
+                        mh.ExcavationVolume - manholeStructureVolume - mhBeddingSum - mhSurroundSum);
+
+                    // ── Geri Dolgu layer split (Phase 7d) ─────────────────────
+                    SplitManholeBackfillLayers(mh);
+
                     // Value 3: manhole area NOT covered by any trench = Difference(mh, Union(trenches))
                     double freeBot = AreaOfDiff(mhBot, unionBot);
                     double freeMid = AreaOfDiff(mhMid, unionMid);
                     double freeTop = AreaOfDiff(mhTop, unionTop);
                     double freeVol = (Hmh / 6.0) * (freeBot + 4.0 * freeMid + freeTop);
 
-                    // Build output line
+                    // Build output line — TEMPORARY diagnostic detail (user request
+                    // 2026-07-05) to verify the manhole-vs-pipe overlap deduction is
+                    // actually being computed: depth/base/slope/volume + per-pipe
+                    // excavation, Yataklama, Gömlekleme, and Geri Dolgu overlap.
                     var sb = new System.Text.StringBuilder();
                     sb.Append($"\n  Manhole {mh.NodeName}" +
-                              $"  (rot={rotAngle * 180.0 / Math.PI:F1}°)");
-                    foreach (var (lbl, vol) in perPipeVolumes)
-                        sb.Append($"\n    Pipe [{lbl}] overlap = {vol:F4} m3");
+                              $"  (rot={rotAngle * 180.0 / Math.PI:F1}°)" +
+                              $"\n    ExcavDepth={mh.ExcavationDepth:F3} m" +
+                              $"  Base={mh.ExcavBaseSideM:F3}x{mh.ExcavBaseSideM:F3} m" +
+                              $"  Slope(H:V)={mh.ExcavSlopeRatio:F3}" +
+                              $"  ExcavVolume={mh.ExcavationVolume:F4} m3" +
+                              $"  BackfillVolume={mh.BackfillVolume:F4} m3");
+                    foreach (var (lbl, excavVol, bedVol, surrVol, bfVol) in perPipeVolumes)
+                        sb.Append($"\n    Pipe [{lbl}]  ExcavOverlap={excavVol:F4} m3" +
+                                  $"  YataklamaOverlap={bedVol:F4} m3" +
+                                  $"  GomleklemeOverlap={surrVol:F4} m3" +
+                                  $"  GeriDolguOverlap={bfVol:F4} m3");
                     sb.Append($"\n    Free (no pipe)      = {freeVol:F4} m3");
                     lines.Add(sb.ToString());
                 }
             }
 
             return lines;
+        }
+
+        /// <summary>
+        /// Splits mh.BackfillVolume among the matched tier's Geri Dolgu layers
+        /// (mh.ResolvedBackfillLayers, set by ManholeAIService) by thickness ratio
+        /// — mirrors the Alt Temel Katmanları convention (plain thickness, no
+        /// area weighting) rather than pipe-trench's full width-at-height area
+        /// integration, since exactly where the shaft's own footprint starts
+        /// narrowing within this zone isn't modeled per-component here.
+        ///
+        /// The "Yüzeye Doldur" layer has no configured thickness of its own, so
+        /// its share is approximated from the zone's own height, itself back-out
+        /// from BackfillVolume using the pit's base side as a representative
+        /// (non-sloped) cross-section — a deliberate simplification for this
+        /// first pass, since the zone typically spans a short height near the
+        /// top of the pit where slope widening is small. Revisit if real splits
+        /// look off.
+        /// </summary>
+        private static void SplitManholeBackfillLayers(ManholeItem mh)
+        {
+            mh.BackfillLayerSplits.Clear();
+            var layers = mh.ResolvedBackfillLayers;
+            if (layers == null || layers.Count == 0 || mh.BackfillVolume <= 1e-9) return;
+
+            double repArea = mh.ExcavBaseSideM * mh.ExcavBaseSideM;
+            if (repArea <= 1e-9) return;
+            double approxHeightM = mh.BackfillVolume / repArea;
+
+            double fixedSum = layers.Where(l => !l.IsFillToSurface).Sum(l => l.ThicknessM);
+            double fillToSurfaceThickness = Math.Max(0, approxHeightM - fixedSum);
+            double totalThickness = fixedSum + fillToSurfaceThickness;
+            if (totalThickness <= 1e-9) return;
+
+            bool filled = false;
+            foreach (var l in layers)
+            {
+                double thickness;
+                if (l.IsFillToSurface)
+                {
+                    thickness = filled ? 0.0 : fillToSurfaceThickness;
+                    filled = true;
+                }
+                else
+                {
+                    thickness = l.ThicknessM;
+                }
+
+                double ratio = thickness / totalThickness;
+                mh.BackfillLayerSplits.Add(new TrenchLayerSplit
+                {
+                    LayerName    = l.LayerName,
+                    MaterialType = l.MaterialType,
+                    Ratio        = ratio,
+                    Volume       = ratio * mh.BackfillVolume
+                });
+            }
         }
 
         // =====================================================================
@@ -204,18 +370,20 @@ namespace UrbanoMetraj.BoQ.Services
                     double zTop    = mh.TerrainElevation;
                     double zBottom = zTop - mh.ExcavationDepth;
                     double rot     = ComputeRotationAngle(mh, outlets, inlets);
-                    double halfTop = MhBaseHalfSide + mh.ExcavationDepth * MhSlopeH;
+                    double halfTop = mh.ExcavBaseSideM / 2.0 + mh.ExcavationDepth * mh.ExcavSlopeRatio;
                     double extent  = halfTop * (Math.Abs(Math.Cos(rot)) + Math.Abs(Math.Sin(rot)));
                     all.Add(new MhInfo
                     {
-                        Mh       = mh,
-                        ZTop     = zTop,
-                        ZBottom  = zBottom,
-                        RotAngle = rot,
-                        AabbMinX = mh.X - extent,
-                        AabbMaxX = mh.X + extent,
-                        AabbMinY = mh.Y - extent,
-                        AabbMaxY = mh.Y + extent,
+                        Mh         = mh,
+                        ZTop       = zTop,
+                        ZBottom    = zBottom,
+                        RotAngle   = rot,
+                        BaseSideM  = mh.ExcavBaseSideM,
+                        SlopeRatio = mh.ExcavSlopeRatio,
+                        AabbMinX   = mh.X - extent,
+                        AabbMaxX   = mh.X + extent,
+                        AabbMinY   = mh.Y - extent,
+                        AabbMaxY   = mh.Y + extent,
                     });
                 }
             }
@@ -236,8 +404,16 @@ namespace UrbanoMetraj.BoQ.Services
                         (a.Mh.Y - b.Mh.Y) * (a.Mh.Y - b.Mh.Y));
                     if (dist < 1e-6) continue;
 
-                    double zTouchRaw = (dist - 2.0 * MhBaseHalfSide) / (2.0 * MhSlopeH)
-                                       + (a.ZBottom + b.ZBottom) / 2.0;
+                    // Approximate touch height using the pair's averaged base/slope
+                    // (a rough starting estimate only — clamped below, and the real
+                    // Inside/Outside split further down uses each manhole's own
+                    // correct per-manhole polygon, so this average only affects
+                    // where the search starts, not the final overlap shape).
+                    double avgBaseSideM  = (a.BaseSideM  + b.BaseSideM)  / 2.0;
+                    double avgSlopeRatio = (a.SlopeRatio + b.SlopeRatio) / 2.0;
+                    double zTouchRaw = avgSlopeRatio > 1e-9
+                        ? (dist - avgBaseSideM) / (2.0 * avgSlopeRatio) + (a.ZBottom + b.ZBottom) / 2.0
+                        : Math.Max(a.ZBottom, b.ZBottom);
                     double zTopEff   = Math.Min(a.ZTop, b.ZTop);
                     double zTouch    = Math.Max(zTouchRaw, Math.Max(a.ZBottom, b.ZBottom));
                     if (zTouch >= zTopEff) continue;
@@ -300,9 +476,9 @@ namespace UrbanoMetraj.BoQ.Services
                 double zLowerMid = self.ZBottom + hLower * 0.5;
                 mh.GeoLower = new ManholeGeoSegment
                 {
-                    Bottom = MakeRawLevel(mh.X, mh.Y, self.ZBottom, self.ZBottom, self.RotAngle),
-                    Mid    = MakeRawLevel(mh.X, mh.Y, self.ZBottom, zLowerMid,   self.RotAngle),
-                    Top    = MakeRawLevel(mh.X, mh.Y, self.ZBottom, zTouch,      self.RotAngle),
+                    Bottom = MakeRawLevel(mh.X, mh.Y, self.ZBottom, self.ZBottom, self.RotAngle, self.BaseSideM, self.SlopeRatio),
+                    Mid    = MakeRawLevel(mh.X, mh.Y, self.ZBottom, zLowerMid,   self.RotAngle, self.BaseSideM, self.SlopeRatio),
+                    Top    = MakeRawLevel(mh.X, mh.Y, self.ZBottom, zTouch,      self.RotAngle, self.BaseSideM, self.SlopeRatio),
                 };
             }
             else
@@ -325,9 +501,10 @@ namespace UrbanoMetraj.BoQ.Services
         }
 
         private static ManholeGeoLevel MakeRawLevel(
-            double cx, double cy, double zBottom, double z, double rot)
+            double cx, double cy, double zBottom, double z, double rot,
+            double baseSideM, double slopeRatio)
         {
-            var raw = ManholeSquareAt(cx, cy, zBottom, z, rot);
+            var raw = ManholeSquareAt(cx, cy, zBottom, z, rot, baseSideM, slopeRatio);
             return new ManholeGeoLevel
             {
                 Z             = z,
@@ -351,15 +528,15 @@ namespace UrbanoMetraj.BoQ.Services
             List<double[]> halfPlane,
             bool isHigh)
         {
-            var raw = ManholeSquareAt(mh.X, mh.Y, self.ZBottom, z, self.RotAngle);
+            var raw = ManholeSquareAt(mh.X, mh.Y, self.ZBottom, z, self.RotAngle, self.BaseSideM, self.SlopeRatio);
             var level = new ManholeGeoLevel { Z = z, RawPoly = raw };
             if (raw == null) return level;
 
             // Total 2-D intersection of both manholes at this elevation
             var polyHigh = ManholeSquareAt(
-                mHigh.Mh.X, mHigh.Mh.Y, mHigh.ZBottom, z, mHigh.RotAngle);
+                mHigh.Mh.X, mHigh.Mh.Y, mHigh.ZBottom, z, mHigh.RotAngle, mHigh.BaseSideM, mHigh.SlopeRatio);
             var polyLow  = ManholeSquareAt(
-                mLow.Mh.X,  mLow.Mh.Y,  mLow.ZBottom,  z, mLow.RotAngle);
+                mLow.Mh.X,  mLow.Mh.Y,  mLow.ZBottom,  z, mLow.RotAngle, mLow.BaseSideM, mLow.SlopeRatio);
 
             List<List<double[]>> totalIntersect = null;
             if (polyHigh != null && polyLow != null)
@@ -415,7 +592,7 @@ namespace UrbanoMetraj.BoQ.Services
         private static List<double[]> BuildHalfPlane(MhInfo mHigh, MhInfo mLow, double zTouch)
         {
             var poly = ManholeSquareAt(
-                mHigh.Mh.X, mHigh.Mh.Y, mHigh.ZBottom, zTouch, mHigh.RotAngle);
+                mHigh.Mh.X, mHigh.Mh.Y, mHigh.ZBottom, zTouch, mHigh.RotAngle, mHigh.BaseSideM, mHigh.SlopeRatio);
             if (poly == null || poly.Count < 3) return null;
 
             // Unit vector from M_high toward M_low
@@ -542,17 +719,18 @@ namespace UrbanoMetraj.BoQ.Services
         {
             public ManholeItem Mh;
             public double ZTop, ZBottom, RotAngle;
+            public double BaseSideM, SlopeRatio;
             public double AabbMinX, AabbMaxX, AabbMinY, AabbMaxY;
         }
 
         /// <summary>
         /// 2-D Clipper intersection area (m²) of two manhole footprints at elevation z.
-        /// Each footprint uses its own zBottom and rotAngle.
+        /// Each footprint uses its own zBottom, rotAngle, base side and slope.
         /// </summary>
         private static double IntersectTwoManholes(MhInfo a, MhInfo b, double z)
         {
-            var polyA = ManholeSquareAt(a.Mh.X, a.Mh.Y, a.ZBottom, z, a.RotAngle);
-            var polyB = ManholeSquareAt(b.Mh.X, b.Mh.Y, b.ZBottom, z, b.RotAngle);
+            var polyA = ManholeSquareAt(a.Mh.X, a.Mh.Y, a.ZBottom, z, a.RotAngle, a.BaseSideM, a.SlopeRatio);
+            var polyB = ManholeSquareAt(b.Mh.X, b.Mh.Y, b.ZBottom, z, b.RotAngle, b.BaseSideM, b.SlopeRatio);
             if (polyA == null || polyB == null) return 0;
             return ClipperGeo.Area(ClipperGeo.Intersect(polyA, polyB));
         }
@@ -562,7 +740,18 @@ namespace UrbanoMetraj.BoQ.Services
         // =====================================================================
 
         /// <summary>
-        /// Computes the rotation angle (radians) to apply to the manhole square:
+        /// Computes the rotation angle (radians) to apply to the manhole square.
+        ///
+        /// PRIMARY source (confirmed 2026-07-06 against a real manually-rotated
+        /// manhole in test5.xml): Urbano's own node rotation
+        /// (<see cref="ManholeItem.RotationAngleRad"/>, sourced from the "NR"/
+        /// "NLR" node properties) — radians, standard math CCW-from-+X, used
+        /// directly whenever present. This supersedes the old always-bisector
+        /// heuristic entirely for real projects, since "NLR" is present on every
+        /// node regardless of whether the user manually rotated it.
+        ///
+        /// FALLBACK (only when Urbano gives no rotation data at all — a very old
+        /// export predating this fix):
         /// • Both inlet and outlet exist → bisector of lowest-inlet and lowest-outlet directions.
         /// • Only outlets → direction of the lowest outlet.
         /// • Only inlets  → direction of the lowest inlet.
@@ -576,6 +765,9 @@ namespace UrbanoMetraj.BoQ.Services
             Dictionary<string, List<SectionDebugRow>> outlets,
             Dictionary<string, List<SectionDebugRow>> inlets)
         {
+            if (mh.RotationAngleRad.HasValue)
+                return mh.RotationAngleRad.Value;
+
             // Lowest outlet (StartNodeName == mh): lowest InvertStart
             double[] outDir = null;
             if (outlets.TryGetValue(mh.NodeName, out var outList) && outList.Count > 0)
@@ -650,14 +842,18 @@ namespace UrbanoMetraj.BoQ.Services
 
         /// <summary>
         /// Rotated square manhole footprint in XY at elevation z.
-        /// Half-side = MhBaseHalfSide + (z - zBottom) * MhSlopeH.
+        /// Half-side = baseSideM/2 + (z - zBottom) * slopeRatio.
         /// The square is centred at (cx, cy) and rotated by <paramref name="rotAngle"/> radians.
+        /// baseSideM/slopeRatio come from ManholeItem.ExcavBaseSideM/ExcavSlopeRatio
+        /// (Phase 7, resolved per-manhole in ManholeAIService) — 0 for an
+        /// unresolved manhole, which correctly yields no polygon here.
         /// </summary>
         private static List<double[]> ManholeSquareAt(
-            double cx, double cy, double zBottom, double z, double rotAngle)
+            double cx, double cy, double zBottom, double z, double rotAngle,
+            double baseSideM, double slopeRatio)
         {
             double rise     = Math.Max(0, z - zBottom);
-            double halfSide = MhBaseHalfSide + rise * MhSlopeH;
+            double halfSide = baseSideM / 2.0 + rise * slopeRatio;
             if (halfSide <= 1e-9) return null;
 
             double cosA = Math.Cos(rotAngle);

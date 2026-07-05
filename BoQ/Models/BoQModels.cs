@@ -1,9 +1,38 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models;
+using UrbanoMetraj.BoQ.SmartAssembly.Models;
 
 namespace UrbanoMetraj.BoQ.Models
 {
+    /// <summary>
+    /// One entry from Urbano's own embedded PIPE/MANHOLE catalog (inside the
+    /// project's own &lt;catalogs&gt; block of an ars_export_xml file) — the "as-drawn"
+    /// side of the Type Mapping link. See BoQParserService.ListCatalogItems.
+    /// </summary>
+    public class CatalogItemInfo
+    {
+        public string Guid      { get; set; } = "";
+        public string Name      { get; set; } = "";
+        /// <summary>"PIPE" or "MANHOLE".</summary>
+        public string Reference { get; set; } = "";
+        /// <summary>
+        /// Name of the enclosing Urbano catalog group (isGroup="1" parent), e.g.
+        /// "UYG_YSU_UZ (KRG - CTP)". Two items can share the same diameter/name but
+        /// belong to different groups — shown alongside Name so the user linking
+        /// them in Type Mapping doesn't pick the wrong one. Empty if the item isn't
+        /// nested under a group.
+        /// </summary>
+        public string GroupName { get; set; } = "";
+        /// <summary>As-drawn shape (MANHOLE items only; CBS_MANHOLESHAPE-derived). Circular by default.</summary>
+        public FootprintShape Shape { get; set; } = FootprintShape.Circular;
+        /// <summary>Drawn long side / A (m) — populated when Shape is Square or Rectangular.</summary>
+        public double LengthM { get; set; }
+        /// <summary>Drawn short side / B (m) — populated when Shape is Square or Rectangular.</summary>
+        public double WidthM { get; set; }
+    }
+
     // =========================================================================
     // Phase 1 – Pipe and Manhole aggregation models
     // =========================================================================
@@ -31,9 +60,61 @@ namespace UrbanoMetraj.BoQ.Models
         public string NodeName           { get; set; }  // AG_NAME  (e.g. "1Y", "4Y")
         public double X                  { get; set; }  // easting  (m)
         public double Y                  { get; set; }  // northing (m)
-        public double TerrainElevation   { get; set; }  // TH1      (m, a.s.l.)
+        public double TerrainElevation   { get; set; }  // TH1      (m, a.s.l.) — this is actually the COVER-TOP elevation (Kapak Üstü Kotu)
+        /// <summary>Existing ground elevation (m, a.s.l.) — TH2. Falls back to TerrainElevation (TH1) when TH2 is absent from the export.</summary>
+        public double ExistingGroundElevation { get; set; }
         public double Depth              { get; set; }  // computed manhole depth (m)
         public int    Diameter           { get; set; }  // nominal shaft Ø (mm)
+        /// <summary>Urbano's own MANHOLE catalog item GUID (the "MH" node property) — used to resolve a Type Mapping link.</summary>
+        public string MhGuid             { get; set; }
+
+        /// <summary>
+        /// As-drawn shape from Urbano's MANHOLE catalog item (CBS_MANHOLESHAPE: "Dairesel"
+        /// → Circular, "Dörtgen" → Square when MANHOLE_A≈MANHOLE_B else Rectangular).
+        /// Defaults to Circular when the property is absent (older exports / no shape data).
+        /// </summary>
+        public FootprintShape DrawnShape { get; set; } = FootprintShape.Circular;
+        /// <summary>Drawn long side / A (m) — populated when DrawnShape is Square or Rectangular.</summary>
+        public double DrawnLengthM       { get; set; }
+        /// <summary>Drawn short side / B (m) — populated when DrawnShape is Square or Rectangular.</summary>
+        public double DrawnWidthM        { get; set; }
+
+        /// <summary>
+        /// Urbano's own node rotation, radians, standard math CCW-from-+X
+        /// convention — confirmed 2026-07-06 against a real manually-rotated
+        /// manhole (stored value decoded to exactly 315°, matching the user's own
+        /// recollection). Sourced from the node's "NR" property (explicit manual
+        /// override) when present, else "NLR" (Urbano's always-present current/
+        /// effective rotation). Null when neither exists (very old export) —
+        /// ManholeExcavOverlapService.ComputeRotationAngle then falls back to its
+        /// bisector-of-connected-pipes heuristic. This is now the PRIMARY source
+        /// for manhole square/rectangle orientation, superseding that heuristic
+        /// whenever Urbano actually provides it.
+        /// </summary>
+        public double? RotationAngleRad  { get; set; }
+
+        /// <summary>
+        /// Display string for "Çap (mm)" columns: the plain diameter number for
+        /// Circular (unchanged), "side×side" for Square, "length×width" for
+        /// Rectangular — since a single Diameter number never applies to a
+        /// non-circular manhole (Diameter stays 0 for those; DrawnLengthM/
+        /// DrawnWidthM carry the real drawn size instead).
+        /// </summary>
+        public string DiameterDisplay
+        {
+            get
+            {
+                switch (DrawnShape)
+                {
+                    case FootprintShape.Square:
+                        return $"{Math.Round(DrawnLengthM * 1000)}×{Math.Round(DrawnLengthM * 1000)}";
+                    case FootprintShape.Rectangular:
+                        return $"{Math.Round(DrawnLengthM * 1000)}×{Math.Round(DrawnWidthM * 1000)}";
+                    default:
+                        return Diameter > 0 ? Diameter.ToString() : "?";
+                }
+            }
+        }
 
         // kept for summary totals / backwards compat
         public int    Count              { get; set; } = 1;
@@ -71,18 +152,80 @@ namespace UrbanoMetraj.BoQ.Models
         /// </summary>
         public ManholeGeoSegment GeoUpper { get; set; }
 
-        // ── Manhole excavation (isolated — no trench overlap deduction yet) ────
+        // ── Manhole excavation & backfill (Phase 7 — ManholeExcavationCatalog) ──
         /// <summary>
-        /// Excavation depth H = TerrainElevation − lowest connected pipe invert (m).
-        /// 0 if no connected pipes are found.
+        /// Excavation depth (m). Raw baseline = TerrainElevation − lowest connected
+        /// pipe invert + MHB (set in BoQParserService.ComputeManholeDepths — this
+        /// part never depends on the catalog). Once ManholeAIService resolves a
+        /// matching ManholeExcavationRule/DepthTier, this is replaced with the full
+        /// depth = raw baseline + Taban.TabanKalinligiMm + the tier's
+        /// TotalSubBaseDepthM (Alt Temel Katmanları). Stays at the raw baseline
+        /// (explicit-failure convention, never guessed) if no rule/tier matches.
         /// </summary>
         public double ExcavationDepth  { get; set; }
         /// <summary>
-        /// Isolated manhole excavation volume (m³) computed via Simpson's 1/3 rule
-        /// on a square frustum: base 2.0 m, slope 1H:3V, working space 0.5 m.
-        /// Does NOT yet deduct trench-overlap zones.
+        /// Isolated manhole excavation volume (m³), square frustum via Simpson's
+        /// 1/3 rule using <see cref="ExcavBaseSideM"/>/<see cref="ExcavSlopeRatio"/>.
+        /// 0 until ManholeAIService resolves a matching catalog rule (explicit
+        /// failure — never a guessed/default value). Does NOT yet deduct
+        /// trench-overlap zones (see ManholeExcavOverlapService).
         /// </summary>
         public double ExcavationVolume { get; set; }
+
+        /// <summary>Working clearance (m) each side of the Taban footprint, from the
+        /// matched ManholeExcavationDepthTier. 0 if unresolved.</summary>
+        public double ExcavWorkingClearanceM { get; set; }
+        /// <summary>H:V slope ratio for this manhole's excavation pit, from the
+        /// matched tier. 0 if unresolved.</summary>
+        public double ExcavSlopeRatio { get; set; }
+        /// <summary>
+        /// Square excavation pit base side (m) = resolved Taban footprint width
+        /// (diameter/side/long-side, whichever shape) + 2×ExcavWorkingClearanceM.
+        /// Consumed by ManholeExcavOverlapService so both services build the exact
+        /// same pit geometry instead of two independently-hardcoded copies. 0 if
+        /// unresolved (ManholeExcavOverlapService then skips this manhole cleanly).
+        /// </summary>
+        public double ExcavBaseSideM { get; set; }
+
+        /// <summary>
+        /// The matched DepthTier's Geri Dolgu (backfill-around-shaft) layers,
+        /// carried from ManholeAIService's catalog resolution so
+        /// ManholeExcavOverlapService (which computes BackfillVolume) can split it
+        /// into named layers once the total volume is known. Empty if unresolved.
+        /// </summary>
+        public List<ManholeBackfillLayer> ResolvedBackfillLayers { get; set; } = new List<ManholeBackfillLayer>();
+
+        /// <summary>
+        /// Geri Dolgu volume split by named layer (thickness-ratio, mirrors the
+        /// pipe-trench layer-split design) — Volume populated once BackfillVolume
+        /// is known. Empty if unresolved.
+        /// </summary>
+        public List<TrenchLayerSplit> BackfillLayerSplits { get; set; } = new List<TrenchLayerSplit>();
+
+        /// <summary>
+        /// Baca Geri Dolgu (m³) = ExcavationVolume − ManholeStructureVolume
+        ///                       − Σ ManholeBeddingDeducted − Σ ManholeSurroundDeducted
+        /// for all pipe sections connected to this manhole.
+        /// Populated by ManholeExcavOverlapService.Compute (runtime only).
+        /// </summary>
+        public double BackfillVolume { get; set; }
+
+        // ── Baca Keşif Tablosu — inlet/outlet linkage (populated by ManholeConnectionLinkService) ──
+        /// <summary>Connected inlet pipes (pipes whose EndNodeName == this manhole). Empty until ManholeConnectionLinkService.Populate() runs.</summary>
+        public List<ManholeConnectionInfo> Inlets  { get; set; } = new List<ManholeConnectionInfo>();
+        /// <summary>Connected outlet pipes (pipes whose StartNodeName == this manhole). Empty until ManholeConnectionLinkService.Populate() runs.</summary>
+        public List<ManholeConnectionInfo> Outlets { get; set; } = new List<ManholeConnectionInfo>();
+    }
+
+    /// <summary>One pipe connection to a manhole — either an inlet or an outlet (see ManholeItem.Inlets/Outlets).</summary>
+    public class ManholeConnectionInfo
+    {
+        public string NeighborNodeName { get; set; }
+        /// <summary>Invert elevation (m, a.s.l.) at THIS manhole's end of the pipe.</summary>
+        public double InvertElevation  { get; set; }
+        public int    DiameterMm       { get; set; }
+        /// <summary>Straight-line distance (m) to the neighboring manhole — SectionDebugRow.Length2D.</summary>
+        public double Distance2D       { get; set; }
     }
 
     /// <summary>
@@ -222,6 +365,23 @@ namespace UrbanoMetraj.BoQ.Models
     // Phase 1 – Per-section excavation debug row
     // =========================================================================
 
+    /// <summary>
+    /// One PipeTrenchCatalog sub-layer's share of a combined layer-group volume
+    /// (Yataklama / Boru Etrafı / Boru Üstü / Geri Dolgu). Ratio is a fixed
+    /// geometric constant from the matched tier (area of this layer at its real
+    /// cumulative height within the stack, ÷ the group's total area) — computed
+    /// once at parse time, independent of overlap/clash scenario. Volume = Ratio
+    /// × the group's final resolved total volume (set after RecomputeRow).
+    /// See project memory "Trench layer splitting design".
+    /// </summary>
+    public class TrenchLayerSplit
+    {
+        public string LayerName    { get; set; } = "";
+        public string MaterialType { get; set; } = "";
+        public double Ratio        { get; set; }
+        public double Volume       { get; set; }
+    }
+
     public class SectionDebugRow
     {
         // ── Identity ─────────────────────────────────────────────────────────
@@ -241,6 +401,13 @@ namespace UrbanoMetraj.BoQ.Models
         public string Material        { get; set; }   // for re-aggregating PipeItems from cache
         public double PipeOuterDiamM  { get; set; }
         public double Length2D        { get; set; }
+
+        // ── Type Mapping (Phase 5) — from our own PipeCatalog via a linked PipeDefinition ──
+        public string PozNo              { get; set; }
+        public string Sinif              { get; set; }
+        public string Aciklama           { get; set; }
+        /// <summary>PipeFamily.Id owning the linked PipeDefinition — used by ManholeAIService's Baca-Boru Bağlantı Kuralları resolution.</summary>
+        public Guid   LinkedPipeFamilyId { get; set; }
 
         // ── Node world coordinates (for 3-D solid generation) ─────────────────
         public double StartX          { get; set; }
@@ -308,10 +475,18 @@ namespace UrbanoMetraj.BoQ.Models
         public double OverlapBackfillDeducted { get; set; }
 
         // ── Manhole–pipe overlap (runtime only, not persisted) ─────────────────
-        /// <summary>Sum of overlap volumes between this pipe trench and all manholes it
-        /// connects to. Populated by ManholeExcavOverlapService.Compute each time
-        /// the dialog opens. Subtracted from VExcav when BacaKaziHesapla=true.</summary>
+        /// <summary>Overlap between this pipe's excavation trench and all connected manhole
+        /// excavations. Populated by ManholeExcavOverlapService.Compute.</summary>
         public double ManholeExcavDeducted    { get; set; }
+        /// <summary>Overlap between this pipe's bedding layer and all connected manhole
+        /// excavations. Populated by ManholeExcavOverlapService.Compute.</summary>
+        public double ManholeBeddingDeducted  { get; set; }
+        /// <summary>Overlap between this pipe's surround layer and all connected manhole
+        /// excavations. Populated by ManholeExcavOverlapService.Compute.</summary>
+        public double ManholeSurroundDeducted { get; set; }
+        /// <summary>Overlap between this pipe's backfill layer and all connected manhole
+        /// excavations. Deducted from VBackfill when BacaKaziHesapla=true.</summary>
+        public double ManholeBackfillDeducted { get; set; }
         public List<string> ClashLog        { get; set; } = new List<string>();
 
         // ── Integration-averaging corrections (set by ApplyExcavationAveraging) ──
@@ -326,6 +501,17 @@ namespace UrbanoMetraj.BoQ.Models
 
         // ── Per-station cross-sections (populated by BoQParserService) ────────
         public List<CrossSectionStation> Stations { get; set; } = new List<CrossSectionStation>();
+
+        // ── Trench layer split (Phase 2b — PipeTrenchCatalog per-layer breakdown) ─
+        // Ratios computed once in ParseSections from the matched tier's geometry;
+        // Volume filled in by BoQScenarioAggregator.ApplyLayerSplits after
+        // RecomputeRow resolves the group's final (post-clash) total. Empty list
+        // means "no breakdown for this group" (old DWG, no matching rule, or a
+        // fill-to-surface layer present — falls back to the single combined total).
+        public List<TrenchLayerSplit> BeddingLayerSplits    { get; set; } = new List<TrenchLayerSplit>();
+        public List<TrenchLayerSplit> BoruEtrafiLayerSplits { get; set; } = new List<TrenchLayerSplit>();
+        public List<TrenchLayerSplit> BoruUstuLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
+        public List<TrenchLayerSplit> BackfillLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
     }
 
     // =========================================================================
@@ -338,6 +524,14 @@ namespace UrbanoMetraj.BoQ.Models
         public List<SystemBoQ>       Systems        { get; set; } = new List<SystemBoQ>();
         public List<string>          DiscoveryNotes { get; set; } = new List<string>();
         public List<SectionDebugRow> SectionDebug   { get; set; } = new List<SectionDebugRow>();
+
+        /// <summary>
+        /// Every non-group PIPE/MANHOLE item found in this export's own embedded
+        /// &lt;catalogs&gt; block — persisted into the DWG (TYPE_MAPPING/DISCOVERED_ITEMS)
+        /// on every save, so the Type Mapping UI never depends on the ephemeral
+        /// %TEMP% export file (which doesn't travel with the DWG to another machine).
+        /// </summary>
+        public List<CatalogItemInfo> CatalogItems   { get; set; } = new List<CatalogItemInfo>();
 
         public double TotalPipeLength =>
             Systems.SelectMany(s => s.Pipes).Sum(p => p.TotalLength);
@@ -365,6 +559,9 @@ namespace UrbanoMetraj.BoQ.Models
 
         public double TotalManholeExcavationVolume =>
             Systems.SelectMany(s => s.Manholes).Sum(m => m.ExcavationVolume);
+
+        public double TotalManholeBackfillVolume =>
+            Systems.SelectMany(s => s.Manholes).Sum(m => m.BackfillVolume);
     }
 
     // =========================================================================
@@ -437,6 +634,14 @@ namespace UrbanoMetraj.BoQ.Models
         public int    Count          { get; set; }
         /// <summary>True if this part was selected by the greedy ring algorithm.</summary>
         public bool   IsVariableRing { get; set; }
+
+        // ── From our ComponentFamily catalog (proves the stack is catalog-driven) ──
+        public string PozNo               { get; set; }
+        public string Aciklama            { get; set; }
+        /// <summary>Net concrete/material volume of ONE unit (m³), from ManholeComponent.MaterialVolume.</summary>
+        public double UnitMaterialVolume  { get; set; }
+        /// <summary>Total spatial displacement of ONE unit (m³), from ManholeComponent.ExternalVolume.</summary>
+        public double UnitExternalVolume  { get; set; }
     }
 
     /// <summary>
@@ -459,6 +664,17 @@ namespace UrbanoMetraj.BoQ.Models
         /// Should be ≤ LeftoverTolerance (0.05 m) after the algorithm runs.
         /// </summary>
         public double ResidualM { get; set; }
+
+        /// <summary>
+        /// True when the tier's Parça Kısıtları (Min/Maks per-role component
+        /// counts) could not all be satisfied — either a MinCount wasn't met
+        /// (a required piece type has no diameter-matched catalog component),
+        /// or the greedy fill still left a gap &gt; LeftoverTolerance after
+        /// respecting every role's MaxCount. Aggregated into a single
+        /// DiscoveryNotes warning by ManholeAIService.Process — never silently
+        /// swallowed.
+        /// </summary>
+        public bool ConstraintViolated { get; set; }
 
         // ── Cast-in-place only ────────────────────────────────────────────────
         /// <summary>Total concrete shaft depth in metres (IsPreCast == false only).</summary>

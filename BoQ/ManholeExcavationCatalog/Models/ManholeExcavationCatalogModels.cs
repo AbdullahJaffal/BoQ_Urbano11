@@ -10,8 +10,9 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models
     /// </summary>
     public class SubBaseLayer
     {
-        public string LayerName   { get; set; } = "";
-        public double ThicknessMm { get; set; }
+        public string LayerName    { get; set; } = "";
+        public string MaterialType { get; set; } = "";
+        public double ThicknessMm  { get; set; }
     }
 
     /// <summary>

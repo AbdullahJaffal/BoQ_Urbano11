@@ -7,6 +7,7 @@ using UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels;
 using UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
 using UrbanoMetraj.BoQ.SoilCatalog.UI.ViewModels;
+using UrbanoMetraj.BoQ.TypeMapping.UI.ViewModels;
 
 namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 {
@@ -27,6 +28,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public const int TAB_PIPE_TRENCH   = 5;
         public const int TAB_SOIL_CATALOG  = 6;
         public const int TAB_DOLGU_CATALOG = 7;
+        public const int TAB_TYPE_MAPPING  = 8;
 
         public SmartAssemblyMasterCatalog MasterCatalog { get; }
 
@@ -39,6 +41,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public PipeTrenchMainVm        PipeTrenchTab   { get; }
         public SoilCatalogVm           SoilCatalogTab  { get; }
         public DolguCatalogVm          DolguCatalogTab { get; }
+        public TypeMappingTabVm        TypeMappingTab  { get; }
 
         private int _selectedTabIndex;
         public int SelectedTabIndex
@@ -79,6 +82,10 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             PipeTrenchTab   = new PipeTrenchMainVm();
             SoilCatalogTab  = new SoilCatalogVm();
             DolguCatalogTab = new DolguCatalogVm();
+            // TypeMappingTab needs its DWG-bound links + save callback supplied
+            // externally (see TypeMappingTabVm.Initialize) — SmartAssemblyCommand
+            // does this right after construction, once the active Database is known.
+            TypeMappingTab  = new TypeMappingTabVm(pipeCatalog ?? PipeCatalogStore.Current, MasterCatalog.Families);
         }
 
         /// <summary>

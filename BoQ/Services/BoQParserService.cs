@@ -8,6 +8,12 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Autodesk.AutoCAD.EditorInput;
 using UrbanoMetraj.BoQ.Models;
+using UrbanoMetraj.BoQ.PipeTrenchCatalog.Models;
+using UrbanoMetraj.BoQ.PipeTrenchCatalog.Services;
+using UrbanoMetraj.BoQ.PipeCatalogs.Models;
+using UrbanoMetraj.BoQ.PipeCatalogs.Services;
+using UrbanoMetraj.BoQ.TypeMapping.Services;
+using UrbanoMetraj.BoQ.SmartAssembly.Models;
 
 namespace UrbanoMetraj.BoQ.Services
 {
@@ -171,6 +177,8 @@ namespace UrbanoMetraj.BoQ.Services
             var catDict = BuildCatalogDict(doc);
             Dbg(ed, $"\n         {catDict.Count} catalog entries indexed.");
 
+            report.CatalogItems = ExtractCatalogItemInfos(doc);
+
             Dbg(ed, "\n  [BoQ] Parsing nodes…");
             var nodes = ParseNodes(doc, catDict, sysNames, notes, ed);
             Dbg(ed, $"\n         {nodes.Count} node(s) found.");
@@ -187,6 +195,130 @@ namespace UrbanoMetraj.BoQ.Services
             report.DiscoveryNotes = notes;
 
             return report;
+        }
+
+        // =====================================================================
+        // Type Mapping support — lightweight catalog-item listing (Phase 4)
+        // =====================================================================
+
+        /// <summary>
+        /// Extracts every non-group PIPE/MANHOLE item from an already-loaded export's
+        /// own embedded &lt;catalogs&gt; block. Used both by Parse (to populate
+        /// BoQReport.CatalogItems) and stand-alone by the Type Mapping UI's discovery
+        /// path. Uses Descendants (not Elements) for catalogItem — real exports nest
+        /// leaf items (isGroup="0") one level inside a group item (isGroup="1"), they
+        /// are NOT direct children of &lt;catalog&gt; (confirmed against a real export
+        /// 2026-07-04 — an earlier Elements-only version silently found zero items).
+        /// </summary>
+        private static List<CatalogItemInfo> ExtractCatalogItemInfos(XDocument doc)
+        {
+            var result = new List<CatalogItemInfo>();
+            foreach (var cat in doc.Descendants("catalog"))
+            {
+                string reference = (string)cat.Attribute("reference") ?? "";
+                if (reference != "PIPE" && reference != "MANHOLE") continue;
+
+                foreach (var item in cat.Descendants("catalogItem"))
+                {
+                    if (((string)item.Attribute("isGroup") ?? "") == "1") continue;
+
+                    string guid = (string)item.Attribute("guid") ?? "";
+                    if (string.IsNullOrEmpty(guid)) continue;
+
+                    var itemProps = ReadCatalogItemProps(item);
+                    string name = CleanCatalogItemName(
+                        DecodeStrProp(GetProp(itemProps, "CATALOGITEM_NAME")));
+
+                    // Enclosing group (isGroup="1" parent, e.g. "UYG_YSU_UZ (KRG - CTP)")
+                    // — two items can share an identical diameter/name across different
+                    // groups; shown alongside Name so linking doesn't pick the wrong one.
+                    string groupName = "";
+                    var parent = item.Parent;
+                    if (parent != null && parent.Name.LocalName == "catalogItem")
+                        groupName = CleanCatalogItemName(
+                            DecodeStrProp(GetProp(ReadCatalogItemProps(parent), "CATALOGITEM_NAME")));
+
+                    FootprintShape shape = FootprintShape.Circular;
+                    double lengthM = 0, widthM = 0;
+                    if (reference == "MANHOLE")
+                        ExtractManholeShape(itemProps, out shape, out lengthM, out widthM);
+
+                    result.Add(new CatalogItemInfo
+                    {
+                        Guid      = guid.ToUpperInvariant(),
+                        Name      = name,
+                        GroupName = groupName,
+                        Reference = reference,
+                        Shape     = shape,
+                        LengthM   = lengthM,
+                        WidthM    = widthM
+                    });
+                }
+            }
+            return result;
+        }
+
+        private static Dictionary<string, string> ReadCatalogItemProps(XElement item)
+        {
+            var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var ct in item.Elements("ppsEx").Elements("ct"))
+                foreach (var pEx in ct.Elements("pEx"))
+                {
+                    string t = (string)pEx.Attribute("t") ?? "";
+                    string v = (string)pEx.Attribute("v") ?? "";
+                    if (!string.IsNullOrEmpty(t) && !props.ContainsKey(t))
+                        props[t] = v;
+                }
+            return props;
+        }
+
+        // Urbano encodes the Ø symbol inside CATALOGITEM_NAME as a run of literal
+        // "=XX=XX=XX" escape bytes (same pattern ExtractManholeNominalDiam already
+        // regexes past to pull the digits) — collapse it to a real "Ø" so names are
+        // human-readable wherever they're displayed (e.g. the Type Mapping UI).
+        private static readonly Regex CatalogNameEscapeRx =
+            new Regex(@"(?:=[0-9A-Fa-f]{2})+", RegexOptions.Compiled);
+
+        private static string CleanCatalogItemName(string raw)
+            => string.IsNullOrEmpty(raw) ? raw : CatalogNameEscapeRx.Replace(raw, "Ø");
+
+        // General-purpose decoder for Urbano's escaped Turkish-character strings
+        // (CBS_MANHOLESHAPE, N_ROTATION_MODE, ...) — unlike CleanCatalogItemName's
+        // single-character "Ø" hack, this recovers ANY Turkish letter. Reverse-
+        // engineered 2026-07-06 from real ars_export_xml samples: each run of
+        // "=XX=XX..." is the UTF-8 encoding of one or more codepoints in the
+        // U+FF00-U+FFFF range; subtracting 0xFF00 recovers the ORIGINAL byte, which
+        // is itself Windows-1254 (Turkish codepage) encoded. Verified against 6
+        // real strings, e.g. "D=EF=BF=B6rtgen" → "Dörtgen",
+        // "Kullan=EF=BF=BDc=EF=BF=BD giri=EF=BF=BEi" → "Kullanıcı girişi".
+        private static readonly Regex EscapedByteRunRx =
+            new Regex(@"(?:=[0-9A-Fa-f]{2})+", RegexOptions.Compiled);
+        private static readonly Encoding Cp1254 = Encoding.GetEncoding(1254);
+
+        private static string DecodeEscapedTurkishString(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return raw;
+            return EscapedByteRunRx.Replace(raw, m =>
+            {
+                var hexPairs = Regex.Matches(m.Value, "[0-9A-Fa-f]{2}");
+                var bytes = new byte[hexPairs.Count];
+                for (int i = 0; i < hexPairs.Count; i++)
+                    bytes[i] = Convert.ToByte(hexPairs[i].Value, 16);
+
+                string codepoints;
+                try { codepoints = Encoding.UTF8.GetString(bytes); }
+                catch { return m.Value; }
+
+                var sb = new StringBuilder();
+                foreach (char ch in codepoints)
+                {
+                    if (ch >= 0xFF00 && ch <= 0xFFFF)
+                        sb.Append(Cp1254.GetString(new[] { (byte)(ch - 0xFF00) }));
+                    else
+                        sb.Append(ch);
+                }
+                return sb.ToString();
+            });
         }
 
         // =====================================================================
@@ -252,10 +384,24 @@ namespace UrbanoMetraj.BoQ.Services
             public string Name           { get; set; }   // AG_NAME  e.g. "4Y"
             public double X              { get; set; }   // easting  (hex-float decoded)
             public double Y              { get; set; }   // northing (hex-float decoded)
-            public double TerrainZ       { get; set; }   // TH1  – absolute terrain elevation
+            public double TerrainZ       { get; set; }   // TH1  – absolute terrain elevation (actually cover-top elevation)
+            public double TerrainZ2      { get; set; }   // TH2  – existing ground elevation; falls back to TH1 when absent
             public double Mhb            { get; set; }   // MHB  – invert-to-floor gap
             public string MhGuid         { get; set; }
             public int    MhDiameter     { get; set; }   // nominal shaft Ø, mm
+            // As-drawn shape (CBS_MANHOLESHAPE / MANHOLE_A / MANHOLE_B on the MH catalog item)
+            public FootprintShape DrawnShape { get; set; } = FootprintShape.Circular;
+            public double DrawnLengthM   { get; set; }
+            public double DrawnWidthM    { get; set; }
+            // Node-level rotation, radians, standard math CCW-from-+X convention
+            // (confirmed 2026-07-06 against a real manually-rotated manhole in
+            // test5.xml). "NR" = explicit manual override (present only when the
+            // user rotated the node by hand in Urbano); "NLR" = the node's current
+            // effective rotation, always present (mirrors NR when set, otherwise
+            // Urbano's own auto-computed value). Null when neither property
+            // exists at all (very old export) — ComputeRotationAngle then falls
+            // back to the bisector-of-connected-pipes heuristic.
+            public double? RotationAngleRad { get; set; }
             // Computed in ComputeManholeDepths
             public double Depth            { get; set; }
             public double ExcavationDepth  { get; set; }   // H = TerrainZ − lowestInvert
@@ -280,6 +426,11 @@ namespace UrbanoMetraj.BoQ.Services
             public double InvertStart     { get; set; }   // LL10 − OD_m
             public double InvertEnd       { get; set; }   // LL11 − OD_m
             public double Length2D        { get; set; }   // √(dX²+dY²)
+            // ── Type Mapping (Phase 5) — from our own PipeCatalog via a linked PipeDefinition ──
+            public string PozNo           { get; set; }
+            public string Sinif           { get; set; }
+            public string Aciklama        { get; set; }
+            public Guid   LinkedPipeFamilyId { get; set; }
             // ── Trench catalog ─────────────────────────────────────────────────
             public double TrWidth         { get; set; }   // TR_WIDTH  (m)
             public double TrBedHeight     { get; set; }   // TR_BEDHEIGHT  (m)
@@ -316,6 +467,11 @@ namespace UrbanoMetraj.BoQ.Services
             public double OverlapExcavDeducted    { get; set; }   // kazı  deduction from trench clash
             public double OverlapBackfillDeducted { get; set; }   // dolgu deduction from trench clash
             public List<string> ClashLog        { get; set; } = new List<string>();
+            // ── Trench layer split ratios (Phase 2b) ───────────────────────────
+            public List<TrenchLayerSplit> BeddingLayerSplits    { get; set; } = new List<TrenchLayerSplit>();
+            public List<TrenchLayerSplit> BoruEtrafiLayerSplits { get; set; } = new List<TrenchLayerSplit>();
+            public List<TrenchLayerSplit> BoruUstuLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
+            public List<TrenchLayerSplit> BackfillLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
         }
 
         // =====================================================================
@@ -342,8 +498,23 @@ namespace UrbanoMetraj.BoQ.Services
                 int    sysId = DecodeIntProp  (GetProp(props, "AG_ID_SYSTEM"));
                 string name  = DecodeStrProp  (GetProp(props, "AG_NAME"));
                 double th1   = DecodeFloatProp(GetProp(props, "TH1"));
+                double th2   = DecodeFloatProp(GetProp(props, "TH2"));
+                if (th2 == 0) th2 = th1;   // TH2 (existing ground) absent from this export — assume same as TH1 (cover-top)
                 double mhb   = DecodeFloatProp(GetProp(props, "MHB"));
                 string mhGuid= DecodeGuidStr  (GetProp(props, "MH"));
+
+                // Node-level rotation — governs manhole square/rectangle orientation.
+                // "NR" (manual override, present only when the user rotated this
+                // specific node by hand) wins; otherwise "NLR" (always present,
+                // Urbano's own current/effective rotation). Both are radians,
+                // standard math CCW-from-+X — confirmed 2026-07-06 against a real
+                // manually-rotated manhole (stored value decoded to exactly 315°).
+                string nrRaw  = GetProp(props, "NR");
+                string nlrRaw = GetProp(props, "NLR");
+                double? rotationAngleRad =
+                    !string.IsNullOrEmpty(nrRaw)  ? DecodeFloatProp(nrRaw) :
+                    !string.IsNullOrEmpty(nlrRaw) ? DecodeFloatProp(nlrRaw) :
+                    (double?)null;
 
                 string rawPos = (string)nEl.Attribute("pos") ?? "";
                 ParsePos(rawPos, out double x, out double y);
@@ -373,13 +544,18 @@ namespace UrbanoMetraj.BoQ.Services
                         Dbg(ed, $"\n  [BoQ-DBG]   [{mi}] = {testMatches[mi].Value}");
                 }
 
-                // Manhole catalog – nominal diameter
+                // Manhole catalog – nominal diameter + as-drawn shape
                 int mhDiam = 0;
+                FootprintShape drawnShape = FootprintShape.Circular;
+                double drawnLengthM = 0, drawnWidthM = 0;
                 if (!string.IsNullOrEmpty(mhGuid))
                 {
                     var mhProps = CatLookup(catDict, mhGuid);
                     if (mhProps != null)
+                    {
                         mhDiam = ExtractManholeNominalDiam(mhProps);
+                        ExtractManholeShape(mhProps, out drawnShape, out drawnLengthM, out drawnWidthM);
+                    }
                 }
 
                 result[guid] = new NodeInfo
@@ -390,9 +566,14 @@ namespace UrbanoMetraj.BoQ.Services
                     X          = x,
                     Y          = y,
                     TerrainZ   = th1,
+                    TerrainZ2  = th2,
                     Mhb        = mhb,
                     MhGuid     = mhGuid,
-                    MhDiameter = mhDiam
+                    MhDiameter = mhDiam,
+                    DrawnShape       = drawnShape,
+                    DrawnLengthM     = drawnLengthM,
+                    DrawnWidthM      = drawnWidthM,
+                    RotationAngleRad = rotationAngleRad
                 };
             }
             return result;
@@ -414,7 +595,7 @@ namespace UrbanoMetraj.BoQ.Services
             var tplMain = FindMainTpl(doc);
             if (tplMain == null) return result;
 
-            bool warnPipe = false, warnTrnc = false;
+            int missingCatalogCount = 0, missingTrenchRuleCount = 0, unlinkedPipeCount = 0;
 
             foreach (var sEl in tplMain.Descendants("ss").Elements("s"))
             {
@@ -433,7 +614,6 @@ namespace UrbanoMetraj.BoQ.Services
                 int llpos = DecodeIntProp(GetProp(props, "LLPOS"));
                 if (llpos == 0) llpos = 8; // default: Alt iç
                 string pprGuid  = DecodeGuidStr(DecodeStrProp(GetProp(props, "PPR")));
-                string trncGuid = DecodeGuidStr(DecodeStrProp(GetProp(props, "TRNC")));
 
                 // ── Pipe catalog ──────────────────────────────────────────────
                 double odMm    = 0;
@@ -462,10 +642,53 @@ namespace UrbanoMetraj.BoQ.Services
                         if (ww.Length > 0) material = ww[ww.Length - 1];
                     }
                 }
-                else if (!warnPipe)
+                else
                 {
-                    notes.Add($"[WARN] Pipe catalog entry not found for GUID '{pprGuid}'.");
-                    warnPipe = true;
+                    missingCatalogCount++;
+                }
+
+                // ── Type Mapping (Phase 5) ──────────────────────────────────────
+                // Pulls PozNo/Sınıf/Açıklama from our own PipeCatalog via a
+                // user-confirmed link (Tür Eşleştirme tab), keyed by the Urbano PPR
+                // GUID. LinkedPipeFamilyId is also kept — ManholeAIService's
+                // Baca-Boru Bağlantı Kuralları resolution
+                // (PipeRangeRule.SelectedPipeFamilyId) needs to know which pipe
+                // family actually connects to each manhole.
+                //
+                // Inner diameter (nomMm above) is the link's own matching key — per
+                // URBANO_ARCHITECTURE_RULES.md, Urbano's "nominal" IS the inner
+                // diameter, and that's what the user matches against when picking a
+                // PipeDefinition in Tür Eşleştirme — so it stays Urbano-sourced,
+                // never overridden. Outer diameter (user directive 2026-07-04),
+                // however, IS overridden from the linked PipeDefinition once
+                // resolved: Urbano's own PIPE_DV/PIPE_DU can be generic/missing,
+                // while our catalog's OuterDiameter is the authoritative value for
+                // the specific class/material the user actually linked to. Wall
+                // thickness is never stored as its own field — every downstream
+                // consumer derives it as (OD − ID)/2 from PipeOuterDiamM/DiameterMm,
+                // so overriding OD alone is sufficient (PipeDefinition.Normalize()
+                // already guarantees OD/ID/WallThickness are geometrically
+                // consistent in our catalog).
+                string linkedPozNo = "", linkedSinif = "", linkedAciklama = "";
+                Guid   linkedPipeFamilyId = Guid.Empty;
+                var pipeLink = TypeMappingStore.FindPipeLink(pprGuid);
+                if (pipeLink != null && pipeLink.LinkedPipeDefinitionId != Guid.Empty)
+                {
+                    var linkedPipe = FindPipeDefinitionById(pipeLink.LinkedPipeDefinitionId, out PipeFamily linkedFamily);
+                    if (linkedPipe != null)
+                    {
+                        linkedPozNo       = linkedPipe.PozNo    ?? "";
+                        linkedSinif       = linkedPipe.Sinif    ?? "";
+                        linkedAciklama    = linkedPipe.Aciklama ?? "";
+                        linkedPipeFamilyId = linkedFamily?.Id ?? Guid.Empty;
+
+                        if (linkedPipe.OuterDiameter > 0)
+                            odMm = linkedPipe.OuterDiameter;
+                    }
+                }
+                else if (!string.IsNullOrEmpty(pprGuid))
+                {
+                    unlinkedPipeCount++;
                 }
 
                 double odM = odMm / 1000.0;
@@ -475,34 +698,8 @@ namespace UrbanoMetraj.BoQ.Services
                 double invertStart = LlToInvert(ll10, llpos, odM, idM);
                 double invertEnd   = LlToInvert(ll11, llpos, odM, idM);
 
-                // ── Trench catalog ────────────────────────────────────────────
-                double trWidth        = 1.0;
-                double trBedHeight    = 0.0;   // TR_BEDHEIGHT    – sand bed below pipe
-                double trSandOverPipe = 0.0;   // TR_SANDOVERPIPE – sand cover above pipe
-                double trAngleL       = 90.0;  // TR_ANGLE-L (°)
-                double trAngleR       = 90.0;  // TR_ANGLE-R (°)
-
-                var trProps = CatLookup(catDict, trncGuid);
-                if (trProps != null)
-                {
-                    double w   = DecodeFloatProp(GetProp(trProps, "TR_WIDTH"));
-                    double bh  = DecodeFloatProp(GetProp(trProps, "TR_BEDHEIGHT"));
-                    double sop = DecodeFloatProp(GetProp(trProps, "TR_SANDOVERPIPE"));
-                    double aL  = DecodeFloatProp(GetProp(trProps, "TR_ANGLE-L"));
-                    double aR  = DecodeFloatProp(GetProp(trProps, "TR_ANGLE-R"));
-                    if (w   > 0) trWidth        = w;
-                    if (bh  > 0) trBedHeight    = bh;
-                    if (sop > 0) trSandOverPipe = sop;
-                    if (aL  > 0) trAngleL       = aL;
-                    if (aR  > 0) trAngleR       = aR;
-                }
-                else if (!warnTrnc && !string.IsNullOrEmpty(trncGuid))
-                {
-                    notes.Add($"[WARN] Trench catalog entry not found for GUID '{trncGuid}'.");
-                    warnTrnc = true;
-                }
-
-                // ── 2-D pipe length ───────────────────────────────────────────
+                // ── 2-D pipe length + node resolution (needed below to pick a
+                //    PipeTrenchCatalog depth tier before the trench block runs) ──
                 NodeInfo snNode = nodes.ContainsKey(snGuid) ? nodes[snGuid] : null;
                 NodeInfo enNode = nodes.ContainsKey(enGuid) ? nodes[enGuid] : null;
 
@@ -512,6 +709,44 @@ namespace UrbanoMetraj.BoQ.Services
                     double dx = enNode.X - snNode.X;
                     double dy = enNode.Y - snNode.Y;
                     len2D = Math.Sqrt(dx * dx + dy * dy);
+                }
+
+                // Depth to invert at each end (terrain − invert). Independent of the
+                // trench catalog's own bed-height output, so it's safe to compute
+                // before resolving the catalog tier (no circularity).
+                double depthToInvS = snNode != null ? Math.Max(0, snNode.TerrainZ - invertStart) : 0;
+                double depthToInvE = enNode != null ? Math.Max(0, enNode.TerrainZ - invertEnd)   : 0;
+
+                // ── Trench catalog (our PipeTrenchCatalog — replaces Urbano's TRNC) ──
+                // Tier is selected by pipe OD band + the DEEPER of the two end depths
+                // (conservative: the whole pipe uses one constant cross-section).
+                double trWidth        = 1.0;
+                double trBedHeight    = 0.0;   // sum of tier's bedding-layer thicknesses
+                double trSandOverPipe = 0.0;   // sum of tier's "boru üstü" Gömlekleme thicknesses
+                double trAngleL       = 90.0;
+                double trAngleR       = 90.0;
+                double slopeRatio     = 0.0;
+
+                // Matching key is the pipe's INNER diameter, not outer — per Urbano's
+                // own convention (URBANO_ARCHITECTURE_RULES.md: "nominal = inner
+                // diameter", PIPE_NO/1000), nomMm already IS the real inner diameter.
+                // The rule's own Min/Max Boru Ø bounds are resolved the same way (via
+                // PipeCatalogStore) before comparing — see ResolveTrenchTier.
+                double selectionDepth = Math.Max(depthToInvS, depthToInvE);
+                var trenchTier = ResolveTrenchTier(nomMm, selectionDepth);
+                if (trenchTier != null)
+                {
+                    trWidth        = odM + 2.0 * trenchTier.TrenchWidthClearanceM;
+                    trBedHeight    = SumLayerThickness(trenchTier.BeddingLayers);
+                    trSandOverPipe = SumGomleklemeThickness(trenchTier.GomleklemeLayers, "boru üstü");
+                    slopeRatio     = trenchTier.SlopeRatio;
+                    trAngleL = trAngleR = slopeRatio > 1e-9
+                        ? Math.Atan(1.0 / slopeRatio) * 180.0 / Math.PI
+                        : 90.0;
+                }
+                else
+                {
+                    missingTrenchRuleCount++;
                 }
 
                 // ── Layer geometry ─────────────────────────────────────────────
@@ -549,10 +784,6 @@ namespace UrbanoMetraj.BoQ.Services
                 //       V_Excav    = avg(A_excav)  × Length2D          (prismatoid)
                 //       V_Backfill = avg(A_backfill) × Length2D        (prismatoid)
 
-                double slopeRatio = (trAngleL > 0 && trAngleL < 90)
-                    ? 1.0 / Math.Tan(trAngleL * Math.PI / 180.0)
-                    : 0.0;   // 90° → vertical wall → no spread
-
                 // ── ① Bedding (constant) ──────────────────────────────────────
                 double topWidthBed   = trWidth + 2.0 * trBedHeight * slopeRatio;
                 double aBed          = (trWidth + topWidthBed) / 2.0 * trBedHeight;
@@ -565,8 +796,62 @@ namespace UrbanoMetraj.BoQ.Services
                 double pipeArea      = Math.PI * Math.Pow(odM / 2.0, 2);
                 double aSurrNet      = Math.Max(0, aSurrGross - pipeArea);
 
+                // ── Trench layer split ratios (Phase 2b) ────────────────────────
+                // Fixed geometric ratios among a tier's sub-layers, from their real
+                // cumulative height within the stack. Skipped (empty list → falls
+                // back to the single combined total) whenever a layer's true height
+                // isn't resolvable as a tier-level constant (a fill-to-surface layer
+                // present — its real thickness varies per node/station).
+                var beddingSplits    = new List<TrenchLayerSplit>();
+                var boruEtrafiSplits = new List<TrenchLayerSplit>();
+                var boruUstuSplits   = new List<TrenchLayerSplit>();
+                var backfillSplits   = new List<TrenchLayerSplit>();
+
+                if (trenchTier != null)
+                {
+                    if (trenchTier.BeddingLayers.Count > 0)
+                    {
+                        if (trenchTier.BeddingLayers.Any(l => l.IsFillToSurface))
+                            notes.Add("[WARN] Yataklama layer breakdown skipped (a fill-to-surface layer is configured) — reporting combined total only.");
+                        else
+                            beddingSplits = ComputeLayerRatios(
+                                trenchTier.BeddingLayers.Select(l => (l.LayerName, l.MaterialType, l.ThicknessM)).ToList(),
+                                trWidth, slopeRatio);
+                    }
+
+                    // Boru Etrafı — spans exactly the pipe OD; a layer with
+                    // IsUpToPipeTop=true fills whatever remains up to OD (first match only).
+                    var etrafiRaw = trenchTier.GomleklemeLayers.Where(l => l.Position == "boru etrafı").ToList();
+                    if (etrafiRaw.Count > 0)
+                    {
+                        double fixedSum = etrafiRaw.Where(l => !l.IsUpToPipeTop).Sum(l => l.ThicknessM);
+                        bool filled = false;
+                        var etrafiInputs = new List<(string, string, double)>();
+                        foreach (var l in etrafiRaw)
+                        {
+                            double th = l.ThicknessM;
+                            if (l.IsUpToPipeTop)
+                            {
+                                th = filled ? 0.0 : Math.Max(0, odM - fixedSum);
+                                filled = true;
+                            }
+                            etrafiInputs.Add((l.LayerName, l.MaterialType, th));
+                        }
+                        boruEtrafiSplits = ComputeLayerRatios(etrafiInputs, topWidthBed, slopeRatio);
+                    }
+
+                    // Boru Üstü — fixed thicknesses only, starts where the OD band ends.
+                    var ustuRaw = trenchTier.GomleklemeLayers.Where(l => l.Position == "boru üstü").ToList();
+                    if (ustuRaw.Count > 0)
+                        boruUstuSplits = ComputeLayerRatios(
+                            ustuRaw.Select(l => (l.LayerName, l.MaterialType, l.ThicknessM)).ToList(),
+                            topWidthBed, slopeRatio, odM);
+                }
+                // Geri Dolgu splits are computed further below, after the per-end
+                // TrueDepth values exist — its total height is not tier-constant.
+
                 // ── ③ + ④ Excavation & Backfill (variable per end) ────────────
-                double depthToInvS = 0, depthToInvE = 0;
+                // depthToInvS/E were already computed above (used to pick the trench tier).
                 double trueDeptS   = 0, trueDeptE   = 0;
                 double topWExcavS  = 0, topWExcavE  = 0;
                 double aExcavS     = 0, aExcavE     = 0;
@@ -575,9 +860,6 @@ namespace UrbanoMetraj.BoQ.Services
 
                 if (snNode != null && enNode != null && len2D > 0)
                 {
-                    depthToInvS = Math.Max(0, snNode.TerrainZ - invertStart);
-                    depthToInvE = Math.Max(0, enNode.TerrainZ - invertEnd);
-
                     trueDeptS = depthToInvS + trBedHeight;
                     trueDeptE = depthToInvE + trBedHeight;
 
@@ -592,6 +874,40 @@ namespace UrbanoMetraj.BoQ.Services
 
                     excavVol  = (aExcavS   + aExcavE)   * 0.5 * len2D;
                     vBackfill = (aBackfillS + aBackfillE) * 0.5 * len2D;
+
+                    // ── Geri Dolgu layer split (Phase 2b, revised) ────────────────
+                    // Total Geri Dolgu height genuinely varies per station (terrain-
+                    // dependent), unlike Yataklama/Gömlekleme. Representative height
+                    // for RATIO purposes only = average of the two ends' nominal
+                    // (pre-clash) backfill heights. A layer with IsFillToSurface=true
+                    // absorbs whatever remains between the fixed layers listed before
+                    // it (measured bottom-up) and the fixed layers listed after it
+                    // (measured from this representative top downward) — bottom-up
+                    // catalog order is preserved, so feeding the whole resolved list
+                    // through ComputeLayerRatios reconstructs every layer's real
+                    // position automatically, fill row included.
+                    if (trenchTier != null && trenchTier.BackfillLayers.Count > 0)
+                    {
+                        double hBackS = Math.Max(0, trueDeptS - trBedHeight - hSurround);
+                        double hBackE = Math.Max(0, trueDeptE - trBedHeight - hSurround);
+                        double hBackAvg = (hBackS + hBackE) / 2.0;
+
+                        double fixedSum = trenchTier.BackfillLayers
+                            .Where(l => !l.IsFillToSurface).Sum(l => l.ThicknessM);
+                        bool filled = false;
+                        var backfillInputs = new List<(string, string, double)>();
+                        foreach (var l in trenchTier.BackfillLayers)
+                        {
+                            double th = l.ThicknessM;
+                            if (l.IsFillToSurface)
+                            {
+                                th = filled ? 0.0 : Math.Max(0, hBackAvg - fixedSum);
+                                filled = true;
+                            }
+                            backfillInputs.Add((l.LayerName, l.MaterialType, th));
+                        }
+                        backfillSplits = ComputeLayerRatios(backfillInputs, topWidthSurr, slopeRatio);
+                    }
                 }
 
                 double vBedding  = aBed    * len2D;
@@ -610,6 +926,10 @@ namespace UrbanoMetraj.BoQ.Services
                     PipeOuterDiamM   = odM,
                     NominalDiamMm    = nomMm,
                     Material         = material,
+                    PozNo            = linkedPozNo,
+                    Sinif            = linkedSinif,
+                    Aciklama         = linkedAciklama,
+                    LinkedPipeFamilyId = linkedPipeFamilyId,
                     InvertStart      = invertStart,
                     InvertEnd        = invertEnd,
                     Length2D         = len2D,
@@ -644,9 +964,145 @@ namespace UrbanoMetraj.BoQ.Services
                     VBedding         = vBedding,
                     VSurround        = vSurround,
                     ExcavVol         = excavVol,
-                    VBackfill        = vBackfill
+                    VBackfill        = vBackfill,
+                    // trench layer split ratios
+                    BeddingLayerSplits    = beddingSplits,
+                    BoruEtrafiLayerSplits = boruEtrafiSplits,
+                    BoruUstuLayerSplits   = boruUstuSplits,
+                    BackfillLayerSplits   = backfillSplits
                 });
             }
+
+            if (missingCatalogCount > 0)
+                notes.Add($"[WARN] {missingCatalogCount} boru kesiti için Urbano katalog kaydı bulunamadı.");
+            if (missingTrenchRuleCount > 0)
+                notes.Add($"[WARN] {missingTrenchRuleCount} boru kesiti için Hendek Kataloğu kuralı bulunamadı — varsayılan hendek boyutları kullanıldı.");
+            if (unlinkedPipeCount > 0)
+                notes.Add($"[WARN] {unlinkedPipeCount} boru kesiti Tür Eşleştirme'de bağlı değil — Poz No/Sınıf boş kalacak ve bağlı bacalar çap/malzeme listesini çözemeyebilir.");
+
+            return result;
+        }
+
+        // =====================================================================
+        // PipeTrenchCatalog resolution helpers (Phase 2a — replaces Urbano TRNC)
+        // =====================================================================
+
+        // Finds the depth tier for a pipe INNER diameter (mm) + selection depth (m):
+        // first rule whose diameter band contains pipeIdMm, then first tier whose
+        // depth band contains depthM. MaxPipeDiameterMm/MaxDepthM == 0 means unlimited.
+        private static PipeTrenchDepthTier ResolveTrenchTier(double pipeIdMm, double depthM)
+        {
+            foreach (var rule in PipeTrenchCatalogStore.Current)
+            {
+                double minBoundId = ResolveInnerDiameterBound(rule.MinPipeDiameterMm, rule.SelectedFamilyNames);
+                double maxBoundId = rule.MaxPipeDiameterMm <= 0 ? 0
+                    : ResolveInnerDiameterBound(rule.MaxPipeDiameterMm, rule.SelectedFamilyNames);
+
+                bool minOk = pipeIdMm >= minBoundId;
+                bool maxOk = maxBoundId <= 0 || pipeIdMm <= maxBoundId;
+                if (!minOk || !maxOk) continue;
+
+                foreach (var tier in rule.DepthTiers)
+                {
+                    bool dMinOk = depthM >= tier.MinDepthM;
+                    bool dMaxOk = tier.MaxDepthM <= 0 || depthM <= tier.MaxDepthM;
+                    if (dMinOk && dMaxOk) return tier;
+                }
+            }
+            return null;
+        }
+
+        // Resolves a rule's Min/Max Boru Ø boundary (a nominal-diameter value copied
+        // from the PipeCatalog dropdown) to that pipe's REAL inner diameter, by
+        // looking it up in PipeCatalogStore scoped to the rule's own family filter.
+        // Falls back to the raw boundary value unchanged when no matching
+        // PipeDefinition is found, or when the family filter is empty and multiple
+        // families could ambiguously share the same nominal value — resolving that
+        // specific ambiguity is deferred to the Urbano-catalog-family linking phase
+        // (user directive 2026-07-03: not needed until families are actually linked).
+        private static double ResolveInnerDiameterBound(double nominalBoundaryMm, List<string> familyNames)
+        {
+            if (nominalBoundaryMm <= 0) return nominalBoundaryMm;
+
+            var catalog = PipeCatalogStore.Current;
+            if (catalog?.Families == null) return nominalBoundaryMm;
+
+            bool hasFilter = familyNames != null && familyNames.Count > 0;
+            foreach (var fam in catalog.Families)
+            {
+                if (hasFilter && !familyNames.Contains(fam.FamilyName, StringComparer.OrdinalIgnoreCase))
+                    continue;
+                foreach (var pipe in fam.Pipes ?? Enumerable.Empty<PipeDefinition>())
+                    if (Math.Abs(pipe.NominalDiameter - nominalBoundaryMm) < 1e-6)
+                        return pipe.InnerDiameter > 0 ? pipe.InnerDiameter : nominalBoundaryMm;
+            }
+            return nominalBoundaryMm;
+        }
+
+        // Looks up a specific PipeDefinition by Id across every family in
+        // PipeCatalogStore.Current — used to resolve a Type Mapping pipe link.
+        // Also returns the owning family (ManholeAIService's PipeRangeRule
+        // resolution scopes its search by this family).
+        private static PipeDefinition FindPipeDefinitionById(Guid id, out PipeFamily family)
+        {
+            family = null;
+            var catalog = PipeCatalogStore.Current;
+            if (catalog?.Families == null) return null;
+            foreach (var fam in catalog.Families)
+            {
+                var p = fam.Pipes?.FirstOrDefault(x => x.Id == id);
+                if (p != null) { family = fam; return p; }
+            }
+            return null;
+        }
+
+        private static double SumLayerThickness(IEnumerable<TrenchLayer> layers)
+        {
+            double sum = 0;
+            foreach (var l in layers) sum += l.ThicknessM;
+            return sum;
+        }
+
+        private static double SumGomleklemeThickness(IEnumerable<GomleklemeLayer> layers, string position)
+        {
+            double sum = 0;
+            foreach (var l in layers)
+                if (string.Equals(l.Position, position, StringComparison.OrdinalIgnoreCase))
+                    sum += l.ThicknessM;
+            return sum;
+        }
+
+        // Fixed area-ratio split among a bottom-up ordered list of sub-layers,
+        // using each layer's REAL cumulative height within the stack (not an
+        // isolated slice from zero) — W(h) = baseWidthAtHZero + 2×h×slopeRatio.
+        // startHeightOffset lets a group (e.g. Boru Üstü) start its stacking
+        // above another group (e.g. Boru Etrafı) while sharing the same base
+        // width reference. Ratio only — callers multiply by the group's own
+        // final resolved volume; this never computes a volume itself.
+        private static List<TrenchLayerSplit> ComputeLayerRatios(
+            List<(string Name, string Material, double Thickness)> layersBottomUp,
+            double baseWidthAtHZero, double slopeRatio, double startHeightOffset = 0.0)
+        {
+            var areas = new List<double>();
+            double h = startHeightOffset;
+            foreach (var l in layersBottomUp)
+            {
+                double wStart = baseWidthAtHZero + 2.0 * h * slopeRatio;
+                double hEnd   = h + l.Thickness;
+                double wEnd   = baseWidthAtHZero + 2.0 * hEnd * slopeRatio;
+                areas.Add((wStart + wEnd) / 2.0 * l.Thickness);
+                h = hEnd;
+            }
+
+            double total = areas.Sum();
+            var result = new List<TrenchLayerSplit>();
+            for (int i = 0; i < layersBottomUp.Count; i++)
+                result.Add(new TrenchLayerSplit
+                {
+                    LayerName    = layersBottomUp[i].Name,
+                    MaterialType = layersBottomUp[i].Material,
+                    Ratio        = total > 1e-12 ? areas[i] / total : 0.0
+                });
             return result;
         }
 
@@ -662,58 +1118,62 @@ namespace UrbanoMetraj.BoQ.Services
             foreach (var n in nodes.Values)
                 n.Depth = 0;
 
-            // Collect pipe-invert elevations that arrive at each node
-            var invertsByNode = new Dictionary<string, List<double>>(
+            // Collect pipe-invert elevations (with each pipe's own wall thickness)
+            // that arrive at each node.
+            var invertsByNode = new Dictionary<string, List<(double Invert, double WallM)>>(
                 StringComparer.OrdinalIgnoreCase);
 
             foreach (var sec in sections)
             {
-                AddInvert(invertsByNode, sec.SnGuid, sec.InvertStart);
-                AddInvert(invertsByNode, sec.EnGuid, sec.InvertEnd);
+                // Wall thickness = (outer diam − inner/nominal diam) / 2, same
+                // formula used everywhere else in this codebase for pipe wall.
+                double wallM = Math.Max(0, (sec.PipeOuterDiamM - sec.NominalDiamMm / 1000.0) / 2.0);
+                AddInvert(invertsByNode, sec.SnGuid, sec.InvertStart, wallM);
+                AddInvert(invertsByNode, sec.EnGuid, sec.InvertEnd, wallM);
             }
 
-            // Depth = ( TH1 − lowest_invert ) + MHB
+            // Structural depth (to the manhole's own floor) = ( TH1 − lowest_invert ) + MHB
             //       ≡ Sirt_Derinligi + Outer_Diameter + MHB
+            // MHB is already invert-referenced ("gap between lowest pipe invert and
+            // manhole floor"), so no wall-thickness term belongs here.
             foreach (var nd in nodes.Values)
             {
                 if (!invertsByNode.ContainsKey(nd.Guid) ||
                     invertsByNode[nd.Guid].Count == 0)
                     continue;
 
-                double lowestInvert = invertsByNode[nd.Guid].Min();
+                var lowest        = invertsByNode[nd.Guid].OrderBy(x => x.Invert).First();
+                double lowestInvert  = lowest.Invert;
+                double lowestWallM   = lowest.WallM;
                 nd.Depth = Math.Max(0, (nd.TerrainZ - lowestInvert) + nd.Mhb);
 
-                // Isolated manhole excavation — no trench overlap deduction yet.
-                // Base square side = 1.0m (shaft) + 0.5m + 0.5m (working space) = 2.0m.
-                // Slope 1H:3V → each side grows by h/3 per metre of rise on each face.
-                // Side(h) = 2.0 + 2*(h/3);  A(h) = Side²
-                // Volume by Simpson's 1/3: V = (H/6)*(A_bot + 4*A_mid + A_top)
-                double excavH = Math.Max(0, nd.TerrainZ - lowestInvert);
-                nd.ExcavationDepth = excavH;
-                if (excavH > 1e-6)
-                {
-                    double sideBot = 2.0;
-                    double sideMid = 2.0 + 2.0 * (excavH * 0.5) / 3.0;
-                    double sideTop = 2.0 + 2.0 * excavH / 3.0;
-                    double aBot = sideBot * sideBot;
-                    double aMid = sideMid * sideMid;
-                    double aTop = sideTop * sideTop;
-                    nd.ExcavationVolume = (excavH / 6.0) * (aBot + 4.0 * aMid + aTop);
-                }
+                // Raw excavation depth baseline (user directive 2026-07-05): the pit
+                // must clear the lowest connected pipe's own BODY, not just its
+                // invert (flow line) — so add that pipe's wall thickness on top of
+                // the structural depth. The catalog-driven final depth (+ Taban slab
+                // thickness + Alt Temel Katmanları) and the actual pit VOLUME are
+                // computed later in ManholeAIService.ProcessManhole, once the Taban
+                // component is resolved (needed for TabanKalinligiMm and to look up
+                // the matching ManholeExcavationRule/DepthTier) — this can't happen
+                // here since Taban resolution runs long after Parse(). Volume stays 0
+                // until then; ExcavationDepth stays at this raw value if resolution
+                // ends up failing (explicit-failure convention, not a silent guess).
+                nd.ExcavationDepth  = nd.Depth + lowestWallM;
+                nd.ExcavationVolume = 0;
 
                 Dbg(ed, $"\n  [BoQ-DBG] Node {nd.Name,-4}: " +
                         $"TH1={nd.TerrainZ:F3}  lowestInv={lowestInvert:F3}" +
-                        $"  MHB={nd.Mhb:F3}  Depth={nd.Depth:F3}" +
-                        $"  MhExcavV={nd.ExcavationVolume:F3}");
+                        $"  wallM={lowestWallM:F3}  MHB={nd.Mhb:F3}  Depth={nd.Depth:F3}");
             }
         }
 
         private static void AddInvert(
-            Dictionary<string, List<double>> dict, string guid, double invert)
+            Dictionary<string, List<(double Invert, double WallM)>> dict,
+            string guid, double invert, double wallM)
         {
             if (string.IsNullOrEmpty(guid)) return;
-            if (!dict.ContainsKey(guid)) dict[guid] = new List<double>();
-            dict[guid].Add(invert);
+            if (!dict.ContainsKey(guid)) dict[guid] = new List<(double, double)>();
+            dict[guid].Add((invert, wallM));
         }
 
         // =====================================================================
@@ -750,6 +1210,10 @@ namespace UrbanoMetraj.BoQ.Services
                     EndNodeGuid           = sec.EnGuid,
                     DiameterMm            = sec.NominalDiamMm,
                     Material              = sec.Material,
+                    PozNo                 = sec.PozNo,
+                    Sinif                 = sec.Sinif,
+                    Aciklama              = sec.Aciklama,
+                    LinkedPipeFamilyId    = sec.LinkedPipeFamilyId,
                     PipeOuterDiamM        = sec.PipeOuterDiamM,
                     Length2D              = sec.Length2D,
                     StartX                = snNode?.X ?? 0,
@@ -789,7 +1253,13 @@ namespace UrbanoMetraj.BoQ.Services
                     VExcav                = sec.ExcavVol,
                     VBackfill             = sec.VBackfill,
                     OverlapExcavDeducted    = 0,
-                    OverlapBackfillDeducted = 0
+                    OverlapBackfillDeducted = 0,
+                    // trench layer split ratios (Volume filled in later by
+                    // BoQScenarioAggregator once the final post-clash totals exist)
+                    BeddingLayerSplits    = sec.BeddingLayerSplits,
+                    BoruEtrafiLayerSplits = sec.BoruEtrafiLayerSplits,
+                    BoruUstuLayerSplits   = sec.BoruUstuLayerSplits,
+                    BackfillLayerSplits   = sec.BackfillLayerSplits
                 };
                 sdrs.Add(sdr);
                 report.SectionDebug.Add(sdr);
@@ -878,11 +1348,17 @@ namespace UrbanoMetraj.BoQ.Services
                         X                 = nd.X,
                         Y                 = nd.Y,
                         TerrainElevation  = nd.TerrainZ,
+                        ExistingGroundElevation = nd.TerrainZ2,
                         Depth             = nd.Depth,
                         Diameter          = nd.MhDiameter,
+                        MhGuid            = nd.MhGuid,
                         Count             = 1,
                         ExcavationDepth   = nd.ExcavationDepth,
                         ExcavationVolume  = nd.ExcavationVolume,
+                        DrawnShape        = nd.DrawnShape,
+                        DrawnLengthM      = nd.DrawnLengthM,
+                        DrawnWidthM       = nd.DrawnWidthM,
+                        RotationAngleRad  = nd.RotationAngleRad,
                     });
                 }
 
@@ -1677,6 +2153,53 @@ namespace UrbanoMetraj.BoQ.Services
                 return v;
 
             return 0;
+        }
+
+        /// <summary>
+        /// Extract the as-drawn shape of a manhole from its MANHOLE catalog item.
+        /// CBS_MANHOLESHAPE is a choice-list property: "Dairesel" (circular, the
+        /// default) uses MANHOLE_D1/D2; "Dörtgen" (rectangular — Urbano has no
+        /// separate "square" choice) uses MANHOLE_A/MANHOLE_B (metres). Per the
+        /// confirmed project rule: when A≈B, treat it as Square rather than
+        /// Rectangular (there being no distinct Urbano value for it).
+        /// </summary>
+        /// <summary>
+        /// MANHOLE_A/MANHOLE_B are the OUTER box dimensions, but our own catalog's
+        /// Square/Rectangular Footprint (SideMm/LengthMm/WidthMm) is defined as the
+        /// clear INNER opening (confirmed 2026-07-06: a real "Izgara Precast" family
+        /// component is a 600mm-inner grate, while Urbano's matching drawn item
+        /// reports A=B=800mm outer — comparing outer-to-inner always failed).
+        /// Urbano's own catalog editor shows the wall thickness alongside A/B as
+        /// "Kalınlık s1/s2/s3 [m]" (MANHOLE_s1/s2/s3); per user confirmation the
+        /// inner dimension is simply outer − 2×s1 (800 − 2×0.1 = 600, matches
+        /// exactly). Falls back to the raw outer A/B (no correction) when s1 is
+        /// absent — never invents a thickness.
+        /// </summary>
+        private static void ExtractManholeShape(
+            Dictionary<string, string> mhProps,
+            out FootprintShape shape, out double lengthM, out double widthM)
+        {
+            shape = FootprintShape.Circular;
+            lengthM = 0; widthM = 0;
+
+            string shapeRaw = DecodeEscapedTurkishString(
+                DecodeStrProp(GetProp(mhProps, "CBS_MANHOLESHAPE")));
+            if (string.IsNullOrEmpty(shapeRaw) ||
+                shapeRaw.IndexOf("rtgen", StringComparison.OrdinalIgnoreCase) < 0)
+                return;   // "Dairesel" or absent → stays Circular
+
+            double outerA = DecodeFloatProp(GetProp(mhProps, "MANHOLE_A"));
+            double outerB = DecodeFloatProp(GetProp(mhProps, "MANHOLE_B"));
+            if (outerA <= 0 || outerB <= 0) return;   // no usable dimensions → stays Circular
+
+            double wallM = DecodeFloatProp(GetProp(mhProps, "MANHOLE_s1"));
+            double a = outerA - 2.0 * wallM;
+            double b = outerB - 2.0 * wallM;
+            if (a <= 0 || b <= 0) { a = outerA; b = outerB; }   // corrected value nonsensical → fall back to outer, uncorrected
+
+            lengthM = a;
+            widthM  = b;
+            shape = Math.Abs(a - b) < 1e-6 ? FootprintShape.Square : FootprintShape.Rectangular;
         }
 
         // ── Geometry ─────────────────────────────────────────────────────────

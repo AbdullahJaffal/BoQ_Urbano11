@@ -69,7 +69,8 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.Services
 
                     foreach (var sb in tier.SubBaseLayers)
                         tierEl.Add(new XElement("SubBase",
-                            new XAttribute("layerName", sb.LayerName ?? ""),
+                            new XAttribute("layerName", sb.LayerName    ?? ""),
+                            new XAttribute("material",  sb.MaterialType ?? ""),
                             new XAttribute("thickMm",   sb.ThicknessMm.ToString("G"))));
 
                     foreach (var bf in tier.BackfillLayers)
@@ -138,8 +139,9 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.Services
                     foreach (var sbEl in tierEl.Elements("SubBase"))
                         tier.SubBaseLayers.Add(new SubBaseLayer
                         {
-                            LayerName   = (string)sbEl.Attribute("layerName") ?? "",
-                            ThicknessMm = ParseDouble((string)sbEl.Attribute("thickMm"))
+                            LayerName    = (string)sbEl.Attribute("layerName") ?? "",
+                            MaterialType = (string)sbEl.Attribute("material")  ?? "",
+                            ThicknessMm  = ParseDouble((string)sbEl.Attribute("thickMm"))
                         });
 
                     foreach (var bfEl in tierEl.Elements("Backfill"))

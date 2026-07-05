@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using Autodesk.AutoCAD.DatabaseServices;
+using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models;
 using UrbanoMetraj.BoQ.Models;
 
 namespace UrbanoMetraj.BoQ.Services
@@ -55,6 +56,7 @@ namespace UrbanoMetraj.BoQ.Services
         private const string K_SC_5050        = "SCENARIO_50_50";
         private const string K_MANHOLE_STACKS = "MANHOLE_STACKS";
         private const string K_V2_VOLUMES    = "V2_VOLUMES";
+        private const string K_LAYER_SPLITS  = "LAYER_SPLITS";  // Phase 2b — PipeTrenchCatalog per-sub-layer ratios
 
         // Sub-container that holds all pipe-network data.
         // Other stores (ManholeCatalogStore, ManholeAssignStore) write under
@@ -88,7 +90,7 @@ namespace UrbanoMetraj.BoQ.Services
                     // Keys owned by OTHER stores — never touch these.
                     var preserve = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                     {
-                        "KATALOGLAR", "MANHOLES_CATALOG", "MANHOLE_ASSIGNMENTS"
+                        "KATALOGLAR", "MANHOLES_CATALOG", "MANHOLE_ASSIGNMENTS", "TYPE_MAPPING"
                     };
 
                     // Collect every direct child that is NOT preserved: META + AGLAR
@@ -151,6 +153,7 @@ namespace UrbanoMetraj.BoQ.Services
                         WritePipeMetadata(tr, pipeDict, sdr, netName);
                         if (sdr.HasV2Volumes)
                             WriteV2Volumes(tr, pipeDict, sdr);
+                        WriteLayerSplits(tr, pipeDict, sdr);
 
                         foreach (var st in sdr.Stations ?? new List<CrossSectionStation>())
                         {
@@ -290,6 +293,7 @@ namespace UrbanoMetraj.BoQ.Services
                         var sdr = ReadPipeMetadata(tr, pipeDict);
                         sdr.SystemName = netName;   // keep grouping key consistent with the system
                         ReadV2Volumes(tr, pipeDict, sdr);
+                        ReadLayerSplits(tr, pipeDict, sdr);
 
                         foreach (DBDictionaryEntry staEntry in pipeDict)
                         {
@@ -360,6 +364,65 @@ namespace UrbanoMetraj.BoQ.Services
                 tvs.Add(Dbl(m.TerrainElevation)); tvs.Add(Dbl(m.Depth));
                 tvs.Add(I32(m.Diameter));
             }
+            // Appended AFTER the fixed-shape repeated group (not interleaved) so old
+            // DWGs stay positionally readable — one MhGuid per manhole, same order.
+            foreach (var m in mhs) tvs.Add(Str(m.MhGuid ?? ""));
+
+            // Appended AFTER the MhGuid block (same reasoning) — AI/excavation fields
+            // that were computed during Process() but previously never persisted, so a
+            // Load()-only command (no re-run of ManholeAIService) can still read them.
+            foreach (var m in mhs)
+            {
+                tvs.Add(Dbl(m.ExistingGroundElevation));
+                tvs.Add(Dbl(m.ExcavationDepth));
+                tvs.Add(Dbl(m.ExcavationVolume));
+                tvs.Add(I32(m.ValidInletCount));
+                tvs.Add(I32(m.ValidOutletCount));
+                tvs.Add(I16(m.HasDropPipe ? (short)1 : (short)0));
+            }
+
+            // Appended AFTER the AI/excavation block (Phase 7) — ExcavBaseSideM/
+            // ExcavSlopeRatio are required inputs for ManholeExcavOverlapService's
+            // ManholeSquareAt to build ANY polygon at all; without persisting them,
+            // reopening the results dialog (URBANO_BOQ_VIEW → DwgBoQStore.Load, which
+            // re-runs ManholeExcavOverlapService.Compute but NOT ManholeAIService.Process)
+            // would silently recompute every manhole-vs-pipe overlap as zero.
+            foreach (var m in mhs)
+            {
+                tvs.Add(Dbl(m.ExcavWorkingClearanceM));
+                tvs.Add(Dbl(m.ExcavSlopeRatio));
+                tvs.Add(Dbl(m.ExcavBaseSideM));
+            }
+
+            // Appended AFTER that (Phase 7) — the matched tier's Geri Dolgu layers,
+            // needed by the same reload path so SplitManholeBackfillLayers can
+            // rebuild BackfillLayerSplits instead of finding an empty list.
+            foreach (var m in mhs)
+            {
+                var layers = m.ResolvedBackfillLayers ?? new List<ManholeBackfillLayer>();
+                tvs.Add(I32(layers.Count));
+                foreach (var l in layers)
+                {
+                    tvs.Add(Str(l.LayerName ?? ""));
+                    tvs.Add(Str(l.MaterialType ?? ""));
+                    tvs.Add(Dbl(l.ThicknessM));
+                    tvs.Add(I16(l.IsFillToSurface ? (short)1 : (short)0));
+                }
+            }
+
+            // Appended AFTER the backfill-layers block — Urbano's own node
+            // rotation (radians, "NR"/"NLR"), needed on the reload path
+            // (URBANO_BOQ_VIEW re-runs ManholeExcavOverlapService.Compute but not
+            // BoQParserService.Parse) so ComputeRotationAngle can still use it
+            // directly instead of silently falling back to the bisector
+            // heuristic. Presence flag written separately since 0.0 is itself a
+            // valid angle (can't reuse it as a "missing" sentinel).
+            foreach (var m in mhs)
+            {
+                tvs.Add(I16(m.RotationAngleRad.HasValue ? (short)1 : (short)0));
+                tvs.Add(Dbl(m.RotationAngleRad ?? 0.0));
+            }
+
             MakeXRecord(tr, netDict, K_NETWORK_META, tvs.ToArray());
         }
 
@@ -387,6 +450,62 @@ namespace UrbanoMetraj.BoQ.Services
                     Diameter         = ReadI32(tvs, ref i)
                 });
             }
+            // Trailing MhGuid block (absent in old DWGs — ReadStr gracefully
+            // returns "" past the end of tvs, so each manhole just stays unlinked).
+            foreach (var m in sys.Manholes) m.MhGuid = ReadStr(tvs, ref i);
+
+            // Trailing AI/excavation block (absent in old DWGs — Read* gracefully
+            // return 0/false past the end of tvs).
+            foreach (var m in sys.Manholes)
+            {
+                m.ExistingGroundElevation = ReadDbl(tvs, ref i);
+                m.ExcavationDepth         = ReadDbl(tvs, ref i);
+                m.ExcavationVolume        = ReadDbl(tvs, ref i);
+                m.ValidInletCount         = ReadI32(tvs, ref i);
+                m.ValidOutletCount        = ReadI32(tvs, ref i);
+                m.HasDropPipe             = ReadI16(tvs, ref i) != 0;
+            }
+
+            // Trailing Phase 7 excavation-geometry block (absent in old DWGs —
+            // Read* gracefully return 0, meaning ManholeExcavOverlapService just
+            // computes zero overlap for that manhole, same as an unresolved one).
+            foreach (var m in sys.Manholes)
+            {
+                m.ExcavWorkingClearanceM = ReadDbl(tvs, ref i);
+                m.ExcavSlopeRatio        = ReadDbl(tvs, ref i);
+                m.ExcavBaseSideM         = ReadDbl(tvs, ref i);
+            }
+
+            // Trailing Phase 7 backfill-layers block (absent in old DWGs — count
+            // reads as 0 past the end of tvs, so the loop below is simply skipped).
+            foreach (var m in sys.Manholes)
+            {
+                int layerCount = ReadI32(tvs, ref i);
+                var layers = new List<ManholeBackfillLayer>(layerCount);
+                for (int p = 0; p < layerCount && i < tvs.Length; p++)
+                {
+                    layers.Add(new ManholeBackfillLayer
+                    {
+                        LayerName       = ReadStr(tvs, ref i),
+                        MaterialType    = ReadStr(tvs, ref i),
+                        ThicknessM      = ReadDbl(tvs, ref i),
+                        IsFillToSurface = ReadI16(tvs, ref i) == 1
+                    });
+                }
+                m.ResolvedBackfillLayers = layers;
+            }
+
+            // Trailing rotation-angle block (absent in old DWGs — ReadI16/ReadDbl
+            // gracefully return 0 past the end of tvs, so the "has value" flag
+            // reads false and RotationAngleRad stays null — ComputeRotationAngle
+            // then falls back to its bisector heuristic exactly as before).
+            foreach (var m in sys.Manholes)
+            {
+                bool hasAngle = ReadI16(tvs, ref i) == 1;
+                double angle  = ReadDbl(tvs, ref i);
+                m.RotationAngleRad = hasAngle ? angle : (double?)null;
+            }
+
             return sys;
         }
 
@@ -424,6 +543,26 @@ namespace UrbanoMetraj.BoQ.Services
                     tvs.Add(Dbl(m.StackCastInPlace.ConcreteDepth));
             }
 
+            // Trailing block (absent in old DWGs — Read* gracefully return ""/0
+            // past the end of tvs): PozNo/Aciklama/UnitMaterialVolume/
+            // UnitExternalVolume per pre-cast part, in the exact same
+            // manhole/part order as the main loop above (only manholes with a
+            // stack, only their real part count). These 4 fields were added to
+            // StackedPart after this method was first written and never wired
+            // in here — they silently vanished on every DWG save/load
+            // round-trip even though ManholeAIService computed them correctly.
+            foreach (var m in mhs)
+            {
+                if (m.StackPreCast?.Parts == null) continue;
+                foreach (var p in m.StackPreCast.Parts)
+                {
+                    tvs.Add(Str(p.PozNo ?? ""));
+                    tvs.Add(Str(p.Aciklama ?? ""));
+                    tvs.Add(Dbl(p.UnitMaterialVolume));
+                    tvs.Add(Dbl(p.UnitExternalVolume));
+                }
+            }
+
             MakeXRecord(tr, netDict, K_MANHOLE_STACKS, tvs.ToArray());
         }
 
@@ -439,6 +578,12 @@ namespace UrbanoMetraj.BoQ.Services
 
             int i = 0;
             int count = ReadI32(tvs, ref i);
+
+            // Manholes with a pre-cast stack, in read order — lets the trailing
+            // PozNo/Aciklama/volume block (added after this method's original
+            // 4-field-per-part shape) be matched back up positionally, same
+            // manhole/part order as the write side.
+            var pcOrder = new List<ManholeItem>();
 
             for (int k = 0; k < count && i < tvs.Length; k++)
             {
@@ -463,6 +608,7 @@ namespace UrbanoMetraj.BoQ.Services
                         });
                     }
                     if (mh != null)
+                    {
                         mh.StackPreCast = new ManholeStackResult
                         {
                             NominalDiameter = mh.Diameter,
@@ -470,6 +616,8 @@ namespace UrbanoMetraj.BoQ.Services
                             ResidualM       = residual,
                             Parts           = parts
                         };
+                        pcOrder.Add(mh);
+                    }
                 }
 
                 // CastInPlace
@@ -486,6 +634,18 @@ namespace UrbanoMetraj.BoQ.Services
                         };
                 }
             }
+
+            // Trailing PozNo/Aciklama/volume block (absent in old DWGs — Read*
+            // gracefully return ""/0 past the end of tvs, so parts just stay
+            // blank/zero exactly as before this fix).
+            foreach (var mh in pcOrder)
+                foreach (var p in mh.StackPreCast.Parts)
+                {
+                    p.PozNo              = ReadStr(tvs, ref i);
+                    p.Aciklama           = ReadStr(tvs, ref i);
+                    p.UnitMaterialVolume = ReadDbl(tvs, ref i);
+                    p.UnitExternalVolume = ReadDbl(tvs, ref i);
+                }
         }
 
         private static void WritePipeMetadata(
@@ -512,6 +672,11 @@ namespace UrbanoMetraj.BoQ.Services
                 s.TrueDepthStart, s.TrueDepthEnd, s.TopWidthExcavS, s.TopWidthExcavE,
                 s.AExcavStart, s.AExcavEnd, s.ABackfillStart, s.ABackfillEnd,
             }) tvs.Add(Dbl(d));
+            // Appended (not inserted) — keeps old-DWG positional reads intact.
+            tvs.Add(Str(s.PozNo    ?? ""));
+            tvs.Add(Str(s.Sinif    ?? ""));
+            tvs.Add(Str(s.Aciklama ?? ""));
+            tvs.Add(Str(s.LinkedPipeFamilyId.ToString()));
             MakeXRecord(tr, pipeDict, K_METADATA, tvs.ToArray());
         }
 
@@ -543,6 +708,64 @@ namespace UrbanoMetraj.BoQ.Services
             sdr.VBackfillGross  = i < tvs.Length ? ReadDbl(tvs, ref i) : Math.Max(sdr.VBackfillKU, sdr.VBackfillKL);
         }
 
+        // Phase 2b — PipeTrenchCatalog per-sub-layer ratios (LayerName/MaterialType/
+        // Ratio only; Volume is re-derived on load via BoQScenarioAggregator, not
+        // persisted). Absent for old DWGs or pipes with no matching catalog rule —
+        // each list simply stays empty (SectionDebugRow's own List<> default).
+        private static void WriteLayerSplits(Transaction tr, DBDictionary pipeDict, SectionDebugRow s)
+        {
+            bool any = (s.BeddingLayerSplits?.Count ?? 0) > 0
+                    || (s.BoruEtrafiLayerSplits?.Count ?? 0) > 0
+                    || (s.BoruUstuLayerSplits?.Count ?? 0) > 0
+                    || (s.BackfillLayerSplits?.Count ?? 0) > 0;
+            if (!any) return;
+
+            var tvs = new List<TypedValue> { I16(1) };
+            WriteSplitGroup(tvs, s.BeddingLayerSplits);
+            WriteSplitGroup(tvs, s.BoruEtrafiLayerSplits);
+            WriteSplitGroup(tvs, s.BoruUstuLayerSplits);
+            WriteSplitGroup(tvs, s.BackfillLayerSplits);
+            MakeXRecord(tr, pipeDict, K_LAYER_SPLITS, tvs.ToArray());
+        }
+
+        private static void WriteSplitGroup(List<TypedValue> tvs, List<TrenchLayerSplit> group)
+        {
+            group = group ?? new List<TrenchLayerSplit>();
+            tvs.Add(I32(group.Count));
+            foreach (var l in group)
+            {
+                tvs.Add(Str(l.LayerName));
+                tvs.Add(Str(l.MaterialType));
+                tvs.Add(Dbl(l.Ratio));
+            }
+        }
+
+        private static void ReadLayerSplits(Transaction tr, DBDictionary pipeDict, SectionDebugRow sdr)
+        {
+            var tvs = ReadXRecord(tr, pipeDict, K_LAYER_SPLITS);
+            if (tvs == null) return;
+            int i = 0;
+            if (ReadI16(tvs, ref i) == 0) return;
+            sdr.BeddingLayerSplits    = ReadSplitGroup(tvs, ref i);
+            sdr.BoruEtrafiLayerSplits = ReadSplitGroup(tvs, ref i);
+            sdr.BoruUstuLayerSplits   = ReadSplitGroup(tvs, ref i);
+            sdr.BackfillLayerSplits   = ReadSplitGroup(tvs, ref i);
+        }
+
+        private static List<TrenchLayerSplit> ReadSplitGroup(TypedValue[] tvs, ref int i)
+        {
+            int count = ReadI32(tvs, ref i);
+            var group = new List<TrenchLayerSplit>(count);
+            for (int n = 0; n < count; n++)
+                group.Add(new TrenchLayerSplit
+                {
+                    LayerName    = ReadStr(tvs, ref i),
+                    MaterialType = ReadStr(tvs, ref i),
+                    Ratio        = ReadDbl(tvs, ref i)
+                });
+            return group;
+        }
+
         private static SectionDebugRow ReadPipeMetadata(Transaction tr, DBDictionary pipeDict)
         {
             var sdr = new SectionDebugRow();
@@ -570,6 +793,14 @@ namespace UrbanoMetraj.BoQ.Services
             sdr.TopWidthExcavS= ReadDbl(tvs, ref i); sdr.TopWidthExcavE = ReadDbl(tvs, ref i);
             sdr.AExcavStart   = ReadDbl(tvs, ref i); sdr.AExcavEnd = ReadDbl(tvs, ref i);
             sdr.ABackfillStart= ReadDbl(tvs, ref i); sdr.ABackfillEnd = ReadDbl(tvs, ref i);
+            // Appended fields (Phase 5) — ReadStr gracefully returns "" for old DWGs
+            // that predate them (i beyond tvs.Length).
+            sdr.PozNo    = ReadStr(tvs, ref i);
+            sdr.Sinif    = ReadStr(tvs, ref i);
+            sdr.Aciklama = ReadStr(tvs, ref i);
+            Guid famId;
+            Guid.TryParse(ReadStr(tvs, ref i), out famId);
+            sdr.LinkedPipeFamilyId = famId;
             return sdr;
         }
 

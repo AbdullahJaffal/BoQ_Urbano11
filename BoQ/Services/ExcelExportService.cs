@@ -62,24 +62,28 @@ namespace UrbanoMetraj.BoQ.Services
             {
                 // Col 0: Pipe section name  Col 1: Diameter  Col 2: Material
                 // Col 3: Length  Col 4: Excav  Col 5: Bed  Col 6: Surr  Col 7: Backfill
-                // Col 8: Overlap Excav Deducted  Col 9: Overlap Backfill Deducted
+                // Col 8: PozNo  Col 9: Sinif  Col 10: Aciklama (from Type Mapping link)
+                // Col 11: Overlap Excav Deducted  Col 12: Overlap Backfill Deducted
                 [ExportLanguage.English] = new[]
                 {
                     "Pipe Section", "Diameter (mm)", "Material", "Length (m)",
-                    "Excavation (m3)", "Bedding (m3)", "Surround (m3)",
-                    "Backfill (m3)", "Excav. Deducted (m3)", "Backfill Deducted (m3)"
+                    "Excavation (m3)", "Bedding (m3)", "Surround (m3)", "Backfill (m3)",
+                    "Poz No", "Class", "Notes",
+                    "Excav. Deducted (m3)", "Backfill Deducted (m3)"
                 },
                 [ExportLanguage.Turkish] = new[]
                 {
                     "Boru Hatti", "Cap (mm)", "Malzeme", "Boy (m)",
-                    "Kazi (m3)", "Yataklama (m3)", "Gomlekleme (m3)",
-                    "Geri Dolgu (m3)", "Kazi Dusumu (m3)", "Dolgu Dusumu (m3)"
+                    "Kazi (m3)", "Yataklama (m3)", "Gomlekleme (m3)", "Geri Dolgu (m3)",
+                    "Poz No", "Sinif", "Aciklama",
+                    "Kazi Dusumu (m3)", "Dolgu Dusumu (m3)"
                 },
                 [ExportLanguage.Russian] = new[]
                 {
                     "Uchastok", "Diametr (mm)", "Material", "Dlina (m)",
-                    "Vykopka (m3)", "Podstilka (m3)", "Okruzheniye (m3)",
-                    "Zasypka (m3)", "Vych. Vykopka (m3)", "Vych. Zasypka (m3)"
+                    "Vykopka (m3)", "Podstilka (m3)", "Okruzheniye (m3)", "Zasypka (m3)",
+                    "Poz No", "Klass", "Primechaniye",
+                    "Vych. Vykopka (m3)", "Vych. Zasypka (m3)"
                 }
             };
 
@@ -137,12 +141,72 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             };
 
+        /// <summary>
+        /// Trench layer breakdown sheet (Phase 2b): per PipeTrenchCatalog sub-layer
+        /// volumes (Yataklama/Boru Etrafı/Boru Üstü/Geri Dolgu), aggregated the same
+        /// way as the Pipes sheet (by Diameter + Pipe Material), one row per unique
+        /// sub-layer within that group. Empty when no linked pipe has a matching
+        /// PipeTrenchCatalog rule (old DWG, or no rule configured for that diameter).
+        /// </summary>
+        private static readonly Dictionary<ExportLanguage, string[]> TrenchLayersHeaderMap =
+            new Dictionary<ExportLanguage, string[]>
+            {
+                [ExportLanguage.English] = new[]
+                {
+                    "Diameter (mm)", "Pipe Material", "Layer Group", "Layer Name",
+                    "Layer Material", "Volume (m3)"
+                },
+                [ExportLanguage.Turkish] = new[]
+                {
+                    "Cap (mm)", "Boru Malzemesi", "Katman Grubu", "Katman Adi",
+                    "Katman Malzemesi", "Hacim (m3)"
+                },
+                [ExportLanguage.Russian] = new[]
+                {
+                    "Diametr (mm)", "Material Truby", "Gruppa Sloya", "Nazvanie Sloya",
+                    "Material Sloya", "Ob'em (m3)"
+                }
+            };
+
+        private static readonly Dictionary<ExportLanguage, string[]> TrenchLayerGroupNameMap =
+            new Dictionary<ExportLanguage, string[]>
+            {
+                // 0=Yataklama 1=BoruEtrafi 2=BoruUstu 3=GeriDolgu
+                [ExportLanguage.English] = new[] { "Bedding", "Pipe Surround", "Above Pipe", "Backfill" },
+                [ExportLanguage.Turkish] = new[] { "Yataklama", "Boru Etrafi", "Boru Ustu", "Geri Dolgu" },
+                [ExportLanguage.Russian] = new[] { "Podstilka", "Vokrug Truby", "Nad Truboy", "Zasypka" }
+            };
+
         private static readonly Dictionary<ExportLanguage, string[]> BomHeaderMap =
             new Dictionary<ExportLanguage, string[]>
             {
                 [ExportLanguage.English] = new[] { "Description", "Quantity", "Unit", "Total Depth (m)" },
                 [ExportLanguage.Turkish] = new[] { "Aciklama",    "Miktar",   "Birim","Toplam Derinlik (m)" },
                 [ExportLanguage.Russian] = new[] { "Opisanie",    "Kolichestvo", "Edinitsa", "Obshch. Glubina (m)" }
+            };
+
+        /// <summary>
+        /// Pre-cast Manhole_BOM columns only — proves each stacked part came from our
+        /// own ComponentFamily catalog (Poz No / Notes / volumes), not just a name+count.
+        /// </summary>
+        private static readonly Dictionary<ExportLanguage, string[]> BomHeaderMapPreCast =
+            new Dictionary<ExportLanguage, string[]>
+            {
+                [ExportLanguage.English] = new[]
+                {
+                    "Description", "Quantity", "Unit",
+                    "Poz No", "Notes", "Material Volume (m3)", "External Volume (m3)"
+                },
+                [ExportLanguage.Turkish] = new[]
+                {
+                    "Aciklama", "Miktar", "Birim",
+                    "Poz No", "Notlar", "Malzeme Hacmi (m3)", "Dis Hacim (m3)"
+                },
+                [ExportLanguage.Russian] = new[]
+                {
+                    "Opisanie", "Kolichestvo", "Edinitsa",
+                    "Poz No", "Primechaniya", "Ob'em Materiala (m3)", "Vneshniy Ob'em (m3)"
+                }
             };
 
         private static readonly Dictionary<ExportLanguage, string> TotalLabelMap =
@@ -171,10 +235,13 @@ namespace UrbanoMetraj.BoQ.Services
         /// </summary>
         public static void Export(BoQReport report, BoQSettings settings)
         {
-            string[] pHeaders = PipeHeaderMap   [settings.Language];
-            string[] mHeaders = ManholeHeaderMap[settings.Language];
-            string[] sHeaders = SummaryHeaderMap[settings.Language];
-            string[] bHeaders = BomHeaderMap    [settings.Language];
+            string[] pHeaders = PipeHeaderMap        [settings.Language];
+            string[] mHeaders = ManholeHeaderMap     [settings.Language];
+            string[] sHeaders = SummaryHeaderMap     [settings.Language];
+            string[] bHeaders = BomHeaderMap         [settings.Language];
+            string[] bPreCastHeaders = BomHeaderMapPreCast[settings.Language];
+            string[] tHeaders = TrenchLayersHeaderMap[settings.Language];
+            string[] tGroupNames = TrenchLayerGroupNameMap[settings.Language];
             string   totalLbl = TotalLabelMap   [settings.Language];
 
             bool showOverlap = settings.EnableClashDetection
@@ -192,11 +259,13 @@ namespace UrbanoMetraj.BoQ.Services
                     WritePipeSheet(pkg, sys, sections, safe, pHeaders,
                                    totalLbl, SubtotalLabelMap[settings.Language], showOverlap);
                     WriteManholeSheet(pkg, sys, safe, mHeaders);
+                    WriteTrenchLayersSheet(pkg, sys, sections, safe, tHeaders, tGroupNames,
+                                            totalLbl, SubtotalLabelMap[settings.Language]);
                 }
 
                 // Phase 2 – Bill of Materials sheet (system-isolated)
                 var bomGroups = ManholeAIService.BuildBomBySystem(report, settings);
-                WriteBomSheet(pkg, bomGroups, bHeaders, settings);
+                WriteBomSheet(pkg, bomGroups, bHeaders, bPreCastHeaders, settings);
 
                 if (showOverlap
                     && report.SectionDebug != null
@@ -319,14 +388,18 @@ namespace UrbanoMetraj.BoQ.Services
                         ws.Cells[row, 6].Value = r.VBedding;
                         ws.Cells[row, 7].Value = r.VSurround;
                         ws.Cells[row, 8].Value = r.VBackfill;
+                        ws.Cells[row, 9].Value  = r.PozNo;
+                        ws.Cells[row, 10].Value = r.Sinif;
+                        ws.Cells[row, 11].Value = r.Aciklama;
                         if (showOverlap)
                         {
-                            ws.Cells[row, 9].Value  = r.OverlapExcavDeducted;
-                            ws.Cells[row, 10].Value = r.OverlapBackfillDeducted;
+                            ws.Cells[row, 12].Value = r.OverlapExcavDeducted;
+                            ws.Cells[row, 13].Value = r.OverlapBackfillDeducted;
                         }
 
                         ApplyDataRowStyle(ws, row, colCount, alt);
-                        SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
+                        SetNumericFormat(ws, row, 4, 8, "#,##0.000");
+                        if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
                         alt = !alt;
 
                         stLen += r.Length2D;  stEx += r.VExcav;
@@ -346,11 +419,12 @@ namespace UrbanoMetraj.BoQ.Services
                     ws.Cells[row, 8].Value = stBa;
                     if (showOverlap)
                     {
-                        ws.Cells[row, 9].Value  = stOvEx;
-                        ws.Cells[row, 10].Value = stOvBf;
+                        ws.Cells[row, 12].Value = stOvEx;
+                        ws.Cells[row, 13].Value = stOvBf;
                     }
                     ApplySubtotalRowStyle(ws, row, colCount);
-                    SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
+                    SetNumericFormat(ws, row, 4, 8, "#,##0.000");
+                    if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
                     row++;
 
                     gtLen += stLen; gtEx += stEx; gtBe += stBe;
@@ -366,11 +440,12 @@ namespace UrbanoMetraj.BoQ.Services
                 ws.Cells[row, 8].Value = gtBa;
                 if (showOverlap)
                 {
-                    ws.Cells[row, 9].Value  = gtOvEx;
-                    ws.Cells[row, 10].Value = gtOvBf;
+                    ws.Cells[row, 12].Value = gtOvEx;
+                    ws.Cells[row, 13].Value = gtOvBf;
                 }
                 ApplyTotalRowStyle(ws, row, colCount);
-                SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
+                SetNumericFormat(ws, row, 4, 8, "#,##0.000");
+                if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
             }
             else
             {
@@ -386,14 +461,18 @@ namespace UrbanoMetraj.BoQ.Services
                     ws.Cells[row, 6].Value = p.TotalBeddingVolume;
                     ws.Cells[row, 7].Value = p.TotalSurroundVolume;
                     ws.Cells[row, 8].Value = p.TotalBackfillVolume;
+                    // Columns 9-11 (PozNo/Sinif/Aciklama) unavailable in this fallback
+                    // path — PipeItem is a diameter+material aggregate, no Type
+                    // Mapping link data survives the old (pre-SectionDebug) format.
                     if (showOverlap)
                     {
-                        ws.Cells[row, 9].Value  = p.OverlapExcavDeducted;
-                        ws.Cells[row, 10].Value = p.OverlapBackfillDeducted;
+                        ws.Cells[row, 12].Value = p.OverlapExcavDeducted;
+                        ws.Cells[row, 13].Value = p.OverlapBackfillDeducted;
                     }
 
                     ApplyDataRowStyle(ws, row, colCount, alt);
-                    SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
+                    SetNumericFormat(ws, row, 4, 8, "#,##0.000");
+                    if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
                     alt = !alt;
                     row++;
                 }
@@ -406,11 +485,12 @@ namespace UrbanoMetraj.BoQ.Services
                 ws.Cells[row, 8].Value = sys.Pipes.Sum(p => p.TotalBackfillVolume);
                 if (showOverlap)
                 {
-                    ws.Cells[row, 9].Value  = sys.Pipes.Sum(p => p.OverlapExcavDeducted);
-                    ws.Cells[row, 10].Value = sys.Pipes.Sum(p => p.OverlapBackfillDeducted);
+                    ws.Cells[row, 12].Value = sys.Pipes.Sum(p => p.OverlapExcavDeducted);
+                    ws.Cells[row, 13].Value = sys.Pipes.Sum(p => p.OverlapBackfillDeducted);
                 }
                 ApplyTotalRowStyle(ws, row, colCount);
-                SetNumericFormat(ws, row, 4, colCount, "#,##0.000");
+                SetNumericFormat(ws, row, 4, 8, "#,##0.000");
+                if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
             }
 
             ws.Column(1).Width = 22;   // Pipe section name
@@ -418,6 +498,103 @@ namespace UrbanoMetraj.BoQ.Services
             ws.Column(3).Width = 12;   // Material
             for (int c = 4; c <= colCount; c++)
                 ws.Column(c).Width = 18;
+        }
+
+        // =====================================================================
+        // Trench layer breakdown sheet — one per network system (Phase 2b)
+        // =====================================================================
+
+        private static void WriteTrenchLayersSheet(ExcelPackage pkg, SystemBoQ sys,
+            List<SectionDebugRow> sections, string safeName,
+            string[] hdr, string[] groupNames, string totalLbl, string subtotalLbl)
+        {
+            string sheetName = Truncate(safeName + "_Trench_Layers", 31);
+            var ws           = pkg.Workbook.Worksheets.Add(sheetName);
+            int colCount     = hdr.Length;
+
+            WriteTitle(ws, sys.SystemName + " — Trench Layer Breakdown", colCount, 1);
+
+            const int hdrRow = 3;
+            WriteHeaders(ws, hdrRow, hdr, colCount);
+            ws.View.FreezePanes(hdrRow + 1, 1);
+
+            int row = hdrRow + 1;
+
+            // (GroupIndex, LayerName, LayerMaterial, Volume) flattened out of the
+            // four split lists on every section — group index picks the localized
+            // group name and keeps bedding/etrafi/ustu/backfill in a fixed order.
+            var flat = new List<(int DiameterMm, string PipeMat, int GroupIdx, string LayerName, string LayerMat, double Volume)>();
+            foreach (var r in sections ?? Enumerable.Empty<SectionDebugRow>())
+            {
+                void Add(int gi, List<TrenchLayerSplit> splits)
+                {
+                    foreach (var l in splits ?? Enumerable.Empty<TrenchLayerSplit>())
+                        flat.Add((r.DiameterMm, r.Material ?? "", gi, l.LayerName ?? "", l.MaterialType ?? "", l.Volume));
+                }
+                Add(0, r.BeddingLayerSplits);
+                Add(1, r.BoruEtrafiLayerSplits);
+                Add(2, r.BoruUstuLayerSplits);
+                Add(3, r.BackfillLayerSplits);
+            }
+
+            double grandTotal = 0;
+            var diamGroups = flat
+                .GroupBy(f => new { f.DiameterMm, f.PipeMat })
+                .OrderBy(g => g.Key.DiameterMm);
+
+            foreach (var dGrp in diamGroups)
+            {
+                bool alt = false;
+                double subtotal = 0;
+
+                var layerGroups = dGrp
+                    .GroupBy(f => new { f.GroupIdx, f.LayerName, f.LayerMat })
+                    .OrderBy(g => g.Key.GroupIdx)
+                    .ThenBy(g => g.Key.LayerName);
+
+                foreach (var lGrp in layerGroups)
+                {
+                    double vol = lGrp.Sum(x => x.Volume);
+
+                    ws.Cells[row, 1].Value = dGrp.Key.DiameterMm + " mm";
+                    ws.Cells[row, 2].Value = dGrp.Key.PipeMat;
+                    ws.Cells[row, 3].Value = groupNames[lGrp.Key.GroupIdx];
+                    ws.Cells[row, 4].Value = lGrp.Key.LayerName;
+                    ws.Cells[row, 5].Value = lGrp.Key.LayerMat;
+                    ws.Cells[row, 6].Value = vol;
+
+                    ApplyDataRowStyle(ws, row, colCount, alt);
+                    SetNumericFormat(ws, row, 6, colCount, "#,##0.000");
+                    alt = !alt;
+
+                    subtotal += vol;
+                    row++;
+                }
+
+                string subLbl = subtotalLbl + " Ø" + dGrp.Key.DiameterMm + " mm";
+                ws.Cells[row, 1].Value = subLbl;
+                ws.Cells[row, 6].Value = subtotal;
+                ApplySubtotalRowStyle(ws, row, colCount);
+                SetNumericFormat(ws, row, 6, colCount, "#,##0.000");
+                row++;
+
+                grandTotal += subtotal;
+            }
+
+            if (flat.Count > 0)
+            {
+                ws.Cells[row, 1].Value = totalLbl;
+                ws.Cells[row, 6].Value = grandTotal;
+                ApplyTotalRowStyle(ws, row, colCount);
+                SetNumericFormat(ws, row, 6, colCount, "#,##0.000");
+            }
+
+            ws.Column(1).Width = 14;   // Diameter
+            ws.Column(2).Width = 16;   // Pipe material
+            ws.Column(3).Width = 16;   // Layer group
+            ws.Column(4).Width = 20;   // Layer name
+            ws.Column(5).Width = 16;   // Layer material
+            ws.Column(6).Width = 16;   // Volume
         }
 
         // =====================================================================
@@ -446,9 +623,9 @@ namespace UrbanoMetraj.BoQ.Services
                 // Col 2: Type — use SmartTypeName if available, otherwise fallback
                 ws.Cells[row, 2].Value = !string.IsNullOrEmpty(m.SmartTypeName)
                     ? m.SmartTypeName
-                    : (m.Diameter > 0 ? $"Baca O{m.Diameter}" : "—");
-                // Col 3: Diameter (mm)
-                ws.Cells[row, 3].Value = m.Diameter > 0 ? m.Diameter + " mm" : "—";
+                    : $"Baca {m.DiameterDisplay}";
+                // Col 3: Diameter (mm) — "side×side"/"length×width" for non-circular
+                ws.Cells[row, 3].Value = m.DiameterDisplay + " mm";
                 // Col 4: Depth (m)
                 ws.Cells[row, 4].Value = m.Depth;
                 // Col 5: Excavation depth H = TerrainElev − lowestInvert (m)
@@ -503,11 +680,16 @@ namespace UrbanoMetraj.BoQ.Services
             ExcelPackage          pkg,
             List<SystemBomGroup>  groups,
             string[]              hdr,
+            string[]              hdrPreCast,
             BoQSettings           settings)
         {
             var  ws        = pkg.Workbook.Worksheets.Add("Manhole_BOM");
             bool isPreCast = settings.ManholeType == ManholeType.PreCast;
-            int  dataCols  = isPreCast ? 3 : 4;   // pre-cast: 3 cols; CIP adds TotalDepth col
+            // Pre-cast: Description/Quantity/Unit + PozNo/Notes/MaterialVol/ExternalVol
+            // (proves each part came from our ComponentFamily catalog). CIP: adds
+            // TotalDepth instead — no per-component catalog data applies there.
+            if (isPreCast) hdr = hdrPreCast;
+            int dataCols = isPreCast ? 7 : 4;
 
             // ── Workbook title ────────────────────────────────────────────────
             string pageTitle = isPreCast
@@ -587,7 +769,18 @@ namespace UrbanoMetraj.BoQ.Services
                         ws.Cells[sheetRow, 2].Style.Numberformat.Format = "#,##0";
                         ws.Cells[sheetRow, 2].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
 
-                        if (!isPreCast && bl.TotalDepthM > 0)
+                        if (isPreCast)
+                        {
+                            ws.Cells[sheetRow, 4].Value = bl.PozNo;
+                            ws.Cells[sheetRow, 5].Value = bl.Aciklama;
+                            ws.Cells[sheetRow, 6].Value = Math.Round(bl.TotalMaterialVolume, 4);
+                            ws.Cells[sheetRow, 7].Value = Math.Round(bl.TotalExternalVolume, 4);
+                            ws.Cells[sheetRow, 6].Style.Numberformat.Format = "#,##0.0000";
+                            ws.Cells[sheetRow, 7].Style.Numberformat.Format = "#,##0.0000";
+                            ws.Cells[sheetRow, 6].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
+                            ws.Cells[sheetRow, 7].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
+                        }
+                        else if (bl.TotalDepthM > 0)
                         {
                             ws.Cells[sheetRow, 4].Value = Math.Round(bl.TotalDepthM, 3);
                             ws.Cells[sheetRow, 4].Style.Numberformat.Format  = "#,##0.000";
@@ -613,7 +806,17 @@ namespace UrbanoMetraj.BoQ.Services
             ws.Column(1).Width = 42;   // Description / System label
             ws.Column(2).Width = 14;   // Quantity
             ws.Column(3).Width = 10;   // Unit
-            if (!isPreCast) ws.Column(4).Width = 22;   // Total Depth
+            if (isPreCast)
+            {
+                ws.Column(4).Width = 14;   // Poz No
+                ws.Column(5).Width = 24;   // Notes
+                ws.Column(6).Width = 18;   // Material Volume
+                ws.Column(7).Width = 18;   // External Volume
+            }
+            else
+            {
+                ws.Column(4).Width = 22;   // Total Depth
+            }
         }
 
         // =====================================================================
@@ -671,7 +874,7 @@ namespace UrbanoMetraj.BoQ.Services
         // Style primitives
         // =====================================================================
 
-        private static void WriteTitle(ExcelWorksheet ws, string title, int colSpan, int startRow)
+        internal static void WriteTitle(ExcelWorksheet ws, string title, int colSpan, int startRow)
         {
             var cell = ws.Cells[startRow, 1];
             cell.Value = title;
@@ -689,7 +892,7 @@ namespace UrbanoMetraj.BoQ.Services
             ws.Row(startRow + 1).Height = 6;
         }
 
-        private static void WriteHeaders(ExcelWorksheet ws, int hdrRow,
+        internal static void WriteHeaders(ExcelWorksheet ws, int hdrRow,
             string[] hdr, int colCount)
         {
             for (int c = 0; c < colCount; c++)
@@ -717,7 +920,7 @@ namespace UrbanoMetraj.BoQ.Services
             ws.Row(hdrRow).Height = 30;
         }
 
-        private static void ApplyDataRowStyle(ExcelWorksheet ws, int row, int colCount, bool alt)
+        internal static void ApplyDataRowStyle(ExcelWorksheet ws, int row, int colCount, bool alt)
         {
             for (int c = 1; c <= colCount; c++)
             {
@@ -781,7 +984,7 @@ namespace UrbanoMetraj.BoQ.Services
             }
         }
 
-        private static void SetNumericFormat(ExcelWorksheet ws, int row,
+        internal static void SetNumericFormat(ExcelWorksheet ws, int row,
             int fromCol, int toCol, string fmt)
         {
             for (int c = fromCol; c <= toCol; c++)
@@ -803,7 +1006,7 @@ namespace UrbanoMetraj.BoQ.Services
         // Save with lock detection
         // =====================================================================
 
-        private static void SavePackage(ExcelPackage pkg, string path)
+        internal static void SavePackage(ExcelPackage pkg, string path)
         {
             try
             {
@@ -827,14 +1030,14 @@ namespace UrbanoMetraj.BoQ.Services
         // Utilities
         // =====================================================================
 
-        private static string SanitizeSheetName(string name)
+        internal static string SanitizeSheetName(string name)
         {
             foreach (char ch in new[] { '\\', '/', '?', '*', '[', ']', ':' })
                 name = name.Replace(ch, '_');
             return name;
         }
 
-        private static string Truncate(string s, int maxLen)
+        internal static string Truncate(string s, int maxLen)
             => s.Length <= maxLen ? s : s.Substring(0, maxLen);
     }
 }

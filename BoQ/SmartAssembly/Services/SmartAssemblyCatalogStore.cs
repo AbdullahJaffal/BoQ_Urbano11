@@ -49,6 +49,27 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Services
                         catalog.Families.Add(f);
             }
             catch { }
+
+            // Baca-Boru Bağlantı Kuralları (PipeRangeRule/SystemType) live in a SEPARATE
+            // file from components (mirrors PipeCatalog's two-file pattern — see
+            // MasterCatalogXmlManager's class doc). Previously only Families were loaded
+            // here, so ManholeAIService.ResolveFamilyAndTaban always found zero rules
+            // (MasterPipeRules stayed empty) whenever Akıllı Montaj was closed when
+            // URBANO_BOQ_HESAPLA ran — every manhole failed to resolve regardless of
+            // how correctly the rules were configured and saved.
+            try
+            {
+                string rulesPath = MasterCatalogXmlManager.DefaultRulesPath;
+                if (File.Exists(rulesPath))
+                {
+                    foreach (var st in MasterCatalogXmlManager.ImportSystemTypes(rulesPath))
+                        catalog.SystemTypes.Add(st);
+                    foreach (var pr in MasterCatalogXmlManager.ImportPipeRules(rulesPath))
+                        catalog.MasterPipeRules.Add(pr);
+                }
+            }
+            catch { }
+
             return catalog;
         }
     }

@@ -68,6 +68,7 @@ namespace UrbanoMetraj.BoQ.Services
                                   :                                    sdr.VBackfillSP;
                     sdr.OverlapBackfillDeducted = System.Math.Max(0, sdr.VBackfillGross - sdr.VBackfill);
                 }
+                ApplyLayerSplits(sdr);
                 return;
             }
 
@@ -131,6 +132,49 @@ namespace UrbanoMetraj.BoQ.Services
                 : System.Math.Max(0, gEx - sdr.VExcav);
             sdr.OverlapBackfillDeducted = dolgu == TiePreference.Ignore ? 0
                 : System.Math.Max(0, (gBe - vBe) + (gSu - vSu) + (gBa - vBa));
+
+            ApplyLayerSplits(sdr);
+        }
+
+        /// <summary>
+        /// Splits the final (post-clash) combined layer totals — VBedding, VSurround,
+        /// VBackfill — into per-catalog-sub-layer volumes using each split list's fixed
+        /// area-ratio (computed once at parse time from the matched PipeTrenchCatalog
+        /// tier's geometry). Pure post-processing: never re-runs any Clipper boolean op.
+        /// Gömlekleme (Surround) needs an extra add-back/split/re-deduct sequence since
+        /// the pipe body is already subtracted from the COMBINED Boru-Etrafı+Boru-Üstü
+        /// total, but only Boru Etrafı physically contains the pipe. See project memory
+        /// "Trench layer splitting design" for the full derivation.
+        /// </summary>
+        private static void ApplyLayerSplits(SectionDebugRow sdr)
+        {
+            ApplyRatios(sdr.BeddingLayerSplits,  sdr.VBedding);
+            ApplyRatios(sdr.BackfillLayerSplits, sdr.VBackfill);
+
+            double vPipe  = sdr.PipeArea * sdr.Length2D;
+            double sPrime = sdr.VSurround + vPipe;
+
+            // Etrafı/Üstü area split, from fields already resolved in ParseSections
+            // (no new inputs needed): width-at-height-h = TopWidthBed + 2×h×SlopeRatio.
+            double wAtOd      = sdr.TopWidthBed + 2.0 * sdr.PipeOuterDiamM * sdr.SlopeRatio;
+            double areaEtrafi = (sdr.TopWidthBed + wAtOd) / 2.0 * sdr.PipeOuterDiamM;
+            double areaUstu   = (wAtOd + sdr.TopWidthSurr) / 2.0 * sdr.TrSandOverPipe;
+            double areaTotal  = areaEtrafi + areaUstu;
+
+            double sEtrafiPrime = areaTotal > 1e-12 ? sPrime * (areaEtrafi / areaTotal) : sPrime;
+            double sUstuPrime   = sPrime - sEtrafiPrime;
+
+            double vEtrafiFinal = System.Math.Max(0, sEtrafiPrime - vPipe);
+            double vUstuFinal   = System.Math.Max(0, sUstuPrime);
+
+            ApplyRatios(sdr.BoruEtrafiLayerSplits, vEtrafiFinal);
+            ApplyRatios(sdr.BoruUstuLayerSplits,   vUstuFinal);
+        }
+
+        private static void ApplyRatios(List<TrenchLayerSplit> splits, double groupTotalVolume)
+        {
+            foreach (var s in splits)
+                s.Volume = s.Ratio * groupTotalVolume;
         }
 
         /// <summary>
@@ -148,10 +192,11 @@ namespace UrbanoMetraj.BoQ.Services
             {
                 RecomputeRow(sdr, kazi, dolgu);
                 if (applyManholeDeduction)
-                    sdr.VExcav = System.Math.Max(0, sdr.VExcav - sdr.ManholeExcavDeducted);
+                {
+                    sdr.VExcav    = System.Math.Max(0, sdr.VExcav    - sdr.ManholeExcavDeducted);
+                    sdr.VBackfill = System.Math.Max(0, sdr.VBackfill - sdr.ManholeBackfillDeducted);
+                }
             }
-
-            RecomputeManholeExcavation(report);
 
             foreach (var sys in report.Systems ?? Enumerable.Empty<SystemBoQ>())
             {
@@ -173,64 +218,6 @@ namespace UrbanoMetraj.BoQ.Services
                     })
                     .ToList();
             }
-        }
-
-        /// <summary>
-        /// Recomputes manhole excavation depths and volumes from the section data
-        /// already loaded in the report. Call this after loading from DWG cache so
-        /// that ExcavationDepth/ExcavationVolume are populated even when the DWG
-        /// was saved before these fields existed.
-        /// </summary>
-        public static void RecomputeManholeExcavation(BoQReport report)
-        {
-            if (report?.SectionDebug == null || report.Systems == null) return;
-
-            // Build nodeName → list of connected pipe invert elevations
-            var invertsByNode = new Dictionary<string, List<double>>(
-                StringComparer.OrdinalIgnoreCase);
-
-            foreach (var sdr in report.SectionDebug)
-            {
-                AddInv(invertsByNode, sdr.StartNodeName, sdr.InvertStart);
-                AddInv(invertsByNode, sdr.EndNodeName,   sdr.InvertEnd);
-            }
-
-            foreach (var sys in report.Systems)
-            {
-                foreach (var m in sys.Manholes)
-                {
-                    if (m.NodeName == null) continue;
-                    List<double> inverts;
-                    if (!invertsByNode.TryGetValue(m.NodeName, out inverts) || inverts.Count == 0)
-                        continue;
-
-                    double lowestInvert = inverts.Min();
-                    double H = System.Math.Max(0, m.TerrainElevation - lowestInvert);
-                    m.ExcavationDepth = H;
-
-                    if (H > 1e-6)
-                    {
-                        double sideBot = 2.0;
-                        double sideMid = 2.0 + 2.0 * (H * 0.5) / 3.0;
-                        double sideTop = 2.0 + 2.0 * H / 3.0;
-                        m.ExcavationVolume = (H / 6.0) *
-                            (sideBot * sideBot + 4.0 * sideMid * sideMid + sideTop * sideTop);
-                    }
-                    else
-                    {
-                        m.ExcavationVolume = 0;
-                    }
-                }
-            }
-        }
-
-        private static void AddInv(Dictionary<string, List<double>> dict, string name, double inv)
-        {
-            if (string.IsNullOrEmpty(name)) return;
-            List<double> list;
-            if (!dict.TryGetValue(name, out list))
-                dict[name] = list = new List<double>();
-            list.Add(inv);
         }
 
         // ── helpers ───────────────────────────────────────────────────────────
