@@ -23,6 +23,39 @@ namespace UrbanoMetraj.BoQ.Models
     /// Applied independently to Excavation and to Backfill, giving 3 × 3 = 9
     /// possible combinations.
     /// </summary>
+    /// <summary>
+    /// How ManholeAIService.ComputeFamilyStack fills a remaining gap with
+    /// Gövde Halkası / Boyun bileziği pieces (user directive 2026-07-06).
+    /// </summary>
+    public enum RingFillMode
+    {
+        /// <summary>Largest-first greedy fill (original behaviour) — tries each
+        /// available size in descending order, using as many of that size as fit,
+        /// then moves to the next-smaller size. Simple, but can leave a larger
+        /// gap than necessary when a different combination of sizes would fit
+        /// better.</summary>
+        Greedy = 0,
+        /// <summary>Bounded-knapsack search for the combination of available
+        /// sizes (respecting the role's Max piece count) that reaches the
+        /// closest achievable depth without exceeding the target — e.g. an 8cm +
+        /// 7cm combination closing a 15cm gap exactly instead of a single 10cm
+        /// piece leaving 5cm unclosed.</summary>
+        BestFit = 1
+    }
+
+    /// <summary>
+    /// How PipeNetLengthService reduces a pipe's raw Length2D at each connected
+    /// manhole end (user directive 2026-07-06).
+    /// </summary>
+    public enum NetLengthMode
+    {
+        /// <summary>Deduct the manhole's outer shell: inner half-width + the wall
+        /// thickness of the precast ring at the pipe's invert elevation.</summary>
+        OuterDiameter = 0,
+        /// <summary>Deduct only the manhole's inner half-width — no wall thickness.</summary>
+        InnerDiameter = 1
+    }
+
     public enum OverlapAssignment
     {
         /// <summary>50/50 — each pipe keeps half of the overlap (مناصفة).</summary>
@@ -82,9 +115,22 @@ namespace UrbanoMetraj.BoQ.Models
         public ManholeType ManholeType { get; set; } = ManholeType.PreCast;
 
         /// <summary>
+        /// How ManholeAIService fills a Gövde/Boyun gap when stacking a precast
+        /// manhole — greedy (original) or best-fit combination search.
+        /// </summary>
+        public RingFillMode RingFillMode { get; set; } = RingFillMode.Greedy;
+
+        /// <summary>
         /// Language used for all Excel column headers and labels.
         /// </summary>
         public ExportLanguage Language { get; set; } = ExportLanguage.English;
+
+        /// <summary>
+        /// How PipeNetLengthService reduces each pipe's raw length at a connected
+        /// manhole — outer shell (radius + wall thickness, default/original
+        /// behaviour) or inner radius only.
+        /// </summary>
+        public NetLengthMode NetLengthMode { get; set; } = NetLengthMode.OuterDiameter;
 
         /// <summary>
         /// Absolute path of the .xlsx file to write.
@@ -116,5 +162,32 @@ namespace UrbanoMetraj.BoQ.Models
         /// and the manhole excavation total is displayed as 0.
         /// </summary>
         public bool BacaKaziHesapla { get; set; } = false;
+
+        /// <summary>Selected surface (Arazi1…Arazi10) used for the manhole "Kırmızı Kot".</summary>
+        public string BacaKirmiziKotSurface { get; set; } = "Arazi1";
+
+        /// <summary>Selected surface (Arazi1…Arazi10) used for the manhole "Arazi Kotu".</summary>
+        public string BacaAraziKotuSurface { get; set; } = "Arazi1";
+
+        /// <summary>Selected surface (Arazi1…Arazi10) used for the manhole "Terrasman Kotu".</summary>
+        public string BacaTerrasmanKotuSurface { get; set; } = "Arazi1";
+
+        /// <summary>Real Civil 3D surface name (from the active drawing) linked to "Kırmızı Kot".</summary>
+        public string BacaKirmiziKotC3DSurface { get; set; } = "";
+
+        /// <summary>Real Civil 3D surface name (from the active drawing) linked to "Arazi Kotu".</summary>
+        public string BacaAraziKotuC3DSurface { get; set; } = "";
+
+        /// <summary>Real Civil 3D surface name (from the active drawing) linked to "Terrasman Kotu".</summary>
+        public string BacaTerrasmanKotuC3DSurface { get; set; } = "";
+
+        /// <summary>Which kot ("Kırmızı Kot" / "Arazi Kotu" / "Terrasman Kotu") the excavation (Kazı) level uses.</summary>
+        public string KaziSeviyesi { get; set; } = "Kırmızı Kot";
+
+        /// <summary>Which kot the backfill (Dolgu) level uses.</summary>
+        public string DolguSeviyesi { get; set; } = "Kırmızı Kot";
+
+        /// <summary>Which kot the manhole cover (Baca Kapak) level uses.</summary>
+        public string BacaKapakSeviyesi { get; set; } = "Kırmızı Kot";
     }
 }

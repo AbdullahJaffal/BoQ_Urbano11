@@ -60,13 +60,59 @@ namespace UrbanoMetraj.BoQ.Models
         public string NodeName           { get; set; }  // AG_NAME  (e.g. "1Y", "4Y")
         public double X                  { get; set; }  // easting  (m)
         public double Y                  { get; set; }  // northing (m)
-        public double TerrainElevation   { get; set; }  // TH1      (m, a.s.l.) — this is actually the COVER-TOP elevation (Kapak Üstü Kotu)
-        /// <summary>Existing ground elevation (m, a.s.l.) — TH2. Falls back to TerrainElevation (TH1) when TH2 is absent from the export.</summary>
+        public double TerrainElevation   { get; set; }  // TH1      (m, a.s.l.) — this is actually the COVER-TOP elevation (Kapak Üstü Kotu). Display only.
+        /// <summary>Existing ground elevation (m, a.s.l.) — TH2. Falls back to TerrainElevation (TH1) when TH2 is absent from the export. Display only.</summary>
         public double ExistingGroundElevation { get; set; }
-        public double Depth              { get; set; }  // computed manhole depth (m)
+
+        // ── Settings-resolved elevations (Kot Ayarları / Seviye Ayarları) ────
+        // Each is whichever THn the user's Genel Ayarlar mapping resolves to for
+        // that role — NOT hardcoded to TH1. See BoQParserService.ResolveElevations.
+        /// <summary>Elevation used as the excavation (Kazı) top reference.</summary>
+        public double ZKazi      { get; set; }
+        /// <summary>Elevation used as the backfill (Dolgu) top reference (e.g. under-asphalt/Terrasman level).</summary>
+        public double ZDolgu     { get; set; }
+        /// <summary>Elevation used as the manhole cover (Baca Kapak) reference.</summary>
+        public double ZBacaKapak { get; set; }
+
+        public double Depth              { get; set; }  // computed manhole depth (m), from ZBacaKapak
         public int    Diameter           { get; set; }  // nominal shaft Ø (mm)
         /// <summary>Urbano's own MANHOLE catalog item GUID (the "MH" node property) — used to resolve a Type Mapping link.</summary>
         public string MhGuid             { get; set; }
+
+        /// <summary>
+        /// The ACTUAL footprint of the resolved precast Taban component (set by
+        /// ManholeAIService.ResolveFamilyAndTaban, right after Diameter/DrawnLengthM/
+        /// DrawnWidthM are back-filled). Null until a Taban resolves.
+        ///
+        /// NOT the same thing as DrawnShape/DrawnLengthM/DrawnWidthM above — those
+        /// reflect how the manhole was AS-DRAWN in Urbano/Civil3D, which can differ
+        /// from the shape of the precast family it's actually linked to (e.g. drawn
+        /// as a generic circle in the DWG but built from a square "Izgara" Taban).
+        /// PipeNetLengthService needs the real built shape, so it uses this field
+        /// instead of DrawnShape/Diameter.
+        /// </summary>
+        public Footprint ResolvedFootprint { get; set; }
+
+        /// <summary>
+        /// Sub-base pieces (Temel Altı Parça) physically below the resolved Taban,
+        /// from BottomElementComponent.TemelAltiParcalar (empty when the Taban has
+        /// none, or TemelAltiParcaEnabled is false, or no Taban is resolved yet).
+        /// Set by ManholeAIService.ResolveExcavation alongside the excavation-depth
+        /// calculation that already consumes this same list's combined thickness.
+        /// Used by ManholeKesifExportService to build one column per distinct
+        /// piece dimension across the sheet.
+        /// </summary>
+        public List<TemelAltiParca> ResolvedSubBaseParts { get; set; } = new List<TemelAltiParca>();
+
+        /// <summary>
+        /// The matched ManholeExcavationDepthTier's Alt Temel Katmanları (sub-base
+        /// preparation layers, e.g. "yataklama kumu"), set by ManholeAIService.
+        /// ResolveExcavation alongside ResolvedBackfillLayers. Consumed by
+        /// ManholeExcavOverlapService.Compute to derive SubBaseVolume (Simpson's
+        /// rule frustum at the pit bottom) — must be persisted so the Load()-only
+        /// Baca Kesif Tablosu reload path can re-run that computation.
+        /// </summary>
+        public List<SubBaseLayer> ResolvedSubBaseLayers { get; set; } = new List<SubBaseLayer>();
 
         /// <summary>
         /// As-drawn shape from Urbano's MANHOLE catalog item (CBS_MANHOLESHAPE: "Dairesel"
@@ -172,6 +218,41 @@ namespace UrbanoMetraj.BoQ.Models
         /// </summary>
         public double ExcavationVolume { get; set; }
 
+        /// <summary>
+        /// Backfill-basis baseline depth (m), mirrors <see cref="ExcavationDepth"/>'s
+        /// raw baseline but measured from <see cref="ZDolgu"/> instead of
+        /// <see cref="ZKazi"/> — set in BoQParserService.ComputeManholeDepths.
+        /// Never clamped to 0: a negative value means Dolgu Seviyesi resolves below
+        /// the lowest connected invert (or the manhole floor), which is a design
+        /// error, not a legitimate "shallow backfill" case (see DolguInvalid).
+        /// </summary>
+        public double DolguBaselineDepth { get; set; }
+        /// <summary>
+        /// True when DolguBaselineDepth (or the per-station Dolgu top along a
+        /// connected pipe) resolved below the invert/manhole floor — an invalid
+        /// Dolgu Seviyesi configuration. DolguBasisVolume/BackfillVolume stay 0
+        /// and a note is added to BoQReport.DiscoveryNotes naming this manhole.
+        /// </summary>
+        public bool DolguInvalid { get; set; }
+        /// <summary>
+        /// Same square-frustum volume formula as <see cref="ExcavationVolume"/>
+        /// (same ExcavBaseSideM/ExcavSlopeRatio — same pit shape), but using the
+        /// Dolgu-basis depth (ZDolgu top) instead of the Kazı-basis depth (ZKazi
+        /// top). This is the raw "backfill basis" volume before the
+        /// structure/bedding/surround deductions in ManholeExcavOverlapService are
+        /// applied to produce the final BackfillVolume. 0 until resolved or when
+        /// DolguInvalid is true.
+        /// </summary>
+        public double DolguBasisVolume { get; set; }
+        /// <summary>
+        /// Total Dolgu-basis pit depth (ZDolgu top down to the same floor as
+        /// ExcavationDepth: DolguBaselineDepth + Taban slab + Alt Temel Katmanları),
+        /// set alongside DolguBasisVolume in ManholeAIService.ResolveExcavation.
+        /// Used by ManholeExcavOverlapService to bound the Dolgu-range bedding/
+        /// surround overlap slice ([ZDolgu − DolguFinalDepth, ZDolgu]).
+        /// </summary>
+        public double DolguFinalDepth { get; set; }
+
         /// <summary>Working clearance (m) each side of the Taban footprint, from the
         /// matched ManholeExcavationDepthTier. 0 if unresolved.</summary>
         public double ExcavWorkingClearanceM { get; set; }
@@ -203,9 +284,23 @@ namespace UrbanoMetraj.BoQ.Models
         public List<TrenchLayerSplit> BackfillLayerSplits { get; set; } = new List<TrenchLayerSplit>();
 
         /// <summary>
-        /// Baca Geri Dolgu (m³) = ExcavationVolume − ManholeStructureVolume
+        /// Total spatial displacement of all stacked manhole parts (m³) =
+        /// Σ (UnitExternalVolume × Count). Populated by ManholeExcavOverlapService.Compute.
+        /// </summary>
+        public double StructureVolume { get; set; }
+
+        /// <summary>
+        /// Volume of Alt Temel Katmanları at the pit bottom, computed via Simpson's 1/3
+        /// rule on the frustum slice [zBottom, zBottom+TotalSubBaseDepthM].
+        /// Displayed as "Baca Yatakalama". Populated by ManholeExcavOverlapService.Compute.
+        /// </summary>
+        public double SubBaseVolume { get; set; }
+
+        /// <summary>
+        /// Baca Geri Dolgu (m³) = DolguBasisVolume − StructureVolume − SubBaseVolume
         ///                       − Σ ManholeBeddingDeducted − Σ ManholeSurroundDeducted
-        /// for all pipe sections connected to this manhole.
+        /// for all pipe sections connected to this manhole. Uses DolguBasisVolume
+        /// (ZDolgu top), NOT ExcavationVolume (ZKazi top). 0 when DolguInvalid.
         /// Populated by ManholeExcavOverlapService.Compute (runtime only).
         /// </summary>
         public double BackfillVolume { get; set; }
@@ -226,6 +321,15 @@ namespace UrbanoMetraj.BoQ.Models
         public int    DiameterMm       { get; set; }
         /// <summary>Straight-line distance (m) to the neighboring manhole — SectionDebugRow.Length2D.</summary>
         public double Distance2D       { get; set; }
+        /// <summary>Net pipe length (m), excluding both manholes' outer-shell radii —
+        /// SectionDebugRow.NetLength. 0 unless PipeNetLengthService.Compute(report) has
+        /// been run (runtime-only, not persisted; the standalone Baca Kesif command
+        /// re-runs it after DwgBoQStore.Load()).</summary>
+        public double NetLength        { get; set; }
+        /// <summary>SectionDebugRow.SystemName of the connecting pipe — used by
+        /// ManholeKesifExportService to detect a cross-system connection (this pipe's
+        /// system differs from the manhole's own sheet/system).</summary>
+        public string SystemName       { get; set; }
     }
 
     /// <summary>
@@ -282,10 +386,19 @@ namespace UrbanoMetraj.BoQ.Models
         public double StationDist   { get; set; }  // distance from start node (m)
         public double WorldX        { get; set; }
         public double WorldY        { get; set; }
-        public double TerrainZ      { get; set; }
+        public double TerrainZ      { get; set; }  // ZKazi interpolated at this station (excavation top)
         public double InvertZ       { get; set; }
         public double TrueDepth     { get; set; }  // depthToInvert + TrBedHeight
         public double TopWidthExcav { get; set; }  // TrWidth + 2*TrueDepth*SlopeRatio
+
+        /// <summary>ZDolgu interpolated at this station — backfill's own top reference (independent of TerrainZ/ZKazi).</summary>
+        public double DolguZ           { get; set; }
+        /// <summary>Backfill-basis true depth = max(0, DolguZ − InvertZ) + TrBedHeight — same formula as TrueDepth but from DolguZ.</summary>
+        public double TrueDepthDolgu   { get; set; }
+        /// <summary>Backfill-basis top width = TrWidth + 2×TrueDepthDolgu×SlopeRatio.</summary>
+        public double TopWidthDolgu    { get; set; }
+        /// <summary>True when DolguZ is below InvertZ at this station — invalid Dolgu Seviyesi; AreaBackfill stays 0 here.</summary>
+        public bool   DolguInvalid     { get; set; }
 
         // ── Polygon vertices in local (U, Z) frame ─────────────────────────────
         // U = 0 is the pipe centreline axis; U is the signed perpendicular offset.
@@ -401,6 +514,11 @@ namespace UrbanoMetraj.BoQ.Models
         public string Material        { get; set; }   // for re-aggregating PipeItems from cache
         public double PipeOuterDiamM  { get; set; }
         public double Length2D        { get; set; }
+        /// <summary>Net length (m) = Length2D minus each connected manhole's outer-shell
+        /// radius (inner radius + wall thickness of the precast ring at this pipe's invert
+        /// elevation). Runtime-only — computed by PipeNetLengthService.Compute after
+        /// ManholeAIService.Process(); never persisted to the DWG.</summary>
+        public double NetLength        { get; set; }
 
         // ── Type Mapping (Phase 5) — from our own PipeCatalog via a linked PipeDefinition ──
         public string PozNo              { get; set; }
@@ -412,10 +530,16 @@ namespace UrbanoMetraj.BoQ.Models
         // ── Node world coordinates (for 3-D solid generation) ─────────────────
         public double StartX          { get; set; }
         public double StartY          { get; set; }
-        public double StartTerrainZ   { get; set; }   // TH1 at start node
+        public double StartTerrainZ   { get; set; }   // ZKazi at start node (settings-resolved; historically TH1)
         public double EndX            { get; set; }
         public double EndY            { get; set; }
-        public double EndTerrainZ     { get; set; }   // TH1 at end node
+        public double EndTerrainZ     { get; set; }   // ZKazi at end node (settings-resolved; historically TH1)
+        /// <summary>ZDolgu (Dolgu Seviyesi-resolved elevation) at the start node — backfill's own top reference, independent of StartTerrainZ/ZKazi.</summary>
+        public double StartDolguZ     { get; set; }
+        /// <summary>ZDolgu at the end node.</summary>
+        public double EndDolguZ       { get; set; }
+        /// <summary>True when ZDolgu resolves below the invert at either end of this pipe — an invalid Dolgu Seviyesi configuration. Backfill volume stays 0 for this section and a note names the offending pipe.</summary>
+        public bool   DolguInvalid    { get; set; }
 
         // ── Elevation inputs ─────────────────────────────────────────────────
         public double InvertStart     { get; set; }
@@ -560,6 +684,9 @@ namespace UrbanoMetraj.BoQ.Models
         public double TotalManholeExcavationVolume =>
             Systems.SelectMany(s => s.Manholes).Sum(m => m.ExcavationVolume);
 
+        public double TotalManholeSubBaseVolume =>
+            Systems.SelectMany(s => s.Manholes).Sum(m => m.SubBaseVolume);
+
         public double TotalManholeBackfillVolume =>
             Systems.SelectMany(s => s.Manholes).Sum(m => m.BackfillVolume);
     }
@@ -642,6 +769,15 @@ namespace UrbanoMetraj.BoQ.Models
         public double UnitMaterialVolume  { get; set; }
         /// <summary>Total spatial displacement of ONE unit (m³), from ManholeComponent.ExternalVolume.</summary>
         public double UnitExternalVolume  { get; set; }
+        /// <summary>Wall thickness (mm) of the underlying component, when that component type
+        /// tracks one (BottomElement/MiddleElement/Adjuster/Reducer). Null for types that don't
+        /// (e.g. Cover) — used by PipeNetLengthService to resolve the ring at a pipe's invert.</summary>
+        public double? WallThicknessMm    { get; set; }
+        /// <summary>Underlying component's role — used to sort Parts into true bottom-to-top
+        /// physical order (BottomElement, MiddleElement, Reducer, Adjuster, Cover). Insertion
+        /// order alone is NOT reliable: "değişken" (variable-height) pieces are appended after
+        /// all fixed pieces regardless of their real physical position in the stack.</summary>
+        public ComponentRole Role         { get; set; }
     }
 
     /// <summary>
@@ -675,6 +811,8 @@ namespace UrbanoMetraj.BoQ.Models
         /// swallowed.
         /// </summary>
         public bool ConstraintViolated { get; set; }
+        /// <summary>Short human-readable reason for ConstraintViolated (e.g. "Konik (Min≥1) bulunamadı", "hedef derinliğe 0.08m eksik kaldı") — surfaced per-manhole in the aggregate warning so a real cause is visible instead of just a count.</summary>
+        public string ConstraintViolationReason { get; set; }
 
         // ── Cast-in-place only ────────────────────────────────────────────────
         /// <summary>Total concrete shaft depth in metres (IsPreCast == false only).</summary>

@@ -6,6 +6,7 @@ using System.Text;
 using Autodesk.AutoCAD.DatabaseServices;
 using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models;
 using UrbanoMetraj.BoQ.Models;
+using UrbanoMetraj.BoQ.SmartAssembly.Models;
 
 namespace UrbanoMetraj.BoQ.Services
 {
@@ -124,7 +125,20 @@ namespace UrbanoMetraj.BoQ.Services
                     I16((short)settings.Language),
                     Str(settings.ManholeConfigPath ?? ""),
                     Dbl(settings.SolidDisplayInterval),
-                    Dbl(settings.CrossSectionInterval));
+                    Dbl(settings.CrossSectionInterval),
+                    // Appended (not inserted) — keeps old-DWG positional reads intact.
+                    I16((short)(settings.BacaKaziHesapla ? 1 : 0)),
+                    Str(settings.BacaKirmiziKotSurface ?? "Arazi1"),
+                    Str(settings.BacaAraziKotuSurface ?? "Arazi1"),
+                    Str(settings.BacaTerrasmanKotuSurface ?? "Arazi1"),
+                    Str(settings.BacaKirmiziKotC3DSurface ?? ""),
+                    Str(settings.BacaAraziKotuC3DSurface ?? ""),
+                    Str(settings.BacaTerrasmanKotuC3DSurface ?? ""),
+                    Str(settings.KaziSeviyesi ?? "Kırmızı Kot"),
+                    Str(settings.DolguSeviyesi ?? "Kırmızı Kot"),
+                    Str(settings.BacaKapakSeviyesi ?? "Kırmızı Kot"),
+                    I16((short)settings.RingFillMode),
+                    I16((short)settings.NetLengthMode));
 
                 // Manhole lookup by system name (first wins on duplicate names).
                 var sysByName = new Dictionary<string, SystemBoQ>(StringComparer.Ordinal);
@@ -213,7 +227,19 @@ namespace UrbanoMetraj.BoQ.Services
                         I16((short)settings.Language),
                         Str(settings.ManholeConfigPath ?? ""),
                         Dbl(settings.SolidDisplayInterval),
-                        Dbl(settings.CrossSectionInterval));
+                        Dbl(settings.CrossSectionInterval),
+                        I16((short)(settings.BacaKaziHesapla ? 1 : 0)),
+                        Str(settings.BacaKirmiziKotSurface ?? "Arazi1"),
+                        Str(settings.BacaAraziKotuSurface ?? "Arazi1"),
+                        Str(settings.BacaTerrasmanKotuSurface ?? "Arazi1"),
+                        Str(settings.BacaKirmiziKotC3DSurface ?? ""),
+                        Str(settings.BacaAraziKotuC3DSurface ?? ""),
+                        Str(settings.BacaTerrasmanKotuC3DSurface ?? ""),
+                        Str(settings.KaziSeviyesi ?? "Kırmızı Kot"),
+                        Str(settings.DolguSeviyesi ?? "Kırmızı Kot"),
+                        Str(settings.BacaKapakSeviyesi ?? "Kırmızı Kot"),
+                        I16((short)settings.RingFillMode),
+                        I16((short)settings.NetLengthMode));
                 }
 
                 tr.Commit();
@@ -260,7 +286,20 @@ namespace UrbanoMetraj.BoQ.Services
                     Language             = (ExportLanguage)ReadI16(meta, ref mi),
                     ManholeConfigPath      = ReadStr(meta, ref mi),
                     SolidDisplayInterval   = mi < meta.Length ? ReadDbl(meta, ref mi) : 5.0,
-                    CrossSectionInterval   = mi < meta.Length ? ReadDbl(meta, ref mi) : 5.0
+                    CrossSectionInterval   = mi < meta.Length ? ReadDbl(meta, ref mi) : 5.0,
+                    // Appended fields (absent in old DWGs — default gracefully).
+                    BacaKaziHesapla          = mi < meta.Length && ReadI16(meta, ref mi) != 0,
+                    BacaKirmiziKotSurface    = mi < meta.Length ? ReadStr(meta, ref mi) : "Arazi1",
+                    BacaAraziKotuSurface     = mi < meta.Length ? ReadStr(meta, ref mi) : "Arazi1",
+                    BacaTerrasmanKotuSurface = mi < meta.Length ? ReadStr(meta, ref mi) : "Arazi1",
+                    BacaKirmiziKotC3DSurface    = mi < meta.Length ? ReadStr(meta, ref mi) : "",
+                    BacaAraziKotuC3DSurface     = mi < meta.Length ? ReadStr(meta, ref mi) : "",
+                    BacaTerrasmanKotuC3DSurface = mi < meta.Length ? ReadStr(meta, ref mi) : "",
+                    KaziSeviyesi        = mi < meta.Length ? ReadStr(meta, ref mi) : "Kırmızı Kot",
+                    DolguSeviyesi       = mi < meta.Length ? ReadStr(meta, ref mi) : "Kırmızı Kot",
+                    BacaKapakSeviyesi   = mi < meta.Length ? ReadStr(meta, ref mi) : "Kırmızı Kot",
+                    RingFillMode        = mi < meta.Length ? (RingFillMode)ReadI16(meta, ref mi) : RingFillMode.Greedy,
+                    NetLengthMode       = mi < meta.Length ? (NetLengthMode)ReadI16(meta, ref mi) : NetLengthMode.OuterDiameter
                 };
 
                 var report = new BoQReport();
@@ -423,6 +462,58 @@ namespace UrbanoMetraj.BoQ.Services
                 tvs.Add(Dbl(m.RotationAngleRad ?? 0.0));
             }
 
+            // Appended AFTER the rotation-angle block — Kot/Seviye Ayarları-resolved
+            // elevations and the Dolgu-basis pit depth/volume (2026-07-06 feature).
+            // Needed on the reload path (URBANO_BOQ_VIEW → DwgBoQStore.Load, which
+            // re-runs ManholeExcavOverlapService.Compute but not BoQParserService.Parse
+            // or ManholeAIService.Process) so ZKazi/ZDolgu/DolguFinalDepth/
+            // DolguBasisVolume are still available instead of silently reading back
+            // as 0 (which would zero out BackfillVolume and the excavation-overlap
+            // zTop on every reopen).
+            foreach (var m in mhs)
+            {
+                tvs.Add(Dbl(m.ZKazi));
+                tvs.Add(Dbl(m.ZDolgu));
+                tvs.Add(Dbl(m.ZBacaKapak));
+                tvs.Add(Dbl(m.DolguFinalDepth));
+                tvs.Add(Dbl(m.DolguBasisVolume));
+                tvs.Add(I16(m.DolguInvalid ? (short)1 : (short)0));
+            }
+
+            // Appended AFTER the Kot/Seviye Ayarları block — the resolved Taban's
+            // Temel Altı Parça (sub-base pieces), needed by the Baca Kesif Tablosu
+            // export's Load()-only reload path (BacaKesifTablosuCommand never
+            // re-runs ManholeAIService.Process()).
+            foreach (var m in mhs)
+            {
+                var parts = m.ResolvedSubBaseParts ?? new List<TemelAltiParca>();
+                tvs.Add(I32(parts.Count));
+                foreach (var p in parts)
+                {
+                    tvs.Add(Str(p.Ad ?? ""));
+                    tvs.Add(Dbl(p.Boy));
+                    tvs.Add(Dbl(p.En));
+                    tvs.Add(Dbl(p.Kalinlik));
+                    tvs.Add(Str(p.Malzeme ?? ""));
+                }
+            }
+
+            // Appended AFTER the Temel Altı Parça block — the matched tier's Alt
+            // Temel Katmanları (sub-base preparation layers, e.g. "yataklama kumu"),
+            // needed by ManholeExcavOverlapService.Compute (SubBaseVolume) on the
+            // same Load()-only reload path.
+            foreach (var m in mhs)
+            {
+                var layers = m.ResolvedSubBaseLayers ?? new List<SubBaseLayer>();
+                tvs.Add(I32(layers.Count));
+                foreach (var l in layers)
+                {
+                    tvs.Add(Str(l.LayerName ?? ""));
+                    tvs.Add(Str(l.MaterialType ?? ""));
+                    tvs.Add(Dbl(l.ThicknessMm));
+                }
+            }
+
             MakeXRecord(tr, netDict, K_NETWORK_META, tvs.ToArray());
         }
 
@@ -506,6 +597,57 @@ namespace UrbanoMetraj.BoQ.Services
                 m.RotationAngleRad = hasAngle ? angle : (double?)null;
             }
 
+            // Trailing Kot/Seviye Ayarları elevation block (absent in old DWGs —
+            // Read* gracefully return 0, meaning a reload-only command computes
+            // zero overlap/backfill for that manhole until the next full Hesapla).
+            foreach (var m in sys.Manholes)
+            {
+                m.ZKazi           = ReadDbl(tvs, ref i);
+                m.ZDolgu          = ReadDbl(tvs, ref i);
+                m.ZBacaKapak      = ReadDbl(tvs, ref i);
+                m.DolguFinalDepth = ReadDbl(tvs, ref i);
+                m.DolguBasisVolume = ReadDbl(tvs, ref i);
+                m.DolguInvalid     = ReadI16(tvs, ref i) == 1;
+            }
+
+            // Trailing Temel Altı Parça block (absent in old DWGs — count reads as
+            // 0 past the end of tvs, so the loop below is simply skipped).
+            foreach (var m in sys.Manholes)
+            {
+                int partCount = ReadI32(tvs, ref i);
+                var parts = new List<TemelAltiParca>(partCount);
+                for (int p = 0; p < partCount && i < tvs.Length; p++)
+                {
+                    parts.Add(new TemelAltiParca
+                    {
+                        Ad       = ReadStr(tvs, ref i),
+                        Boy      = ReadDbl(tvs, ref i),
+                        En       = ReadDbl(tvs, ref i),
+                        Kalinlik = ReadDbl(tvs, ref i),
+                        Malzeme  = ReadStr(tvs, ref i)
+                    });
+                }
+                m.ResolvedSubBaseParts = parts;
+            }
+
+            // Trailing Alt Temel Katmanları block (absent in old DWGs — count reads
+            // as 0 past the end of tvs, so the loop below is simply skipped).
+            foreach (var m in sys.Manholes)
+            {
+                int layerCount = ReadI32(tvs, ref i);
+                var layers = new List<SubBaseLayer>(layerCount);
+                for (int p = 0; p < layerCount && i < tvs.Length; p++)
+                {
+                    layers.Add(new SubBaseLayer
+                    {
+                        LayerName    = ReadStr(tvs, ref i),
+                        MaterialType = ReadStr(tvs, ref i),
+                        ThicknessMm  = ReadDbl(tvs, ref i)
+                    });
+                }
+                m.ResolvedSubBaseLayers = layers;
+            }
+
             return sys;
         }
 
@@ -563,6 +705,39 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             }
 
+            // Second trailing block (added with the net-pipe-length feature):
+            // WallThicknessMm per pre-cast part, same manhole/part order as above.
+            // Lets PipeNetLengthService resolve a manhole's outer-shell radius from
+            // a reloaded DWG (URBANO_BOQ_VIEW) without re-running ManholeAIService.
+            // 0 (missing/old DWG) means "no wall-thickness data" — behaves exactly
+            // like null in PipeNetLengthService's reduction formula (adds nothing).
+            foreach (var m in mhs)
+            {
+                if (m.StackPreCast?.Parts == null) continue;
+                foreach (var p in m.StackPreCast.Parts)
+                    tvs.Add(Dbl(p.WallThicknessMm ?? 0));
+            }
+
+            // Third trailing block (added with the net-pipe-length feature): one
+            // ResolvedFootprint per manhole (all manholes, not just pre-cast ones),
+            // in the same order as sys.Manholes. This is the ACTUAL resolved precast
+            // Taban's shape/size — deliberately separate from DrawnShape/Diameter/
+            // DrawnLengthM/DrawnWidthM (see ManholeItem.ResolvedFootprint doc) — so
+            // PipeNetLengthService gets correct results after a DWG reload too.
+            foreach (var m in mhs)
+            {
+                var fp = m.ResolvedFootprint;
+                tvs.Add(I16(fp != null ? (short)1 : (short)0));
+                if (fp != null)
+                {
+                    tvs.Add(I32((int)fp.Shape));
+                    tvs.Add(Dbl(fp.DiameterMm));
+                    tvs.Add(Dbl(fp.SideMm));
+                    tvs.Add(Dbl(fp.LengthMm));
+                    tvs.Add(Dbl(fp.WidthMm));
+                }
+            }
+
             MakeXRecord(tr, netDict, K_MANHOLE_STACKS, tvs.ToArray());
         }
 
@@ -585,10 +760,16 @@ namespace UrbanoMetraj.BoQ.Services
             // manhole/part order as the write side.
             var pcOrder = new List<ManholeItem>();
 
+            // Every manhole (found or not), in read order — needed to keep the
+            // ResolvedFootprint trailing block (one entry per manhole, not just
+            // pre-cast ones) positionally aligned with the write side.
+            var allOrder = new List<ManholeItem>();
+
             for (int k = 0; k < count && i < tvs.Length; k++)
             {
                 string nodeName = ReadStr(tvs, ref i);
                 lookup.TryGetValue(nodeName, out var mh);
+                allOrder.Add(mh);
 
                 // PreCast
                 short hasPc = ReadI16(tvs, ref i);
@@ -646,6 +827,38 @@ namespace UrbanoMetraj.BoQ.Services
                     p.UnitMaterialVolume = ReadDbl(tvs, ref i);
                     p.UnitExternalVolume = ReadDbl(tvs, ref i);
                 }
+
+            // Second trailing WallThicknessMm block (absent in older DWGs — Read*
+            // gracefully returns 0 past the end of tvs, same "no data" meaning as null).
+            foreach (var mh in pcOrder)
+                foreach (var p in mh.StackPreCast.Parts)
+                    p.WallThicknessMm = ReadDbl(tvs, ref i);
+
+            // Third trailing block: one ResolvedFootprint per manhole (absent in
+            // older DWGs — simply stops here, leaving ResolvedFootprint null exactly
+            // like an unresolved Taban).
+            foreach (var mh in allOrder)
+            {
+                if (i >= tvs.Length) break;
+                short hasFp = ReadI16(tvs, ref i);
+                if (hasFp == 1)
+                {
+                    var shape    = (FootprintShape)ReadI32(tvs, ref i);
+                    double diaMm  = ReadDbl(tvs, ref i);
+                    double sideMm = ReadDbl(tvs, ref i);
+                    double lenMm  = ReadDbl(tvs, ref i);
+                    double widMm  = ReadDbl(tvs, ref i);
+                    if (mh != null)
+                        mh.ResolvedFootprint = new Footprint
+                        {
+                            Shape      = shape,
+                            DiameterMm = diaMm,
+                            SideMm     = sideMm,
+                            LengthMm   = lenMm,
+                            WidthMm    = widMm
+                        };
+                }
+            }
         }
 
         private static void WritePipeMetadata(

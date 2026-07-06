@@ -79,21 +79,22 @@
 
                     <!-- ── Sol panel: Bileşen Aileleri ── -->
                     <DockPanel Grid.Column="0">
-                        <ToolBarTray DockPanel.Dock="Top">
-                            <ToolBar>
-                                <Button Content="+ Ekle"    Command="{Binding RepositoryTab.AddFamilyCommand}"
-                                        ToolTip="Yeni aile ekle"/>
-                                <Button Content="Sil"       Command="{Binding RepositoryTab.DeleteFamilyCommand}"
-                                        Margin="2,0,0,0" ToolTip="Seçili aileyi ve içeriğini sil"/>
-                                <Separator/>
-                                <Button Content="💾 Kaydet" Command="{Binding RepositoryTab.SaveCommand}"
-                                        ToolTip="Kataloğu cihaza kaydet (SmartAssemblyComponents.xml)"/>
-                                <Button Content="Dışa"      Command="{Binding RepositoryTab.ExportCommand}"
-                                        Margin="2,0,0,0" ToolTip="Dışa Aktar — farklı konuma XML olarak kaydet"/>
-                                <Button Content="İçe"       Command="{Binding RepositoryTab.ImportCommand}"
-                                        Margin="2,0,0,0" ToolTip="İçe Aktar — XML dosyasından yükle"/>
-                            </ToolBar>
-                        </ToolBarTray>
+                        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                            <Button Content="+ Ekle"    Command="{Binding RepositoryTab.AddFamilyCommand}"
+                                    Padding="8,2" Margin="0,0,4,2" ToolTip="Yeni aile ekle"/>
+                            <Button Content="Sil"       Command="{Binding RepositoryTab.DeleteFamilyCommand}"
+                                    Padding="8,2" Margin="0,0,8,2" ToolTip="Seçili aileyi ve içeriğini sil"/>
+                            <Separator Width="1" Height="20" Margin="0,0,8,2" Background="#BBBBBB"/>
+                            <Button Content="💾 Kaydet" Command="{Binding RepositoryTab.SaveCommand}"
+                                    Padding="8,2" Margin="0,0,4,2" ToolTip="Kataloğu cihaza kaydet (SmartAssemblyComponents.xml)"/>
+                            <Button Content="Dışa"      Command="{Binding RepositoryTab.ExportCommand}"
+                                    Padding="8,2" Margin="0,0,4,2" ToolTip="Dışa Aktar — farklı konuma XML olarak kaydet"/>
+                            <Button Content="İçe"       Command="{Binding RepositoryTab.ImportCommand}"
+                                    Padding="8,2" Margin="0,0,4,2" ToolTip="İçe Aktar — XML dosyasından yükle"/>
+                            <Button Content="Excel'den İçe"  Command="{Binding RepositoryTab.ImportExcelCommand}"
+                                    Padding="8,2" Margin="0,0,0,2"
+                                    ToolTip="Bir Excel (.xlsx) dosyasından, sütunları eşleştirerek seçili aileye toplu bileşen ekler."/>
+                        </WrapPanel>
                         <TextBlock Text="Bileşen Aileleri" FontWeight="SemiBold"
                                    DockPanel.Dock="Top" Margin="4,6,4,2"/>
                         <DataGrid ItemsSource="{Binding RepositoryTab.Families}"
@@ -362,6 +363,50 @@
                                                 <DataGridTextColumn Header="H (mm)"
                                                     Binding="{Binding HeightMm, UpdateSourceTrigger=PropertyChanged, StringFormat=0}"
                                                     Width="65"/>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </StackPanel>
+
+                                    <!-- Temel Altı Parça -->
+                                    <Separator Margin="0,6,0,4"/>
+                                    <CheckBox IsChecked="{Binding RepositoryTab.SelectedComponent.TemelAltiParcaEnabled,
+                                                          UpdateSourceTrigger=PropertyChanged}"
+                                              Content="Temel Altı Parça" Margin="0,0,0,4"/>
+                                    <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.TemelAltiParcaEnabled,
+                                                             Converter={StaticResource BoolToVis}}">
+                                        <DockPanel Margin="0,4,0,2">
+                                            <TextBlock Text="Temel Altı Parçalar" FontWeight="SemiBold"
+                                                       DockPanel.Dock="Left" VerticalAlignment="Center"/>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <Button Content="+ Parça"
+                                                        Command="{Binding RepositoryTab.AddTemelAltiParcaCommand}"
+                                                        Padding="4,1" Margin="0,0,2,0"/>
+                                                <Button Content="Sil"
+                                                        Command="{Binding RepositoryTab.DeleteTemelAltiParcaCommand}"
+                                                        Padding="4,1"/>
+                                            </StackPanel>
+                                        </DockPanel>
+                                        <DataGrid ItemsSource="{Binding RepositoryTab.TemelAltiParcalar}"
+                                                  SelectedItem="{Binding RepositoryTab.SelectedTemelAltiParca}"
+                                                  AutoGenerateColumns="False" CanUserAddRows="False"
+                                                  MaxHeight="160"
+                                                  ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Ad"
+                                                    Binding="{Binding Ad, UpdateSourceTrigger=PropertyChanged}"
+                                                    Width="*"/>
+                                                <DataGridTextColumn Header="Boy (mm)"
+                                                    Binding="{Binding Boy, UpdateSourceTrigger=PropertyChanged, StringFormat=0}"
+                                                    Width="60"/>
+                                                <DataGridTextColumn Header="En (mm)"
+                                                    Binding="{Binding En, UpdateSourceTrigger=PropertyChanged, StringFormat=0}"
+                                                    Width="60"/>
+                                                <DataGridTextColumn Header="Kalınlık (mm)"
+                                                    Binding="{Binding Kalinlik, UpdateSourceTrigger=PropertyChanged, StringFormat=0}"
+                                                    Width="72"/>
+                                                <DataGridTextColumn Header="Malzeme"
+                                                    Binding="{Binding Malzeme, UpdateSourceTrigger=PropertyChanged}"
+                                                    Width="80"/>
                                             </DataGrid.Columns>
                                         </DataGrid>
                                     </StackPanel>

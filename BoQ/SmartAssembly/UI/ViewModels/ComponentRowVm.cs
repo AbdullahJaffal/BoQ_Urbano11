@@ -285,6 +285,20 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             }
         }
 
+        // ── BottomElement — temel altı parça ─────────────────────────────────
+
+        public bool TemelAltiParcaEnabled
+        {
+            get { var b = _model as BottomElementComponent; return b?.TemelAltiParcaEnabled ?? false; }
+            set
+            {
+                var b = _model as BottomElementComponent;
+                if (b == null) return;
+                b.TemelAltiParcaEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
         // ── MiddleElement / Adjuster ──────────────────────────────────────────
 
         public double? InnerDiamMm

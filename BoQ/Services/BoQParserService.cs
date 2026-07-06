@@ -156,7 +156,7 @@ namespace UrbanoMetraj.BoQ.Services
         // Public entry point
         // =====================================================================
 
-        public BoQReport Parse(string xmlPath, Editor ed = null)
+        public BoQReport Parse(string xmlPath, Editor ed = null, BoQSettings settings = null)
         {
             if (!File.Exists(xmlPath))
                 throw new FileNotFoundException($"Urbano export not found: {xmlPath}");
@@ -183,11 +183,14 @@ namespace UrbanoMetraj.BoQ.Services
             var nodes = ParseNodes(doc, catDict, sysNames, notes, ed);
             Dbg(ed, $"\n         {nodes.Count} node(s) found.");
 
+            Dbg(ed, "\n  [BoQ] Resolving Kot/Seviye Ayarları elevations…");
+            ResolveElevations(nodes, settings, notes);
+
             Dbg(ed, "\n  [BoQ] Parsing sections + excavation…");
             var sections = ParseSections(doc, catDict, sysNames, nodes, notes, ed);
             Dbg(ed, $"\n         {sections.Count} section(s) calculated.");
 
-            ComputeManholeDepths(nodes, sections, ed);
+            ComputeManholeDepths(nodes, sections, notes, ed);
 
             Dbg(ed, "\n  [BoQ] Aggregating report + per-station clash detection…");
             AggregateIntoReport(report, sysNames, nodes, sections,
@@ -384,8 +387,14 @@ namespace UrbanoMetraj.BoQ.Services
             public string Name           { get; set; }   // AG_NAME  e.g. "4Y"
             public double X              { get; set; }   // easting  (hex-float decoded)
             public double Y              { get; set; }   // northing (hex-float decoded)
-            public double TerrainZ       { get; set; }   // TH1  – absolute terrain elevation (actually cover-top elevation)
-            public double TerrainZ2      { get; set; }   // TH2  – existing ground elevation; falls back to TH1 when absent
+            public double TerrainZ       { get; set; }   // TH1  – absolute terrain elevation (actually cover-top elevation). Display only.
+            public double TerrainZ2      { get; set; }   // TH2  – existing ground elevation; falls back to TH1 when absent. Display only.
+            /// <summary>Raw topology property bag (all "THn" keys included) — kept so ResolveElevations can look up whichever THn slot the Kot Ayarları mapping points to, without re-parsing the XML.</summary>
+            public Dictionary<string, string> RawProps { get; set; }
+            // ── Settings-resolved elevations (see BoQParserService.ResolveElevations) ──
+            public double ZKazi         { get; set; }
+            public double ZDolgu        { get; set; }
+            public double ZBacaKapak    { get; set; }
             public double Mhb            { get; set; }   // MHB  – invert-to-floor gap
             public string MhGuid         { get; set; }
             public int    MhDiameter     { get; set; }   // nominal shaft Ø, mm
@@ -404,8 +413,12 @@ namespace UrbanoMetraj.BoQ.Services
             public double? RotationAngleRad { get; set; }
             // Computed in ComputeManholeDepths
             public double Depth            { get; set; }
-            public double ExcavationDepth  { get; set; }   // H = TerrainZ − lowestInvert
+            public double ExcavationDepth  { get; set; }   // H = ZKazi − lowestInvert
             public double ExcavationVolume { get; set; }   // Simpson's 1/3 rule (m³)
+            /// <summary>Dolgu-basis baseline depth (ZDolgu − lowestInvert + MHB, unclamped). See ManholeItem.DolguBaselineDepth.</summary>
+            public double DolguBaselineDepth { get; set; }
+            /// <summary>True when Dolgu Seviyesi resolves below the lowest connected invert/manhole floor — an invalid configuration, not a legitimate shallow-backfill case.</summary>
+            public bool   DolguInvalid       { get; set; }
         }
 
         private sealed class SectionInfo
@@ -463,6 +476,8 @@ namespace UrbanoMetraj.BoQ.Services
             public double VSurround             { get; set; }   // ASurroundNet × Length2D  (m³)
             public double ExcavVol              { get; set; }   // avg(AExcav)  × Length2D  (m³)  [modified in-place by clash detection]
             public double VBackfill             { get; set; }   // avg(ABackfill) × Length2D (m³) [modified in-place by clash detection]
+            /// <summary>True when ZDolgu resolves below the invert at either end — invalid Dolgu Seviyesi, VBackfill stays 0.</summary>
+            public bool   DolguInvalid          { get; set; }
             // ── Clash detection (populated by ComputeTrenchClashes) ────────────
             public double OverlapExcavDeducted    { get; set; }   // kazı  deduction from trench clash
             public double OverlapBackfillDeducted { get; set; }   // dolgu deduction from trench clash
@@ -498,8 +513,11 @@ namespace UrbanoMetraj.BoQ.Services
                 int    sysId = DecodeIntProp  (GetProp(props, "AG_ID_SYSTEM"));
                 string name  = DecodeStrProp  (GetProp(props, "AG_NAME"));
                 double th1   = DecodeFloatProp(GetProp(props, "TH1"));
+                // TH2 (existing ground) stays 0 when absent from this export — 0 is the
+                // "not found" sentinel (no real project elevation is exactly 0 a.s.l.);
+                // ManholeKesifExportService renders 0 as a blank cell rather than
+                // fabricating a value, per user's explicit correction (2026-07-05).
                 double th2   = DecodeFloatProp(GetProp(props, "TH2"));
-                if (th2 == 0) th2 = th1;   // TH2 (existing ground) absent from this export — assume same as TH1 (cover-top)
                 double mhb   = DecodeFloatProp(GetProp(props, "MHB"));
                 string mhGuid= DecodeGuidStr  (GetProp(props, "MH"));
 
@@ -567,6 +585,7 @@ namespace UrbanoMetraj.BoQ.Services
                     Y          = y,
                     TerrainZ   = th1,
                     TerrainZ2  = th2,
+                    RawProps   = props,
                     Mhb        = mhb,
                     MhGuid     = mhGuid,
                     MhDiameter = mhDiam,
@@ -577,6 +596,80 @@ namespace UrbanoMetraj.BoQ.Services
                 };
             }
             return result;
+        }
+
+        // =====================================================================
+        // Step 3b – Resolve settings-driven elevations (Kot Ayarları / Seviye Ayarları)
+        // =====================================================================
+
+        /// <summary>
+        /// Resolves ZKazi/ZDolgu/ZBacaKapak for every node from BoQSettings, replacing
+        /// the old hardcoded "always TH1" behaviour. Two-level indirection:
+        ///   1. Seviye Ayarları picks a NAMED kot ("Kırmızı Kot"/"Arazi Kotu"/"Terrasman Kotu")
+        ///      for each of Kazı/Dolgu/Baca Kapak.
+        ///   2. Kot Ayarları maps that named kot to an "AraziN" slot (→ THN property).
+        /// A node missing the required THN (genuinely absent from the export, not
+        /// just decoded as 0) resolves to 0 and is reported by name in <paramref name="notes"/>
+        /// — never silently guessed (matches this file's existing explicit-failure
+        /// convention for unresolved catalog/trench data).
+        /// </summary>
+        private static void ResolveElevations(
+            Dictionary<string, NodeInfo> nodes,
+            BoQSettings settings,
+            List<string> notes)
+        {
+            settings = settings ?? new BoQSettings();
+
+            int kaziSlot      = ResolveNamedKotSlot(settings, settings.KaziSeviyesi);
+            int dolguSlot     = ResolveNamedKotSlot(settings, settings.DolguSeviyesi);
+            int bacaKapakSlot = ResolveNamedKotSlot(settings, settings.BacaKapakSeviyesi);
+
+            foreach (var nd in nodes.Values)
+            {
+                nd.ZKazi      = ResolveNodeTh(nd, kaziSlot,      "Kazı Seviyesi",       settings.KaziSeviyesi,      notes);
+                nd.ZDolgu     = ResolveNodeTh(nd, dolguSlot,     "Dolgu Seviyesi",      settings.DolguSeviyesi,     notes);
+                nd.ZBacaKapak = ResolveNodeTh(nd, bacaKapakSlot, "Baca Kapak Seviyesi", settings.BacaKapakSeviyesi, notes);
+            }
+        }
+
+        /// <summary>Maps a named kot ("Kırmızı Kot"/"Arazi Kotu"/"Terrasman Kotu") to its
+        /// configured "AraziN" slot number via the Kot Ayarları section of settings.
+        /// Unknown/empty names default to slot 1 (Arazi1 = TH1), preserving the
+        /// pre-existing "always TH1" behaviour for callers that pass no settings.</summary>
+        private static int ResolveNamedKotSlot(BoQSettings settings, string namedKot)
+        {
+            string slotLabel;
+            switch (namedKot)
+            {
+                case "Arazi Kotu":     slotLabel = settings.BacaAraziKotuSurface;     break;
+                case "Terrasman Kotu": slotLabel = settings.BacaTerrasmanKotuSurface; break;
+                case "Kırmızı Kot":
+                default:               slotLabel = settings.BacaKirmiziKotSurface;    break;
+            }
+            return ParseAraziSlotNumber(slotLabel);
+        }
+
+        /// <summary>Parses "Arazi3" → 3. Falls back to 1 (Arazi1 = TH1) for null/malformed labels.</summary>
+        private static int ParseAraziSlotNumber(string label)
+        {
+            if (string.IsNullOrEmpty(label)) return 1;
+            var m = Regex.Match(label, @"\d+");
+            return m.Success && int.TryParse(m.Value, out int n) && n > 0 ? n : 1;
+        }
+
+        /// <summary>Reads "TH{slot}" from a node's raw property bag. Missing key (genuinely
+        /// absent from the export) is reported by node name + setting + slot and resolves
+        /// to 0 — not silently substituted from another slot.</summary>
+        private static double ResolveNodeTh(
+            NodeInfo nd, int slot, string settingLabel, string namedKot, List<string> notes)
+        {
+            string key = "TH" + slot;
+            if (nd.RawProps != null && nd.RawProps.ContainsKey(key))
+                return DecodeFloatProp(nd.RawProps[key]);
+
+            notes.Add($"[HATA] Baca '{nd.Name}': {key} değeri bulunamadı " +
+                      $"({settingLabel} = \"{namedKot}\" → Arazi{slot} için gerekli).");
+            return 0;
         }
 
         // =====================================================================
@@ -711,11 +804,11 @@ namespace UrbanoMetraj.BoQ.Services
                     len2D = Math.Sqrt(dx * dx + dy * dy);
                 }
 
-                // Depth to invert at each end (terrain − invert). Independent of the
+                // Depth to invert at each end (Kazı top − invert). Independent of the
                 // trench catalog's own bed-height output, so it's safe to compute
                 // before resolving the catalog tier (no circularity).
-                double depthToInvS = snNode != null ? Math.Max(0, snNode.TerrainZ - invertStart) : 0;
-                double depthToInvE = enNode != null ? Math.Max(0, enNode.TerrainZ - invertEnd)   : 0;
+                double depthToInvS = snNode != null ? Math.Max(0, snNode.ZKazi - invertStart) : 0;
+                double depthToInvE = enNode != null ? Math.Max(0, enNode.ZKazi - invertEnd)   : 0;
 
                 // ── Trench catalog (our PipeTrenchCatalog — replaces Urbano's TRNC) ──
                 // Tier is selected by pipe OD band + the DEEPER of the two end depths
@@ -851,12 +944,18 @@ namespace UrbanoMetraj.BoQ.Services
                 // TrueDepth values exist — its total height is not tier-constant.
 
                 // ── ③ + ④ Excavation & Backfill (variable per end) ────────────
-                // depthToInvS/E were already computed above (used to pick the trench tier).
+                // depthToInvS/E (Kazı, ZKazi-based) were already computed above (used
+                // to pick the trench tier). Backfill is NOT derived from the excavation
+                // trapezoid any more — it's the SAME extraction re-run with ZDolgu as
+                // its own top (user directive 2026-07-06), since the two levels can
+                // differ (e.g. natural ground vs. under-asphalt/Terrasman level).
                 double trueDeptS   = 0, trueDeptE   = 0;
                 double topWExcavS  = 0, topWExcavE  = 0;
                 double aExcavS     = 0, aExcavE     = 0;
+                double trueDeptDolguS = 0, trueDeptDolguE = 0;
                 double aBackfillS  = 0, aBackfillE  = 0;
                 double excavVol    = 0, vBackfill   = 0;
+                bool   dolguInvalid = false;
 
                 if (snNode != null && enNode != null && len2D > 0)
                 {
@@ -869,27 +968,53 @@ namespace UrbanoMetraj.BoQ.Services
                     aExcavS = (trWidth + topWExcavS) / 2.0 * trueDeptS;
                     aExcavE = (trWidth + topWExcavE) / 2.0 * trueDeptE;
 
-                    aBackfillS = Math.Max(0, aExcavS - aBed - aSurrGross);
-                    aBackfillE = Math.Max(0, aExcavE - aBed - aSurrGross);
-
                     excavVol  = (aExcavS   + aExcavE)   * 0.5 * len2D;
-                    vBackfill = (aBackfillS + aBackfillE) * 0.5 * len2D;
+
+                    // Dolgu-basis: same trapezoid formula, ZDolgu top instead of ZKazi.
+                    // Invalid (not clamped to 0) when the Dolgu top sits below the
+                    // pipe's own invert at either end — a design error, not a
+                    // legitimate shallow-backfill case.
+                    dolguInvalid = snNode.ZDolgu < invertStart || enNode.ZDolgu < invertEnd;
+                    if (dolguInvalid)
+                    {
+                        notes.Add($"[HATA] Boru '{snNode.Name}→{enNode.Name}': Dolgu Seviyesi, " +
+                                  "boru akış kotunun altında — Geri Dolgu hacmi hesaplanamadı.");
+                    }
+                    else
+                    {
+                        double depthToInvDolguS = Math.Max(0, snNode.ZDolgu - invertStart);
+                        double depthToInvDolguE = Math.Max(0, enNode.ZDolgu - invertEnd);
+                        trueDeptDolguS = depthToInvDolguS + trBedHeight;
+                        trueDeptDolguE = depthToInvDolguE + trBedHeight;
+
+                        double topWDolguS = trWidth + 2.0 * trueDeptDolguS * slopeRatio;
+                        double topWDolguE = trWidth + 2.0 * trueDeptDolguE * slopeRatio;
+
+                        double aDolguGrossS = (trWidth + topWDolguS) / 2.0 * trueDeptDolguS;
+                        double aDolguGrossE = (trWidth + topWDolguE) / 2.0 * trueDeptDolguE;
+
+                        aBackfillS = Math.Max(0, aDolguGrossS - aBed - aSurrGross);
+                        aBackfillE = Math.Max(0, aDolguGrossE - aBed - aSurrGross);
+
+                        vBackfill = (aBackfillS + aBackfillE) * 0.5 * len2D;
+                    }
 
                     // ── Geri Dolgu layer split (Phase 2b, revised) ────────────────
                     // Total Geri Dolgu height genuinely varies per station (terrain-
                     // dependent), unlike Yataklama/Gömlekleme. Representative height
                     // for RATIO purposes only = average of the two ends' nominal
-                    // (pre-clash) backfill heights. A layer with IsFillToSurface=true
-                    // absorbs whatever remains between the fixed layers listed before
-                    // it (measured bottom-up) and the fixed layers listed after it
-                    // (measured from this representative top downward) — bottom-up
-                    // catalog order is preserved, so feeding the whole resolved list
-                    // through ComputeLayerRatios reconstructs every layer's real
+                    // (pre-clash) backfill heights, measured from the Dolgu-basis depth
+                    // (not the Kazı depth — the two can differ). A layer with
+                    // IsFillToSurface=true absorbs whatever remains between the fixed
+                    // layers listed before it (measured bottom-up) and the fixed layers
+                    // listed after it (measured from this representative top downward) —
+                    // bottom-up catalog order is preserved, so feeding the whole resolved
+                    // list through ComputeLayerRatios reconstructs every layer's real
                     // position automatically, fill row included.
-                    if (trenchTier != null && trenchTier.BackfillLayers.Count > 0)
+                    if (!dolguInvalid && trenchTier != null && trenchTier.BackfillLayers.Count > 0)
                     {
-                        double hBackS = Math.Max(0, trueDeptS - trBedHeight - hSurround);
-                        double hBackE = Math.Max(0, trueDeptE - trBedHeight - hSurround);
+                        double hBackS = Math.Max(0, trueDeptDolguS - trBedHeight - hSurround);
+                        double hBackE = Math.Max(0, trueDeptDolguE - trBedHeight - hSurround);
                         double hBackAvg = (hBackS + hBackE) / 2.0;
 
                         double fixedSum = trenchTier.BackfillLayers
@@ -965,6 +1090,7 @@ namespace UrbanoMetraj.BoQ.Services
                     VSurround        = vSurround,
                     ExcavVol         = excavVol,
                     VBackfill        = vBackfill,
+                    DolguInvalid     = dolguInvalid,
                     // trench layer split ratios
                     BeddingLayerSplits    = beddingSplits,
                     BoruEtrafiLayerSplits = boruEtrafiSplits,
@@ -1113,6 +1239,7 @@ namespace UrbanoMetraj.BoQ.Services
         private static void ComputeManholeDepths(
             Dictionary<string, NodeInfo> nodes,
             List<SectionInfo>            sections,
+            List<string>                 notes,
             Editor ed)
         {
             foreach (var n in nodes.Values)
@@ -1132,10 +1259,15 @@ namespace UrbanoMetraj.BoQ.Services
                 AddInvert(invertsByNode, sec.EnGuid, sec.InvertEnd, wallM);
             }
 
-            // Structural depth (to the manhole's own floor) = ( TH1 − lowest_invert ) + MHB
+            // Structural depth (to the manhole's own floor) = ( ZBacaKapak − lowest_invert ) + MHB
             //       ≡ Sirt_Derinligi + Outer_Diameter + MHB
             // MHB is already invert-referenced ("gap between lowest pipe invert and
             // manhole floor"), so no wall-thickness term belongs here.
+            //
+            // Excavation (Kazı) and Backfill (Dolgu) baselines are each computed
+            // independently from their OWN resolved elevation (ZKazi/ZDolgu) — they
+            // are no longer derived from nd.Depth (which is cover/ZBacaKapak-based
+            // and answers a different question: ring-stack height, not dig depth).
             foreach (var nd in nodes.Values)
             {
                 if (!invertsByNode.ContainsKey(nd.Guid) ||
@@ -1145,12 +1277,15 @@ namespace UrbanoMetraj.BoQ.Services
                 var lowest        = invertsByNode[nd.Guid].OrderBy(x => x.Invert).First();
                 double lowestInvert  = lowest.Invert;
                 double lowestWallM   = lowest.WallM;
-                nd.Depth = Math.Max(0, (nd.TerrainZ - lowestInvert) + nd.Mhb);
+                nd.Depth = Math.Max(0, (nd.ZBacaKapak - lowestInvert) + nd.Mhb);
 
                 // Raw excavation depth baseline (user directive 2026-07-05): the pit
                 // must clear the lowest connected pipe's own BODY, not just its
                 // invert (flow line) — so add that pipe's wall thickness on top of
-                // the structural depth. The catalog-driven final depth (+ Taban slab
+                // the structural depth. Clamped to 0 (never negative) when ZKazi
+                // (natural ground) sits below the lowest invert/manhole floor — a
+                // legitimate case near outfalls, not an error (user directive
+                // 2026-07-06). The catalog-driven final depth (+ Taban slab
                 // thickness + Alt Temel Katmanları) and the actual pit VOLUME are
                 // computed later in ManholeAIService.ProcessManhole, once the Taban
                 // component is resolved (needed for TabanKalinligiMm and to look up
@@ -1158,11 +1293,30 @@ namespace UrbanoMetraj.BoQ.Services
                 // here since Taban resolution runs long after Parse(). Volume stays 0
                 // until then; ExcavationDepth stays at this raw value if resolution
                 // ends up failing (explicit-failure convention, not a silent guess).
-                nd.ExcavationDepth  = nd.Depth + lowestWallM;
+                double kaziRaw      = (nd.ZKazi - lowestInvert) + nd.Mhb;
+                nd.ExcavationDepth  = Math.Max(0, kaziRaw) + lowestWallM;
                 nd.ExcavationVolume = 0;
 
+                // Dolgu-basis baseline: same formula, ZDolgu top. NOT clamped to 0 —
+                // a negative value means Dolgu Seviyesi resolves below the lowest
+                // invert/manhole floor, which is a design error (user directive
+                // 2026-07-06), reported by manhole name rather than silently zeroed.
+                double dolguRaw = (nd.ZDolgu - lowestInvert) + nd.Mhb;
+                if (dolguRaw < 0)
+                {
+                    nd.DolguInvalid       = true;
+                    nd.DolguBaselineDepth = 0;
+                    notes.Add($"[HATA] Baca '{nd.Name}': Dolgu Seviyesi, en düşük boru/baca " +
+                              "kotunun altında — Baca Geri Dolgu hacmi hesaplanamadı.");
+                }
+                else
+                {
+                    nd.DolguBaselineDepth = dolguRaw + lowestWallM;
+                }
+
                 Dbg(ed, $"\n  [BoQ-DBG] Node {nd.Name,-4}: " +
-                        $"TH1={nd.TerrainZ:F3}  lowestInv={lowestInvert:F3}" +
+                        $"ZBacaKapak={nd.ZBacaKapak:F3}  ZKazi={nd.ZKazi:F3}  ZDolgu={nd.ZDolgu:F3}" +
+                        $"  lowestInv={lowestInvert:F3}" +
                         $"  wallM={lowestWallM:F3}  MHB={nd.Mhb:F3}  Depth={nd.Depth:F3}");
             }
         }
@@ -1218,10 +1372,13 @@ namespace UrbanoMetraj.BoQ.Services
                     Length2D              = sec.Length2D,
                     StartX                = snNode?.X ?? 0,
                     StartY                = snNode?.Y ?? 0,
-                    StartTerrainZ         = snNode?.TerrainZ ?? 0,
+                    StartTerrainZ         = snNode?.ZKazi ?? 0,
                     EndX                  = enNode?.X ?? 0,
                     EndY                  = enNode?.Y ?? 0,
-                    EndTerrainZ           = enNode?.TerrainZ ?? 0,
+                    EndTerrainZ           = enNode?.ZKazi ?? 0,
+                    StartDolguZ           = snNode?.ZDolgu ?? 0,
+                    EndDolguZ             = enNode?.ZDolgu ?? 0,
+                    DolguInvalid          = sec.DolguInvalid,
                     InvertStart           = sec.InvertStart,
                     InvertEnd             = sec.InvertEnd,
                     DepthToInvStart       = sec.DepthToInvStart,
@@ -1349,12 +1506,17 @@ namespace UrbanoMetraj.BoQ.Services
                         Y                 = nd.Y,
                         TerrainElevation  = nd.TerrainZ,
                         ExistingGroundElevation = nd.TerrainZ2,
+                        ZKazi             = nd.ZKazi,
+                        ZDolgu            = nd.ZDolgu,
+                        ZBacaKapak        = nd.ZBacaKapak,
                         Depth             = nd.Depth,
                         Diameter          = nd.MhDiameter,
                         MhGuid            = nd.MhGuid,
                         Count             = 1,
                         ExcavationDepth   = nd.ExcavationDepth,
                         ExcavationVolume  = nd.ExcavationVolume,
+                        DolguBaselineDepth = nd.DolguBaselineDepth,
+                        DolguInvalid       = nd.DolguInvalid,
                         DrawnShape        = nd.DrawnShape,
                         DrawnLengthM      = nd.DrawnLengthM,
                         DrawnWidthM       = nd.DrawnWidthM,
@@ -1536,7 +1698,8 @@ namespace UrbanoMetraj.BoQ.Services
                 double f        = Math.Min(t / row.Length2D, 1.0);
                 double x        = row.StartX        + (row.EndX        - row.StartX)        * f;
                 double y        = row.StartY        + (row.EndY        - row.StartY)        * f;
-                double terrainZ = row.StartTerrainZ + (row.EndTerrainZ - row.StartTerrainZ) * f;
+                double terrainZ = row.StartTerrainZ + (row.EndTerrainZ - row.StartTerrainZ) * f;   // ZKazi
+                double dolguZ   = row.StartDolguZ   + (row.EndDolguZ   - row.StartDolguZ)   * f;   // ZDolgu
                 double invertZ  = row.InvertStart   + (row.InvertEnd   - row.InvertStart)   * f;
 
                 double depthToInv = Math.Max(0, terrainZ - invertZ);
@@ -1544,17 +1707,28 @@ namespace UrbanoMetraj.BoQ.Services
                 double topWExcav  = row.TrWidth + 2.0 * trueDepth * row.SlopeRatio;
                 double hwExcav    = topWExcav * 0.5;
 
+                // Backfill is NOT sliced off the excavation trapezoid any more — it's
+                // the SAME trapezoid formula re-run with ZDolgu as its own top (user
+                // directive 2026-07-06), since Kazı (natural ground) and Dolgu
+                // (under-asphalt/Terrasman level) can genuinely differ.
+                bool   stationDolguInvalid = dolguZ < invertZ;
+                double trueDepthDolgu = stationDolguInvalid ? 0 : Math.Max(0, dolguZ - invertZ) + row.TrBedHeight;
+                double topWDolgu      = row.TrWidth + 2.0 * trueDepthDolgu * row.SlopeRatio;
+                double hwDolgu        = topWDolgu * 0.5;
+
                 // Z-levels at this station
                 double zBot     = invertZ - row.TrBedHeight;                       // trench bottom
-                double zTop     = terrainZ;                                         // ground surface
-                double zSurrTop = Math.Min(invertZ + row.HSurround, zTop);         // top of surround
+                double zTop     = terrainZ;                                         // Kazı top (ground surface)
+                double zTopDolgu = stationDolguInvalid ? zBot : dolguZ;             // Dolgu top (own reference)
+                double zSurrTop = Math.Min(invertZ + row.HSurround, zTop);         // top of surround (Kazı-referenced — surround always sits well below either top)
+                bool   backfillDegenerate = stationDolguInvalid || zTopDolgu <= zSurrTop;
 
                 // ── Polygon definitions (CCW in U-Z frame) ────────────────────
                 //
-                //  Excavation  : full trench from zBot → zTop
+                //  Excavation  : full trench from zBot   → zTop       (Kazı — unchanged)
                 //  Bedding     : zBot → invertZ       (constant widths hwBase/hwBed)
                 //  Surround    : invertZ → zSurrTop   (constant widths hwBed/hwSurr)
-                //  Backfill    : zSurrTop → zTop      (widths hwSurr/hwExcav vary per station)
+                //  Backfill    : zSurrTop → zTopDolgu (widths hwSurr/hwDolgu — own Dolgu-basis top)
 
                 var excavPoly = new List<double[]>
                 {
@@ -1577,19 +1751,19 @@ namespace UrbanoMetraj.BoQ.Services
                     new[] {  hwSurr, zSurrTop },
                     new[] { -hwSurr, zSurrTop }
                 };
-                var backfillPoly = new List<double[]>
+                var backfillPoly = backfillDegenerate ? new List<double[]>() : new List<double[]>
                 {
-                    new[] { -hwSurr,  zSurrTop },
-                    new[] {  hwSurr,  zSurrTop },
-                    new[] {  hwExcav, zTop     },
-                    new[] { -hwExcav, zTop     }
+                    new[] { -hwSurr,  zSurrTop  },
+                    new[] {  hwSurr,  zSurrTop  },
+                    new[] {  hwDolgu, zTopDolgu },
+                    new[] { -hwDolgu, zTopDolgu }
                 };
 
                 // ── Areas (shoelace, snapped to (0.1 mm)² = 1e-8 m²) ────────
                 double aExcav    = Math.Round(PolyArea2D(excavPoly),    8);
                 double aBedding  = Math.Round(PolyArea2D(beddingPoly),  8);
                 double aSurround = Math.Round(Math.Max(0, PolyArea2D(surroundPoly) - row.PipeArea), 8);
-                double aBackfill = Math.Round(PolyArea2D(backfillPoly), 8);
+                double aBackfill = backfillDegenerate ? 0.0 : Math.Round(PolyArea2D(backfillPoly), 8);
 
                 stations.Add(new CrossSectionStation
                 {
@@ -1597,6 +1771,10 @@ namespace UrbanoMetraj.BoQ.Services
                     WorldX          = x,
                     WorldY          = y,
                     TerrainZ        = terrainZ,
+                    DolguZ          = dolguZ,
+                    TrueDepthDolgu  = trueDepthDolgu,
+                    TopWidthDolgu   = topWDolgu,
+                    DolguInvalid    = stationDolguInvalid,
                     InvertZ         = invertZ,
                     TrueDepth       = trueDepth,
                     TopWidthExcav   = topWExcav,

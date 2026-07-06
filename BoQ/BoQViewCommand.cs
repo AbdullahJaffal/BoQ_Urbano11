@@ -70,6 +70,13 @@ namespace UrbanoMetraj.BoQ
                     ed.WriteMessage(
                         $"\n[BoQ] Loaded: {report.Systems?.Count ?? 0} system(s), " +
                         $"{report.SectionDebug?.Count ?? 0} section(s).\n");
+
+                    // NetLength is runtime-only (not persisted) — recompute it now
+                    // from the just-loaded data (Length2D, inverts, manhole
+                    // diameter/stack/WallThicknessMm all round-trip through the DWG).
+                    try { PipeNetLengthService.Compute(report, settings.NetLengthMode); }
+                    catch (System.Exception netLenEx)
+                    { ed.WriteMessage($"\n[BoQ] Uyarı: Net uzunluk hesap hatası: {netLenEx.Message}"); }
                 }
             }
 

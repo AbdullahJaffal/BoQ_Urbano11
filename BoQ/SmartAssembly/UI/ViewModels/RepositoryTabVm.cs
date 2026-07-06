@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using UrbanoMetraj.BoQ.ExcelImport;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
 using UrbanoMetraj.BoQ.SmartAssembly.Serialization;
 using UrbanoMetraj.BoQ.SmartAssembly.Services;
@@ -50,6 +51,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                 OnPropertyChanged(nameof(IsReducerSelected));
                 OnPropertyChanged(nameof(IsCoverSelected));
                 LoadSubPieces();
+                LoadTemelAltiParcalar();
             }
         }
 
@@ -86,6 +88,19 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
         public bool IsSubPieceSelected => _selectedSubPiece != null;
 
+        // ── Temel Altı Parçalar ────────────────────────────────────────────────
+        public ObservableCollection<TemelAltiParcaRowVm> TemelAltiParcalar { get; }
+            = new ObservableCollection<TemelAltiParcaRowVm>();
+
+        private TemelAltiParcaRowVm _selectedTemelAltiParca;
+        public TemelAltiParcaRowVm SelectedTemelAltiParca
+        {
+            get => _selectedTemelAltiParca;
+            set { Set(ref _selectedTemelAltiParca, value); OnPropertyChanged(nameof(IsTemelAltiParcaSelected)); }
+        }
+
+        public bool IsTemelAltiParcaSelected => _selectedTemelAltiParca != null;
+
         // ── Commands ───────────────────────────────────────────────────────────
         public ICommand AddFamilyCommand    { get; }
         public ICommand DeleteFamilyCommand { get; }
@@ -95,8 +110,11 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public ICommand SaveCommand         { get; }
         public ICommand ExportCommand       { get; }
         public ICommand ImportCommand       { get; }
-        public ICommand AddSubPieceCommand    { get; }
-        public ICommand DeleteSubPieceCommand { get; }
+        public ICommand ImportExcelCommand  { get; }
+        public ICommand AddSubPieceCommand        { get; }
+        public ICommand DeleteSubPieceCommand     { get; }
+        public ICommand AddTemelAltiParcaCommand    { get; }
+        public ICommand DeleteTemelAltiParcaCommand { get; }
 
         // Aliases so Tab 1 XAML bindings that still use old names keep compiling
         public ICommand SaveCurrentCommand => SaveCommand;
@@ -134,8 +152,11 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             SaveCommand         = new RelayCommand(OnSave);
             ExportCommand       = new RelayCommand(OnExport);
             ImportCommand       = new RelayCommand(OnImport);
-            AddSubPieceCommand    = new RelayCommand(OnAddSubPiece,    _ => IsBottomElementSelected);
-            DeleteSubPieceCommand = new RelayCommand(OnDeleteSubPiece, _ => IsSubPieceSelected);
+            ImportExcelCommand  = new RelayCommand(OnImportExcel, _ => IsFamilySelected);
+            AddSubPieceCommand          = new RelayCommand(OnAddSubPiece,           _ => IsBottomElementSelected);
+            DeleteSubPieceCommand       = new RelayCommand(OnDeleteSubPiece,        _ => IsSubPieceSelected);
+            AddTemelAltiParcaCommand    = new RelayCommand(OnAddTemelAltiParca,    _ => IsBottomElementSelected);
+            DeleteTemelAltiParcaCommand = new RelayCommand(OnDeleteTemelAltiParca, _ => IsTemelAltiParcaSelected);
 
             // Auto-load from fixed AppData path (silent, like PipeCatalog)
             var path = MasterCatalogXmlManager.DefaultComponentsPath;
@@ -244,6 +265,10 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                 foreach (var sp in b.SubPieces)
                     cb.SubPieces.Add(new SubPiece
                         { Name = sp.Name, HeightMm = sp.HeightMm, Description = sp.Description });
+                cb.TemelAltiParcaEnabled = b.TemelAltiParcaEnabled;
+                foreach (var tap in b.TemelAltiParcalar)
+                    cb.TemelAltiParcalar.Add(new TemelAltiParca
+                        { Ad = tap.Ad, Boy = tap.Boy, En = tap.En, Kalinlik = tap.Kalinlik, Malzeme = tap.Malzeme });
                 clone = cb;
             }
             else
@@ -349,6 +374,40 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             _selectedComponent?.RecalcEffectiveHeight();
         }
 
+        // ── Temel Altı Parça CRUD ──────────────────────────────────────────────
+
+        private void LoadTemelAltiParcalar()
+        {
+            TemelAltiParcalar.Clear();
+            SelectedTemelAltiParca = null;
+            var b = _selectedComponent?.Model as BottomElementComponent;
+            if (b == null) return;
+            foreach (var tap in b.TemelAltiParcalar)
+                TemelAltiParcalar.Add(new TemelAltiParcaRowVm(tap));
+        }
+
+        private void OnAddTemelAltiParca(object _)
+        {
+            var b = _selectedComponent?.Model as BottomElementComponent;
+            if (b == null) return;
+            var tap = new TemelAltiParca { Ad = "Yeni Parça " + (b.TemelAltiParcalar.Count + 1) };
+            b.TemelAltiParcalar.Add(tap);
+            var vm = new TemelAltiParcaRowVm(tap);
+            TemelAltiParcalar.Add(vm);
+            Application.Current?.Dispatcher?.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() => SelectedTemelAltiParca = vm));
+        }
+
+        private void OnDeleteTemelAltiParca(object _)
+        {
+            if (_selectedTemelAltiParca == null) return;
+            var b = _selectedComponent?.Model as BottomElementComponent;
+            b?.TemelAltiParcalar.Remove(_selectedTemelAltiParca.Model);
+            TemelAltiParcalar.Remove(_selectedTemelAltiParca);
+            SelectedTemelAltiParca = null;
+        }
+
         // ── XML persistence (PipeCatalog pattern) ──────────────────────────────
 
         private void TryLoadFamilies(string path, bool silent)
@@ -406,6 +465,57 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             var path = PickOpenPath("Bileşen Kataloğu İçe Aktar");
             if (path == null) return;
             TryLoadFamilies(path, silent: false);
+        }
+
+        private void OnImportExcel(object _)
+        {
+            if (_selectedFamily == null)
+            {
+                MessageBox.Show("Önce içe aktarılacak bileşenlerin ekleneceği aileyi seçin veya oluşturun.",
+                    "Aile Seçilmedi", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var openDlg = new OpenFileDialog
+                { Title = "Excel'den Bileşen İçe Aktar", Filter = "Excel (*.xlsx)|*.xlsx" };
+            if (openDlg.ShowDialog() != true) return;
+
+            try
+            {
+                string[] headers;
+                System.Collections.Generic.List<string[]> rows;
+                ExcelSheetReader.ReadFirstSheet(openDlg.FileName, out headers, out rows);
+
+                if (rows.Count == 0)
+                {
+                    StatusText = "Excel dosyasında veri satırı bulunamadı.";
+                    return;
+                }
+
+                var mapDlg = new ColumnMappingDialog(Path.GetFileName(openDlg.FileName), headers, rows,
+                    ComponentExcelImportService.Fields, Application.Current?.MainWindow);
+                if (mapDlg.ShowDialog() != true) return;
+
+                // Rol column left unmapped -> every imported row uses the currently
+                // selected "Yeni tip" role (matches the manual + Ekle workflow).
+                var components = ComponentExcelImportService.Build(rows, mapDlg.Result, _newRole);
+                if (components.Count == 0)
+                {
+                    StatusText = "Eşleştirilen sütunlardan hiç bileşen satırı üretilemedi.";
+                    return;
+                }
+
+                foreach (var comp in components)
+                {
+                    _selectedFamily.Components.Add(comp);
+                    Components.Add(new ComponentRowVm(comp));
+                }
+
+                _onComponentsChanged?.Invoke();
+                StatusText = string.Format("Excel'den {0} bileşen \"{1}\" ailesine eklendi — kaydetmek için Kaydet'e basın.",
+                                           components.Count, _selectedFamily.Name);
+            }
+            catch (Exception ex) { ShowError("Excel içe aktarma hatası", ex); }
         }
 
         // ── Status bar ─────────────────────────────────────────────────────────

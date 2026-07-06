@@ -61,26 +61,26 @@ namespace UrbanoMetraj.BoQ.Services
             new Dictionary<ExportLanguage, string[]>
             {
                 // Col 0: Pipe section name  Col 1: Diameter  Col 2: Material
-                // Col 3: Length  Col 4: Excav  Col 5: Bed  Col 6: Surr  Col 7: Backfill
-                // Col 8: PozNo  Col 9: Sinif  Col 10: Aciklama (from Type Mapping link)
-                // Col 11: Overlap Excav Deducted  Col 12: Overlap Backfill Deducted
+                // Col 3: Length  Col 4: Net Length  Col 5: Excav  Col 6: Bed  Col 7: Surr  Col 8: Backfill
+                // Col 9: PozNo  Col 10: Sinif  Col 11: Aciklama (from Type Mapping link)
+                // Col 12: Overlap Excav Deducted  Col 13: Overlap Backfill Deducted
                 [ExportLanguage.English] = new[]
                 {
-                    "Pipe Section", "Diameter (mm)", "Material", "Length (m)",
+                    "Pipe Section", "Diameter (mm)", "Material", "Length (m)", "Net Length (m)",
                     "Excavation (m3)", "Bedding (m3)", "Surround (m3)", "Backfill (m3)",
                     "Poz No", "Class", "Notes",
                     "Excav. Deducted (m3)", "Backfill Deducted (m3)"
                 },
                 [ExportLanguage.Turkish] = new[]
                 {
-                    "Boru Hatti", "Cap (mm)", "Malzeme", "Boy (m)",
+                    "Boru Hatti", "Cap (mm)", "Malzeme", "Boy (m)", "Net Boy (m)",
                     "Kazi (m3)", "Yataklama (m3)", "Gomlekleme (m3)", "Geri Dolgu (m3)",
                     "Poz No", "Sinif", "Aciklama",
                     "Kazi Dusumu (m3)", "Dolgu Dusumu (m3)"
                 },
                 [ExportLanguage.Russian] = new[]
                 {
-                    "Uchastok", "Diametr (mm)", "Material", "Dlina (m)",
+                    "Uchastok", "Diametr (mm)", "Material", "Dlina (m)", "Chistaya Dlina (m)",
                     "Vykopka (m3)", "Podstilka (m3)", "Okruzheniye (m3)", "Zasypka (m3)",
                     "Poz No", "Klass", "Primechaniye",
                     "Vych. Vykopka (m3)", "Vych. Zasypka (m3)"
@@ -266,6 +266,8 @@ namespace UrbanoMetraj.BoQ.Services
                 // Phase 2 – Bill of Materials sheet (system-isolated)
                 var bomGroups = ManholeAIService.BuildBomBySystem(report, settings);
                 WriteBomSheet(pkg, bomGroups, bHeaders, bPreCastHeaders, settings);
+                if (settings.ManholeType == ManholeType.PreCast)
+                    WriteManholeBomDetailSheet(pkg, report);
 
                 if (showOverlap
                     && report.SectionDebug != null
@@ -371,12 +373,12 @@ namespace UrbanoMetraj.BoQ.Services
                     .ThenBy(r => r.PipeName)
                     .GroupBy(r => new { r.DiameterMm, Mat = r.Material ?? "" });
 
-                double gtLen = 0, gtEx = 0, gtBe = 0, gtSu = 0, gtBa = 0, gtOvEx = 0, gtOvBf = 0;
+                double gtLen = 0, gtNetLen = 0, gtEx = 0, gtBe = 0, gtSu = 0, gtBa = 0, gtOvEx = 0, gtOvBf = 0;
 
                 foreach (var grp in groups)
                 {
                     bool alt = false;
-                    double stLen = 0, stEx = 0, stBe = 0, stSu = 0, stBa = 0, stOvEx = 0, stOvBf = 0;
+                    double stLen = 0, stNetLen = 0, stEx = 0, stBe = 0, stSu = 0, stBa = 0, stOvEx = 0, stOvBf = 0;
 
                     foreach (var r in grp)
                     {
@@ -384,25 +386,26 @@ namespace UrbanoMetraj.BoQ.Services
                         ws.Cells[row, 2].Value = r.DiameterMm + " mm";
                         ws.Cells[row, 3].Value = r.Material;
                         ws.Cells[row, 4].Value = r.Length2D;
-                        ws.Cells[row, 5].Value = r.VExcav;
-                        ws.Cells[row, 6].Value = r.VBedding;
-                        ws.Cells[row, 7].Value = r.VSurround;
-                        ws.Cells[row, 8].Value = r.VBackfill;
-                        ws.Cells[row, 9].Value  = r.PozNo;
-                        ws.Cells[row, 10].Value = r.Sinif;
-                        ws.Cells[row, 11].Value = r.Aciklama;
+                        ws.Cells[row, 5].Value = r.NetLength;
+                        ws.Cells[row, 6].Value = r.VExcav;
+                        ws.Cells[row, 7].Value = r.VBedding;
+                        ws.Cells[row, 8].Value = r.VSurround;
+                        ws.Cells[row, 9].Value = r.VBackfill;
+                        ws.Cells[row, 10].Value = r.PozNo;
+                        ws.Cells[row, 11].Value = r.Sinif;
+                        ws.Cells[row, 12].Value = r.Aciklama;
                         if (showOverlap)
                         {
-                            ws.Cells[row, 12].Value = r.OverlapExcavDeducted;
-                            ws.Cells[row, 13].Value = r.OverlapBackfillDeducted;
+                            ws.Cells[row, 13].Value = r.OverlapExcavDeducted;
+                            ws.Cells[row, 14].Value = r.OverlapBackfillDeducted;
                         }
 
                         ApplyDataRowStyle(ws, row, colCount, alt);
-                        SetNumericFormat(ws, row, 4, 8, "#,##0.000");
-                        if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
+                        SetNumericFormat(ws, row, 4, 9, "#,##0.000");
+                        if (showOverlap) SetNumericFormat(ws, row, 13, 14, "#,##0.000");
                         alt = !alt;
 
-                        stLen += r.Length2D;  stEx += r.VExcav;
+                        stLen += r.Length2D;  stNetLen += r.NetLength;  stEx += r.VExcav;
                         stBe  += r.VBedding;  stSu += r.VSurround;
                         stBa  += r.VBackfill;
                         stOvEx += r.OverlapExcavDeducted;
@@ -413,39 +416,41 @@ namespace UrbanoMetraj.BoQ.Services
                     string subLbl = subtotalLbl + " Ø" + grp.Key.DiameterMm + " mm";
                     ws.Cells[row, 1].Value = subLbl;
                     ws.Cells[row, 4].Value = stLen;
-                    ws.Cells[row, 5].Value = stEx;
-                    ws.Cells[row, 6].Value = stBe;
-                    ws.Cells[row, 7].Value = stSu;
-                    ws.Cells[row, 8].Value = stBa;
+                    ws.Cells[row, 5].Value = stNetLen;
+                    ws.Cells[row, 6].Value = stEx;
+                    ws.Cells[row, 7].Value = stBe;
+                    ws.Cells[row, 8].Value = stSu;
+                    ws.Cells[row, 9].Value = stBa;
                     if (showOverlap)
                     {
-                        ws.Cells[row, 12].Value = stOvEx;
-                        ws.Cells[row, 13].Value = stOvBf;
+                        ws.Cells[row, 13].Value = stOvEx;
+                        ws.Cells[row, 14].Value = stOvBf;
                     }
                     ApplySubtotalRowStyle(ws, row, colCount);
-                    SetNumericFormat(ws, row, 4, 8, "#,##0.000");
-                    if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
+                    SetNumericFormat(ws, row, 4, 9, "#,##0.000");
+                    if (showOverlap) SetNumericFormat(ws, row, 13, 14, "#,##0.000");
                     row++;
 
-                    gtLen += stLen; gtEx += stEx; gtBe += stBe;
+                    gtLen += stLen; gtNetLen += stNetLen; gtEx += stEx; gtBe += stBe;
                     gtSu  += stSu;  gtBa += stBa;
                     gtOvEx += stOvEx; gtOvBf += stOvBf;
                 }
 
                 ws.Cells[row, 1].Value = totalLbl;
                 ws.Cells[row, 4].Value = gtLen;
-                ws.Cells[row, 5].Value = gtEx;
-                ws.Cells[row, 6].Value = gtBe;
-                ws.Cells[row, 7].Value = gtSu;
-                ws.Cells[row, 8].Value = gtBa;
+                ws.Cells[row, 5].Value = gtNetLen;
+                ws.Cells[row, 6].Value = gtEx;
+                ws.Cells[row, 7].Value = gtBe;
+                ws.Cells[row, 8].Value = gtSu;
+                ws.Cells[row, 9].Value = gtBa;
                 if (showOverlap)
                 {
-                    ws.Cells[row, 12].Value = gtOvEx;
-                    ws.Cells[row, 13].Value = gtOvBf;
+                    ws.Cells[row, 13].Value = gtOvEx;
+                    ws.Cells[row, 14].Value = gtOvBf;
                 }
                 ApplyTotalRowStyle(ws, row, colCount);
-                SetNumericFormat(ws, row, 4, 8, "#,##0.000");
-                if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
+                SetNumericFormat(ws, row, 4, 9, "#,##0.000");
+                if (showOverlap) SetNumericFormat(ws, row, 13, 14, "#,##0.000");
             }
             else
             {
@@ -457,40 +462,43 @@ namespace UrbanoMetraj.BoQ.Services
                     ws.Cells[row, 2].Value = p.Diameter + " mm";
                     ws.Cells[row, 3].Value = p.Material;
                     ws.Cells[row, 4].Value = p.TotalLength;
-                    ws.Cells[row, 5].Value = p.TotalExcavationVolume;
-                    ws.Cells[row, 6].Value = p.TotalBeddingVolume;
-                    ws.Cells[row, 7].Value = p.TotalSurroundVolume;
-                    ws.Cells[row, 8].Value = p.TotalBackfillVolume;
-                    // Columns 9-11 (PozNo/Sinif/Aciklama) unavailable in this fallback
+                    // Column 5 (Net Length) unavailable in this fallback path — PipeItem
+                    // is a diameter+material aggregate with no per-pipe start/end manhole
+                    // link, so a net-length reduction can't be attributed per row.
+                    ws.Cells[row, 6].Value = p.TotalExcavationVolume;
+                    ws.Cells[row, 7].Value = p.TotalBeddingVolume;
+                    ws.Cells[row, 8].Value = p.TotalSurroundVolume;
+                    ws.Cells[row, 9].Value = p.TotalBackfillVolume;
+                    // Columns 10-12 (PozNo/Sinif/Aciklama) unavailable in this fallback
                     // path — PipeItem is a diameter+material aggregate, no Type
                     // Mapping link data survives the old (pre-SectionDebug) format.
                     if (showOverlap)
                     {
-                        ws.Cells[row, 12].Value = p.OverlapExcavDeducted;
-                        ws.Cells[row, 13].Value = p.OverlapBackfillDeducted;
+                        ws.Cells[row, 13].Value = p.OverlapExcavDeducted;
+                        ws.Cells[row, 14].Value = p.OverlapBackfillDeducted;
                     }
 
                     ApplyDataRowStyle(ws, row, colCount, alt);
-                    SetNumericFormat(ws, row, 4, 8, "#,##0.000");
-                    if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
+                    SetNumericFormat(ws, row, 4, 9, "#,##0.000");
+                    if (showOverlap) SetNumericFormat(ws, row, 13, 14, "#,##0.000");
                     alt = !alt;
                     row++;
                 }
 
                 ws.Cells[row, 1].Value = totalLbl;
                 ws.Cells[row, 4].Value = sys.Pipes.Sum(p => p.TotalLength);
-                ws.Cells[row, 5].Value = sys.Pipes.Sum(p => p.TotalExcavationVolume);
-                ws.Cells[row, 6].Value = sys.Pipes.Sum(p => p.TotalBeddingVolume);
-                ws.Cells[row, 7].Value = sys.Pipes.Sum(p => p.TotalSurroundVolume);
-                ws.Cells[row, 8].Value = sys.Pipes.Sum(p => p.TotalBackfillVolume);
+                ws.Cells[row, 6].Value = sys.Pipes.Sum(p => p.TotalExcavationVolume);
+                ws.Cells[row, 7].Value = sys.Pipes.Sum(p => p.TotalBeddingVolume);
+                ws.Cells[row, 8].Value = sys.Pipes.Sum(p => p.TotalSurroundVolume);
+                ws.Cells[row, 9].Value = sys.Pipes.Sum(p => p.TotalBackfillVolume);
                 if (showOverlap)
                 {
-                    ws.Cells[row, 12].Value = sys.Pipes.Sum(p => p.OverlapExcavDeducted);
-                    ws.Cells[row, 13].Value = sys.Pipes.Sum(p => p.OverlapBackfillDeducted);
+                    ws.Cells[row, 13].Value = sys.Pipes.Sum(p => p.OverlapExcavDeducted);
+                    ws.Cells[row, 14].Value = sys.Pipes.Sum(p => p.OverlapBackfillDeducted);
                 }
                 ApplyTotalRowStyle(ws, row, colCount);
-                SetNumericFormat(ws, row, 4, 8, "#,##0.000");
-                if (showOverlap) SetNumericFormat(ws, row, 12, 13, "#,##0.000");
+                SetNumericFormat(ws, row, 4, 9, "#,##0.000");
+                if (showOverlap) SetNumericFormat(ws, row, 13, 14, "#,##0.000");
             }
 
             ws.Column(1).Width = 22;   // Pipe section name
@@ -817,6 +825,85 @@ namespace UrbanoMetraj.BoQ.Services
             {
                 ws.Column(4).Width = 22;   // Total Depth
             }
+        }
+
+        // =====================================================================
+        // Manhole BOM detail sheet — one row per (manhole, part), not an
+        // aggregate across all manholes (user directive 2026-07-06: the
+        // aggregate-only Manhole_BOM sheet doesn't show which parts/quantities
+        // a SPECIFIC baca actually uses).
+        // =====================================================================
+
+        private static void WriteManholeBomDetailSheet(ExcelPackage pkg, BoQReport report)
+        {
+            var ws = pkg.Workbook.Worksheets.Add("Manhole_BOM_Detay");
+            string[] hdr = { "Sistem", "Baca Adı", "Çap (mm)", "Parça Adı", "Yükseklik (mm)",
+                             "Adet", "Poz No", "Açıklama", "Malzeme Hacmi (m³)", "Dış Hacim (m³)" };
+            WriteTitle(ws, "Manhole Bill of Materials — Baca Bazında Detay", hdr.Length, 1);
+
+            const int hdrRow = 3;
+            WriteHeaders(ws, hdrRow, hdr, hdr.Length);
+            ws.View.FreezePanes(hdrRow + 1, 1);
+
+            int  row = hdrRow + 1;
+            bool alt = false;
+            foreach (var sys in report.Systems ?? Enumerable.Empty<SystemBoQ>())
+            {
+                foreach (var mh in sys.Manholes.OrderBy(m => m.NodeName, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (mh.StackPreCast == null || mh.StackPreCast.Parts.Count == 0)
+                    {
+                        ws.Cells[row, 1].Value = sys.SystemName;
+                        ws.Cells[row, 2].Value = mh.NodeName;
+                        ws.Cells[row, 3].Value = mh.DiameterDisplay;
+                        ws.Cells[row, 4].Value = "(Prefabrik eşleşme bulunamadı)";
+                        ws.Cells[row, 4].Style.Font.Italic = true;
+                        ws.Cells[row, 4].Style.Font.Color.SetColor(Color.Gray);
+                        ApplyDataRowStyle(ws, row, hdr.Length, alt);
+                        alt = !alt;
+                        row++;
+                        continue;
+                    }
+
+                    foreach (var part in mh.StackPreCast.Parts)
+                    {
+                        ws.Cells[row, 1].Value = sys.SystemName;
+                        ws.Cells[row, 2].Value = mh.NodeName;
+                        ws.Cells[row, 3].Value = mh.DiameterDisplay;
+                        ws.Cells[row, 4].Value = part.PartName;
+                        ws.Cells[row, 5].Value = Math.Round(part.HeightM * 1000.0, 1);
+                        ws.Cells[row, 6].Value = part.Count;
+                        ws.Cells[row, 7].Value = part.PozNo;
+                        ws.Cells[row, 8].Value = part.Aciklama;
+                        ws.Cells[row, 9].Value  = Math.Round(part.UnitMaterialVolume * part.Count, 4);
+                        ws.Cells[row, 10].Value = Math.Round(part.UnitExternalVolume * part.Count, 4);
+
+                        ws.Cells[row, 5].Style.Numberformat.Format  = "#,##0.0";
+                        ws.Cells[row, 6].Style.Numberformat.Format  = "#,##0";
+                        ws.Cells[row, 9].Style.Numberformat.Format  = "#,##0.0000";
+                        ws.Cells[row, 10].Style.Numberformat.Format = "#,##0.0000";
+                        for (int c = 5; c <= 6; c++)
+                            ws.Cells[row, c].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
+                        for (int c = 9; c <= 10; c++)
+                            ws.Cells[row, c].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
+
+                        ApplyDataRowStyle(ws, row, hdr.Length, alt);
+                        alt = !alt;
+                        row++;
+                    }
+                }
+            }
+
+            ws.Column(1).Width = 14;
+            ws.Column(2).Width = 14;
+            ws.Column(3).Width = 12;
+            ws.Column(4).Width = 26;
+            ws.Column(5).Width = 16;
+            ws.Column(6).Width = 10;
+            ws.Column(7).Width = 14;
+            ws.Column(8).Width = 24;
+            ws.Column(9).Width = 18;
+            ws.Column(10).Width = 18;
         }
 
         // =====================================================================

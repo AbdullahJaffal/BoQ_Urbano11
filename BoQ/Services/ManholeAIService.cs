@@ -48,13 +48,14 @@ namespace UrbanoMetraj.BoQ.Services
     public static class ManholeAIService
     {
         /// <summary>
-        /// Remaining-height tolerance in metres (user-set 2026-07-04: 3 cm — roughly
-        /// half the shortest available Boyun Bileziği height, so greedy largest-first
-        /// Gövde filling plus at most one Boyun piece always lands within this margin;
-        /// no combinatorial/exact-sum search needed). If the greedy algorithm leaves
-        /// a gap smaller than this, no extra ring is added.
+        /// Remaining-height tolerance in metres (revised 2026-07-06: strictly under
+        /// 6 cm — the shortest available Boyun/Gövde piece is 6 cm, so any gap of
+        /// 6 cm or more means an actual piece exists that could have closed it and
+        /// should be flagged, while a leftover under 6 cm genuinely can't be closed
+        /// by any piece we have). 5.99 cm passes; 6.00 cm does not. If the greedy
+        /// fill leaves a gap smaller than this, no extra piece is added/flagged.
         /// </summary>
-        private const double LeftoverTolerance = 0.03;
+        private const double LeftoverTolerance = 0.0599;
 
         // =====================================================================
         // 1. Catalog reader  (new row-per-part schema)
@@ -152,13 +153,39 @@ namespace UrbanoMetraj.BoQ.Services
             int unresolvedCount     = 0;
             int excavUnresolvedCount = 0;
             int steppedIgnoredCount  = 0;
-            var constraintViolationNames = new List<string>();
+            // Grouped by reason (not just a flat name list) — with many manholes
+            // failing at once, a bare name list gives no clue which of several
+            // possible causes (missing Konik/Kapak, Min not met, genuine
+            // unreachable depth) is actually responsible.
+            var constraintViolationsByReason = new Dictionary<string, List<string>>();
             foreach (var sys in report.Systems)
                 foreach (var mh in sys.Manholes)
                 {
-                    ProcessManhole(mh, report.SectionDebug, ref excavUnresolvedCount, ref steppedIgnoredCount);
+                    ProcessManhole(mh, report.SectionDebug, settings.RingFillMode, ref excavUnresolvedCount, ref steppedIgnoredCount);
                     if (mh.StackPreCast == null) unresolvedCount++;
-                    else if (mh.StackPreCast.ConstraintViolated) constraintViolationNames.Add(mh.NodeName);
+                    else if (mh.StackPreCast.ConstraintViolated)
+                    {
+                        string reason = mh.StackPreCast.ConstraintViolationReason ?? "bilinmeyen neden";
+                        // Group by CATEGORY, not the exact string — the residual-
+                        // gap reason embeds a per-manhole numeric value (each
+                        // manhole would otherwise become its own group of one).
+                        string category =
+                            reason.Contains("Konik")          ? "Konik bulunamadı" :
+                            reason.Contains("Kapak")          ? "Kapak bulunamadı" :
+                            reason.Contains("Gövde Halkası")  ? "Gövde Halkası sayısı yetersiz (Min karşılanmadı)" :
+                            reason.Contains("hedef derinliğe") ? "Hedef derinliğe ulaşılamadı (Gövde/Boyun kalıntı boşluk)" :
+                            reason;
+                        if (!constraintViolationsByReason.TryGetValue(category, out var names))
+                            constraintViolationsByReason[category] = names = new List<string>();
+                        // Include the manhole's own StackPreCast.ResidualM alongside
+                        // its name for the residual-gap category — the grouped
+                        // category text alone hides the actual number, which is
+                        // exactly what's needed to tell "just over tolerance" apart
+                        // from "genuinely far short".
+                        names.Add(category.Contains("Hedef derinliğe")
+                            ? $"{mh.NodeName} ({mh.StackPreCast.ResidualM * 1000.0:0} mm)"
+                            : mh.NodeName);
+                    }
                 }
 
             if (unresolvedCount > 0)
@@ -170,9 +197,9 @@ namespace UrbanoMetraj.BoQ.Services
             if (steppedIgnoredCount > 0)
                 report.DiscoveryNotes.Add(
                     $"[WARN] {steppedIgnoredCount} baca için 'Basamaklı Kazı' seçiliydi — bu özellik henüz desteklenmiyor, düz şevli hesap kullanıldı.");
-            if (constraintViolationNames.Count > 0)
+            foreach (var kv in constraintViolationsByReason)
                 report.DiscoveryNotes.Add(
-                    $"[WARN] Parça Kısıtları (Min/Maks) nedeniyle hedef derinliğe tam ulaşılamadı veya zorunlu bir parça sayısı sağlanamadı: {string.Join(", ", constraintViolationNames)} — Prefabrik Malzeme Listesi eksik/hatalı olabilir.");
+                    $"[WARN] Parça Kısıtları (Min/Maks) — {kv.Key}: {string.Join(", ", kv.Value)} — Prefabrik Malzeme Listesi eksik/hatalı olabilir.");
         }
 
         // =====================================================================
@@ -217,6 +244,7 @@ namespace UrbanoMetraj.BoQ.Services
         private static void ProcessManhole(
             ManholeItem            mh,
             List<SectionDebugRow>  allSections,
+            RingFillMode           ringFillMode,
             ref int                excavUnresolvedCount,
             ref int                steppedIgnoredCount)
         {
@@ -270,7 +298,7 @@ namespace UrbanoMetraj.BoQ.Services
 
             // ── Stacking — both scenarios cached simultaneously ───────────────
             mh.StackPreCast = (family != null && taban != null)
-                ? ComputeFamilyStack(mh.Depth, mh.Diameter, family, taban, matchedTier)
+                ? ComputeFamilyStack(mh.Depth, mh.Diameter, family, taban, matchedTier, ringFillMode)
                 : null;
 
             mh.StackCastInPlace = new ManholeStackResult
@@ -411,6 +439,12 @@ namespace UrbanoMetraj.BoQ.Services
                 mh.DrawnWidthM = (taban.Footprint.Shape == FootprintShape.Square
                     ? taban.Footprint.SideMm : taban.Footprint.WidthMm) / 1000.0;
             }
+
+            // Real built shape/size of the resolved Taban — deliberately independent
+            // of mh.DrawnShape above (see ManholeItem.ResolvedFootprint doc). Needed
+            // by PipeNetLengthService, which must reduce by the manhole's actual
+            // outer shell, not by how it happened to be drawn in the DWG.
+            mh.ResolvedFootprint = taban.Footprint;
         }
 
         /// <summary>
@@ -526,12 +560,24 @@ namespace UrbanoMetraj.BoQ.Services
 
             double baseWidthM  = ResolveFootprintWidthM(taban.Footprint);
             double tabanThickM = taban.TabanKalinligiMm / 1000.0;
+
+            // TemelAltiParca: sub-base pieces defined directly on the Taban component.
+            // Their combined thickness is added to both excavation and backfill depths.
+            // The list itself is also exposed on mh.ResolvedSubBaseParts for the Baca
+            // Kesif Tablosu export (one column per distinct piece dimension).
+            double temelAltiM = 0.0;
+            if (taban.TemelAltiParcaEnabled && taban.TemelAltiParcalar != null)
+            {
+                foreach (var p in taban.TemelAltiParcalar)
+                    temelAltiM += p.Kalinlik / 1000.0;
+                mh.ResolvedSubBaseParts = taban.TemelAltiParcalar;
+            }
+
             // mh.ExcavationDepth already holds the raw baseline set in
             // BoQParserService.ComputeManholeDepths (structural depth + the lowest
-            // connected pipe's own wall thickness) — add the Taban slab and Alt
-            // Temel Katmanları on top of that, not mh.Depth (which is the
-            // structural-only depth used for precast ring stacking).
-            double finalDepth  = mh.ExcavationDepth + tabanThickM + tier.TotalSubBaseDepthM;
+            // connected pipe's own wall thickness) — add the Taban slab, TemelAltiParca
+            // thickness, and Alt Temel Katmanları on top of that.
+            double finalDepth  = mh.ExcavationDepth + tabanThickM + temelAltiM + tier.TotalSubBaseDepthM;
             double baseSideM   = baseWidthM + 2.0 * tier.WorkingClearanceM;
 
             mh.ExcavationDepth        = finalDepth;
@@ -542,6 +588,19 @@ namespace UrbanoMetraj.BoQ.Services
                 baseSideM, finalDepth, tier.SlopeRatio);
 
             mh.ResolvedBackfillLayers = tier.BackfillLayers?.ToList() ?? new List<ManholeBackfillLayer>();
+            mh.ResolvedSubBaseLayers  = tier.SubBaseLayers?.ToList()  ?? new List<SubBaseLayer>();
+
+            // ── Dolgu-basis volume (user directive 2026-07-06) ──────────────────
+            // Same pit shape (baseSideM/slope), same Taban/TemelAltiParca/Alt Temel
+            // Katmanları additions — but re-run from mh.DolguBaselineDepth (ZDolgu top)
+            // instead of the Kazı baseline (ZKazi top). Skipped when DolguInvalid.
+            if (!mh.DolguInvalid)
+            {
+                double dolguFinalDepth = mh.DolguBaselineDepth + tabanThickM + temelAltiM + tier.TotalSubBaseDepthM;
+                mh.DolguFinalDepth  = dolguFinalDepth;
+                mh.DolguBasisVolume = ManholeExcavationGeometry.ComputeFrustumVolume(
+                    baseSideM, dolguFinalDepth, tier.SlopeRatio);
+            }
         }
 
         /// <summary>Effective plan width (m) of a Taban footprint, used as the
@@ -559,8 +618,16 @@ namespace UrbanoMetraj.BoQ.Services
             }
         }
 
+        // User correction 2026-07-06: the stacking calculation must always use
+        // pure Etkin Yükseklik (EffectiveHeight) — NOT the UI grid's "Yükseklik"
+        // display column (TotalHeightMm = EffectiveHeight + TabanKalinligiMm,
+        // a convenience "installed height" shown only in Baca Parça Kataloğu's
+        // component list). TabanKalinligiMm is still used separately for the
+        // excavation PIT depth (ResolveExcavation) — that's a different budget
+        // (ground-to-slab-bottom) from this one (the precast stack's own height
+        // within mh.Depth).
         private static double TabanHeightM(BottomElementComponent taban)
-            => (taban.EffectiveHeight + taban.TabanKalinligiMm) / 1000.0;
+            => taban.EffectiveHeight / 1000.0;
 
         private static double TotalMandatoryHeightM(ComponentFamily family, BottomElementComponent taban)
         {
@@ -601,32 +668,94 @@ namespace UrbanoMetraj.BoQ.Services
         ///    one) + any other flat-ZorunluParca component.
         /// 2. Greedily fill the remaining depth with diameter-matched Gövde rings
         ///    (largest first).
-        /// 3. If a gap &gt; LeftoverTolerance (3 cm) remains, close it with the
-        ///    smallest diameter-matched Boyun Bileziği piece. No exact
-        ///    combinatorial search — user confirmed simple greedy + one Boyun
-        ///    always lands within the 3 cm tolerance in practice.
+        /// 3. Greedily fill any remaining gap with diameter-matched Boyun
+        ///    Bileziği pieces (largest first, as many as needed — same shape as
+        ///    step 2). If a gap ≥ LeftoverTolerance (currently just under 6 cm,
+        ///    the shortest available piece) still remains after both greedy
+        ///    fills, it's flagged as unresolved rather than silently accepted.
         /// </summary>
         private static ManholeStackResult ComputeFamilyStack(
             double depth, int diameter, ComponentFamily family, BottomElementComponent taban,
-            DepthTierRule tier)
+            DepthTierRule tier, RingFillMode ringFillMode)
         {
-            var stack = new ManholeStackResult
-            {
-                NominalDiameter = diameter,
-                IsPreCast       = true
-            };
-
             double shaftDiam = taban.TopOpeningDiameterMm;
 
-            // "değişken" (user directive 2026-07-06, generalized 2026-07-06):
-            // ANY piece in the chain — not just Taban — can be marked
-            // IsVariable. Its real installed height is NOT the catalog
-            // EffectiveHeight: every FIXED (non-variable) piece is placed first
-            // using its normal height, and the remaining depth is then split
-            // EVENLY across however many değişken pieces exist (1 piece → gets
-            // 100%; 2 pieces → 50/50; 3 → a third each). Once any değişken piece
-            // exists anywhere, no further optional piece (Gövde greedy fill /
-            // Boyun gap-correction) is added at all.
+            int konikMax = GetMaxCount(tier, ComponentRole.Reducer);
+            var konikCandidates = konikMax == 0 ? new List<ReducerComponent>() : family.Components
+                .OfType<ReducerComponent>()
+                .Where(r => Math.Abs(r.BottomInnerDiameterMm - shaftDiam) < 1e-6)
+                .OrderByDescending(r => r.EffectiveHeight)
+                .ToList();
+
+            // ── Pass 1: normal build, tallest matching Konik (or none) ─────────
+            var stack = BuildStackAttempt(depth, diameter, family, taban, tier, ringFillMode,
+                konikCandidates.Count > 0 ? konikCandidates[0] : null, forceMinimums: false,
+                out int govdeUsed, out int boyunUsed, out bool isDegisken);
+
+            if (isDegisken) return stack; // değişken absorbs the whole depth — Min-recompute below doesn't apply
+
+            int govdeMin = GetMinCount(tier, ComponentRole.MiddleElement);
+            int boyunMin = GetMinCount(tier, ComponentRole.Adjuster);
+            if (govdeUsed >= govdeMin && boyunUsed >= boyunMin)
+                return stack; // normal pass already satisfies both Min counts
+
+            // ── Pass 2 (user directive 2026-07-06): a role's Min count wasn't met
+            // by the normal fill (e.g. the exact depth happened to be closed by
+            // Gövde alone, so Boyun — required at least once — never got used).
+            // Recompute: place mandatory pieces, force Min pieces of each role's
+            // SMALLEST available size, then fill whatever's left normally with
+            // the remaining Max budget. If even the forced minimum doesn't fit
+            // (negative leftover), retry with the next-shortest Konik variant of
+            // the SAME diameter pair (tallest tried first, same as Pass 1) to
+            // free up more room — only once every Konik height is exhausted does
+            // this become an explicit, surfaced failure. ──
+            var candidatesToTry = konikCandidates.Count > 0
+                ? konikCandidates
+                : new List<ReducerComponent> { null };
+            foreach (var konikCandidate in candidatesToTry)
+            {
+                var forced = BuildStackAttempt(depth, diameter, family, taban, tier, ringFillMode,
+                    konikCandidate, forceMinimums: true,
+                    out int gU, out int bU, out bool deg, out bool infeasible);
+                if (!infeasible) return forced;
+            }
+
+            stack.ConstraintViolated = true;
+            stack.ConstraintViolationReason =
+                "Zorunlu Min sayısına en kısa Konik ile bile ulaşılamadı — derinlik yetersiz";
+            return stack;
+        }
+
+        /// <summary>
+        /// Builds one complete manhole stack attempt: Taban/Konik(given)/Kapak/
+        /// other-mandatory, then either the normal greedy/BestFit Gövde+Boyun
+        /// fill, or (forceMinimums) places each role's Min-count at its SMALLEST
+        /// available size FIRST, then fills whatever depth remains normally with
+        /// the leftover Max budget. "değişken" (any mandatory piece marked
+        /// IsVariable) always short-circuits both modes identically — it absorbs
+        /// the entire remaining depth and Gövde/Boyun are never touched.
+        /// </summary>
+        private static ManholeStackResult BuildStackAttempt(
+            double depth, int diameter, ComponentFamily family, BottomElementComponent taban,
+            DepthTierRule tier, RingFillMode ringFillMode, ReducerComponent konikOverride,
+            bool forceMinimums,
+            out int govdeUsedCount, out int boyunUsedCount, out bool isDegisken)
+        {
+            return BuildStackAttempt(depth, diameter, family, taban, tier, ringFillMode,
+                konikOverride, forceMinimums, out govdeUsedCount, out boyunUsedCount, out isDegisken,
+                out _);
+        }
+
+        private static ManholeStackResult BuildStackAttempt(
+            double depth, int diameter, ComponentFamily family, BottomElementComponent taban,
+            DepthTierRule tier, RingFillMode ringFillMode, ReducerComponent konikOverride,
+            bool forceMinimums,
+            out int govdeUsedCount, out int boyunUsedCount, out bool isDegisken, out bool infeasible)
+        {
+            govdeUsedCount = 0; boyunUsedCount = 0; isDegisken = false; infeasible = false;
+
+            var stack = new ManholeStackResult { NominalDiameter = diameter, IsPreCast = true };
+            double shaftDiam = taban.TopOpeningDiameterMm;
             var variableParticipants = new List<ManholeComponent>();
             double fixedHeight = 0;
 
@@ -640,18 +769,13 @@ namespace UrbanoMetraj.BoQ.Services
                 fixedHeight += hTaban;
             }
 
-            // Parça Kısıtları (user directive 2026-07-06): MaxCount==0 for a role
-            // means "don't use any piece of this type" even if the family/tier
-            // would otherwise supply one; MinCount>0 with no piece actually
-            // added is a genuine catalog/tier gap — both are enforced below and
-            // surfaced via stack.ConstraintViolated (aggregated by Process()).
-            int konikMax = GetMaxCount(tier, ComponentRole.Reducer);
             int kapakMax = GetMaxCount(tier, ComponentRole.Cover);
 
-            // ── Step 1b: Konik (Reducer) — diameter-matched, exactly one ───────
-            var konik = konikMax == 0 ? null : family.Components.OfType<ReducerComponent>()
-                .FirstOrDefault(r => Math.Abs(r.BottomInnerDiameterMm - shaftDiam) < 1e-6);
-            double neckDiam = shaftDiam; // no Konik found → Boyun/Kapak fall back to matching the shaft directly
+            // ── Step 1b: Konik (Reducer) — explicitly given by the caller (Pass 1
+            // always uses the tallest matching candidate; Pass 2 retries shorter
+            // ones), not looked up here. ──
+            var konik = konikOverride;
+            double neckDiam = shaftDiam; // no Konik → Boyun/Kapak fall back to matching the shaft directly
             if (konik != null)
             {
                 neckDiam = konik.TopInnerDiameterMm;
@@ -665,7 +789,10 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             }
             if (konik == null && GetMinCount(tier, ComponentRole.Reducer) >= 1)
+            {
                 stack.ConstraintViolated = true;
+                stack.ConstraintViolationReason = $"Konik (Min≥1) bulunamadı — şaft çapı {shaftDiam:0} mm ile eşleşen Konik yok";
+            }
 
             // ── Step 1c: Kapak (Cover) — diameter-matched to the neck, exactly one ──
             var kapak = kapakMax == 0 ? null : family.Components.OfType<CoverComponent>()
@@ -682,7 +809,10 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             }
             if (kapak == null && GetMinCount(tier, ComponentRole.Cover) >= 1)
+            {
                 stack.ConstraintViolated = true;
+                stack.ConstraintViolationReason = $"Kapak (Min≥1) bulunamadı — boyun çapı {neckDiam:0} mm ile eşleşen Kapak yok";
+            }
 
             // ── Step 1d: any other flat-mandatory component (roles above excluded) ──
             foreach (var part in family.Components.Where(c =>
@@ -701,9 +831,7 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             }
 
-            // ── Gövde/Boyun candidate pools — same diameter matching as the
-            // normal greedy-fill/gap-correction steps below, just computed
-            // early so a değişken candidate in either pool can be detected. ──
+            // ── Gövde/Boyun candidate pools ──
             var govdeCandidates = family.Components.OfType<MiddleElementComponent>()
                 .Where(m => Math.Abs(m.InnerDiameterMm - shaftDiam) < 1e-6 && !m.ZorunluParca)
                 .ToList();
@@ -722,58 +850,87 @@ namespace UrbanoMetraj.BoQ.Services
                 foreach (var vp in variableParticipants)
                     stack.Parts.Add(NewStackedPart(vp, perPieceHeight, 1, false, isDegisken: true));
                 stack.ResidualM = 0;
+                isDegisken = true;
+                SortPartsByPhysicalOrder(stack);
                 return stack;
             }
 
-            // ── Step 2: greedy Gövde ring fill — diameter-matched to the shaft ──
             double remaining = depth - fixedHeight;
             var variableRings = govdeCandidates
-                .GroupBy(c => c.EffectiveHeight)
-                .Select(g => g.First())
-                .OrderByDescending(c => c.EffectiveHeight)
-                .ToList();
-
-            if (remaining <= 0 || variableRings.Count == 0)
-            {
-                stack.ResidualM = remaining;
-                if (remaining > LeftoverTolerance) stack.ConstraintViolated = true;
-                if (GetMinCount(tier, ComponentRole.MiddleElement) >= 1) stack.ConstraintViolated = true;
-                return stack;
-            }
+                .GroupBy(c => c.EffectiveHeight).Select(g => g.First())
+                .OrderByDescending(c => c.EffectiveHeight).ToList();
+            var boyunSizes = boyunCandidates
+                .GroupBy(c => c.EffectiveHeight).Select(g => g.First())
+                .OrderByDescending(c => c.EffectiveHeight).ToList();
 
             int govdeMax = GetMaxCount(tier, ComponentRole.MiddleElement);
-            int govdeUsedCount = 0;
-            var ringUsage = new Dictionary<double, RingUsageEntry>();
-            foreach (var ring in variableRings)
+            int boyunMax = GetMaxCount(tier, ComponentRole.Adjuster);
+            int govdeMin = GetMinCount(tier, ComponentRole.MiddleElement);
+            int boyunMin = GetMinCount(tier, ComponentRole.Adjuster);
+
+            var ringUsage  = new Dictionary<double, RingUsageEntry>();
+            var boyunUsage = new Dictionary<double, RingUsageEntry>();
+
+            if (forceMinimums)
             {
-                if (govdeMax >= 0 && govdeUsedCount >= govdeMax) break;
-                double hM = ring.EffectiveHeight / 1000.0;
-                if (hM <= 1e-9) continue;
-                int count = (int)(remaining / hM);
-                if (govdeMax >= 0) count = Math.Min(count, govdeMax - govdeUsedCount);
-                if (count > 0)
+                // Force each role's Min-count at its SMALLEST available size
+                // first (user directive 2026-07-06), capped at Max if the
+                // catalog's Min>Maks (a contradictory config — flagged naturally
+                // below once actual usage is compared against Min again).
+                if (govdeMin > 0)
                 {
-                    ringUsage[hM] = new RingUsageEntry { Component = ring, Count = count };
-                    remaining -= count * hM;
-                    govdeUsedCount += count;
+                    if (variableRings.Count == 0) { infeasible = true; return stack; }
+                    int forcedCount = govdeMax >= 0 ? Math.Min(govdeMin, govdeMax) : govdeMin;
+                    var smallest = variableRings.OrderBy(c => c.EffectiveHeight).First();
+                    double hM = smallest.EffectiveHeight / 1000.0;
+                    ringUsage[hM] = new RingUsageEntry { Component = smallest, Count = forcedCount };
+                    remaining -= hM * forcedCount;
+                    govdeUsedCount = forcedCount;
+                }
+                if (boyunMin > 0)
+                {
+                    if (boyunSizes.Count == 0) { infeasible = true; return stack; }
+                    int forcedCount = boyunMax >= 0 ? Math.Min(boyunMin, boyunMax) : boyunMin;
+                    var smallest = boyunSizes.OrderBy(c => c.EffectiveHeight).First();
+                    double hM = smallest.EffectiveHeight / 1000.0;
+                    boyunUsage[hM] = new RingUsageEntry { Component = smallest, Count = forcedCount };
+                    remaining -= hM * forcedCount;
+                    boyunUsedCount = forcedCount;
+                }
+                if (remaining < 0) { infeasible = true; return stack; }
+
+                int govdeRemainingMax = govdeMax < 0 ? -1 : Math.Max(0, govdeMax - govdeUsedCount);
+                if (remaining > 0 && variableRings.Count > 0 && govdeRemainingMax != 0)
+                {
+                    FillGap(variableRings, govdeRemainingMax, ringFillMode, ref remaining, ringUsage, out int extraGovde);
+                    govdeUsedCount += extraGovde;
+                }
+                int boyunRemainingMax = boyunMax < 0 ? -1 : Math.Max(0, boyunMax - boyunUsedCount);
+                if (remaining > 0 && boyunSizes.Count > 0 && boyunRemainingMax != 0)
+                {
+                    FillGap(boyunSizes, boyunRemainingMax, ringFillMode, ref remaining, boyunUsage, out int extraBoyun);
+                    boyunUsedCount += extraBoyun;
                 }
             }
-            if (govdeUsedCount < GetMinCount(tier, ComponentRole.MiddleElement))
-                stack.ConstraintViolated = true;
-
-            // ── Step 3: leftover gap correction — Boyun Bileziği, neck-diameter-matched ──
-            int boyunMax = GetMaxCount(tier, ComponentRole.Adjuster);
-            if (remaining > LeftoverTolerance && boyunMax != 0)
+            else
             {
-                var boyun = boyunCandidates
-                    .OrderBy(a => a.EffectiveHeight)
-                    .FirstOrDefault();
-                if (boyun != null)
-                {
-                    double hM = boyun.EffectiveHeight / 1000.0;
-                    stack.Parts.Add(NewStackedPart(boyun, hM, 1, true));
-                    remaining -= hM;
-                }
+                if (remaining > 0 && variableRings.Count > 0)
+                    FillGap(variableRings, govdeMax, ringFillMode, ref remaining, ringUsage, out govdeUsedCount);
+                if (boyunMax != 0 && boyunSizes.Count > 0 && remaining > 0)
+                    FillGap(boyunSizes, boyunMax, ringFillMode, ref remaining, boyunUsage, out boyunUsedCount);
+            }
+
+            if (govdeUsedCount < govdeMin)
+            {
+                stack.ConstraintViolated = true;
+                stack.ConstraintViolationReason =
+                    $"Gövde Halkası sayısı yetersiz (Min={govdeMin}, kullanılan={govdeUsedCount}) — Maks={(govdeMax < 0 ? "∞" : govdeMax.ToString())}";
+            }
+            if (boyunUsedCount < boyunMin)
+            {
+                stack.ConstraintViolated = true;
+                stack.ConstraintViolationReason =
+                    $"Boyun bileziği sayısı yetersiz (Min={boyunMin}, kullanılan={boyunUsedCount}) — Maks={(boyunMax < 0 ? "∞" : boyunMax.ToString())}";
             }
 
             stack.ResidualM = Math.Max(0, remaining);
@@ -782,15 +939,19 @@ namespace UrbanoMetraj.BoQ.Services
             // allowed count per piece but still short" case the user asked
             // about. Never silently swallowed (see ConstraintViolated doc).
             if (stack.ResidualM > LeftoverTolerance)
-                stack.ConstraintViolated = true;
-
-            // Convert usage map to StackedPart list (largest ring first)
-            foreach (var kv in ringUsage.OrderByDescending(k => k.Key))
             {
-                if (kv.Value.Count > 0)
-                    stack.Parts.Add(NewStackedPart(kv.Value.Component, kv.Key, kv.Value.Count, true));
+                stack.ConstraintViolated = true;
+                stack.ConstraintViolationReason =
+                    $"hedef derinliğe {stack.ResidualM:0.###} m eksik kaldı " +
+                    $"(Gövde Maks={(govdeMax < 0 ? "∞" : govdeMax.ToString())}, Boyun Maks={(boyunMax < 0 ? "∞" : boyunMax.ToString())})";
             }
 
+            foreach (var kv in ringUsage.OrderByDescending(k => k.Key))
+                if (kv.Value.Count > 0) stack.Parts.Add(NewStackedPart(kv.Value.Component, kv.Key, kv.Value.Count, true));
+            foreach (var kv in boyunUsage.OrderByDescending(k => k.Key))
+                if (kv.Value.Count > 0) stack.Parts.Add(NewStackedPart(kv.Value.Component, kv.Key, kv.Value.Count, true));
+
+            SortPartsByPhysicalOrder(stack);
             return stack;
         }
 
@@ -813,14 +974,174 @@ namespace UrbanoMetraj.BoQ.Services
                 PozNo             = component.PozNo,
                 Aciklama          = component.Aciklama,
                 UnitMaterialVolume = isDegisken ? component.MaterialVolume * heightM : component.MaterialVolume,
-                UnitExternalVolume = isDegisken ? component.ExternalVolume * heightM : component.ExternalVolume
+                UnitExternalVolume = isDegisken ? component.ExternalVolume * heightM : component.ExternalVolume,
+                WallThicknessMm    = ResolveWallThicknessMm(component),
+                Role               = component.Role
             };
+
+        // "değişken" (variable-height) pieces are appended to stack.Parts after ALL fixed
+        // pieces regardless of their real physical position (see ComputeFamilyStack) — e.g.
+        // a değişken Taban ends up after a fixed Konik/Kapak even though it physically sits
+        // at the bottom. Sort by ComponentRole (already declared bottom-to-top: BottomElement,
+        // MiddleElement, Reducer, Adjuster, Cover) so consumers that need true vertical order
+        // (e.g. PipeNetLengthService's per-ring Z-band lookup) get it right. Stable sort keeps
+        // same-role pieces (e.g. multiple Gövde ring sizes) in their existing relative order.
+        private static void SortPartsByPhysicalOrder(ManholeStackResult stack)
+            => stack.Parts = stack.Parts.OrderBy(p => (int)p.Role).ToList();
+
+        /// <summary>Wall thickness (mm) of the underlying component, for types that track one.
+        /// Used by PipeNetLengthService to compute a manhole's outer-shell radius at a given
+        /// pipe invert elevation. Null for component types with no wall-thickness concept (e.g. Kapak).</summary>
+        private static double? ResolveWallThicknessMm(ManholeComponent component)
+        {
+            switch (component)
+            {
+                case BottomElementComponent b: return b.WallThicknessMm;
+                case MiddleElementComponent m:  return m.WallThicknessMm;
+                case AdjusterComponent a:       return a.WallThicknessMm;
+                case ReducerComponent r:        return r.WallThicknessMm;
+                default:                        return null;
+            }
+        }
 
         // ── Small helper to avoid tuples in .NET 4.8 ─────────────────────────
         private sealed class RingUsageEntry
         {
             public ManholeComponent Component { get; set; }
             public int              Count     { get; set; }
+        }
+
+        // ── Gövde/Boyun gap-fill (user setting, Ayarlar dialog 2026-07-06) ─────
+
+        /// <summary>
+        /// Fills as much of <paramref name="remaining"/> as possible using
+        /// <paramref name="sizes"/> (distinct-height components of one role),
+        /// respecting <paramref name="maxCount"/> (total pieces across all sizes;
+        /// -1 = unlimited, 0 = none). Dispatches to <see cref="BestFitFill"/> or
+        /// the original greedy largest-first loop depending on
+        /// <paramref name="mode"/>. Adds the chosen pieces into
+        /// <paramref name="usage"/>, decrements <paramref name="remaining"/> by
+        /// whatever was achieved, and reports the total piece count used.
+        /// </summary>
+        private static void FillGap(
+            IEnumerable<ManholeComponent> sizes, int maxCount, RingFillMode mode,
+            ref double remaining, Dictionary<double, RingUsageEntry> usage, out int usedCount)
+        {
+            usedCount = 0;
+            if (maxCount == 0) return;
+
+            if (mode == RingFillMode.BestFit)
+            {
+                var bestUsage = BestFitFill(sizes, remaining, maxCount, out double achievedM);
+                foreach (var kv in bestUsage) AddUsage(usage, kv.Value.Component, kv.Key, kv.Value.Count);
+                usedCount = bestUsage.Values.Sum(v => v.Count);
+                remaining -= achievedM;
+                return;
+            }
+
+            // Greedy (original): largest size first, as many of that size as fit,
+            // then move to the next-smaller size.
+            foreach (var size in sizes)
+            {
+                if (maxCount >= 0 && usedCount >= maxCount) break;
+                double hM = size.EffectiveHeight / 1000.0;
+                if (hM <= 1e-9) continue;
+                int count = (int)(remaining / hM);
+                if (maxCount >= 0) count = Math.Min(count, maxCount - usedCount);
+                if (count > 0)
+                {
+                    AddUsage(usage, size, hM, count);
+                    remaining -= count * hM;
+                    usedCount += count;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds to an existing usage entry at this height instead of overwriting
+        /// it — needed since the forced-minimum pass (Pass 2, user directive
+        /// 2026-07-06) pre-populates <paramref name="usage"/> with each role's
+        /// Min-count at its smallest size BEFORE calling FillGap to fill
+        /// whatever's left, and the leftover fill may legitimately want more of
+        /// that exact same size.
+        /// </summary>
+        private static void AddUsage(
+            Dictionary<double, RingUsageEntry> usage, ManholeComponent component, double heightM, int count)
+        {
+            if (usage.TryGetValue(heightM, out var existing)) existing.Count += count;
+            else usage[heightM] = new RingUsageEntry { Component = component, Count = count };
+        }
+
+        /// <summary>
+        /// Bounded-knapsack search: among every combination of <paramref
+        /// name="sizeComponents"/> (each reusable any number of times, TOTAL
+        /// piece count ≤ <paramref name="maxCount"/> when ≥0) finds the one
+        /// whose sum is the closest achievable value ≤ <paramref
+        /// name="targetM"/> — e.g. an 8cm + 7cm combination closing a 15cm gap
+        /// exactly instead of a single 10cm piece leaving 5cm unclosed.
+        ///
+        /// Implementation: classic minimum-coins DP over depth in whole
+        /// millimetres (`minCount[d]` = fewest pieces to reach exactly d mm, or
+        /// unreachable). The largest d ≤ target with `minCount[d] ≤ maxCount` is
+        /// the answer — if the CHEAPEST way to reach some depth already needs
+        /// more pieces than allowed, no combination reaches it within budget
+        /// either, so a 1-D DP suffices (no need to track piece-count as a
+        /// second dimension). Depth is at most a few thousand mm and the size
+        /// list has a handful of entries, so this runs in well under a
+        /// millisecond per manhole.
+        /// </summary>
+        private static Dictionary<double, RingUsageEntry> BestFitFill(
+            IEnumerable<ManholeComponent> sizeComponents, double targetM, int maxCount,
+            out double achievedM)
+        {
+            var usage = new Dictionary<double, RingUsageEntry>();
+            achievedM = 0;
+
+            var heights = sizeComponents
+                .Select(c => (Mm: (int)Math.Round(c.EffectiveHeight), Comp: c))
+                .Where(x => x.Mm > 0)
+                .ToList();
+            int targetMm = (int)Math.Round(targetM * 1000.0);
+            if (targetMm <= 0 || heights.Count == 0) return usage;
+
+            const int INF = int.MaxValue / 2;
+            var minCount = new int[targetMm + 1];
+            var choice   = new int[targetMm + 1];
+            for (int d = 1; d <= targetMm; d++) { minCount[d] = INF; choice[d] = -1; }
+
+            for (int d = 1; d <= targetMm; d++)
+                for (int hi = 0; hi < heights.Count; hi++)
+                {
+                    int h = heights[hi].Mm;
+                    if (h > d) continue;
+                    int prev = minCount[d - h];
+                    if (prev >= INF) continue;
+                    if (prev + 1 < minCount[d]) { minCount[d] = prev + 1; choice[d] = hi; }
+                }
+
+            int bestD = 0;
+            for (int d = targetMm; d >= 1; d--)
+            {
+                if (minCount[d] < INF && (maxCount < 0 || minCount[d] <= maxCount))
+                {
+                    bestD = d;
+                    break;
+                }
+            }
+
+            int cursor = bestD;
+            while (cursor > 0 && choice[cursor] >= 0)
+            {
+                int hi = choice[cursor];
+                double hM = heights[hi].Mm / 1000.0;
+                if (!usage.TryGetValue(hM, out var entry))
+                    usage[hM] = entry = new RingUsageEntry { Component = heights[hi].Comp, Count = 0 };
+                entry.Count++;
+                cursor -= heights[hi].Mm;
+            }
+
+            achievedM = bestD / 1000.0;
+            return usage;
         }
 
         // =====================================================================

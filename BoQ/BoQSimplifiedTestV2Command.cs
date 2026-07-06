@@ -287,7 +287,7 @@ namespace UrbanoMetraj.BoQ
 
                 // ── Phase 1: Parse ───────────────────────────────────────────────
                 var parser = new BoQParserService(enableClashDetection: false);
-                BoQReport report = parser.Parse(xmlPath, ed);
+                BoQReport report = parser.Parse(xmlPath, ed, settings);
                 var rows = report.SectionDebug;
 
                 if (rows.Count == 0)
@@ -384,6 +384,11 @@ namespace UrbanoMetraj.BoQ
                 {
                     ed.WriteMessage($"\n[BoQ] Uyarı: Baca AI hatası: {aiEx.Message} (BOM verisi eksik kalabilir)");
                 }
+
+                // ── Phase 11.4: Net pipe length (raw length minus connected manholes' outer radius) ──
+                try { PipeNetLengthService.Compute(report, settings.NetLengthMode); }
+                catch (Exception netLenEx)
+                { ed.WriteMessage($"\n[BoQ] Uyarı: Net uzunluk hesap hatası: {netLenEx.Message}"); }
 
                 // ── Phase 11.7: Linking-completeness warnings ────────────────────
                 // Collected during Parse (unlinked pipes/missing catalog or trench
@@ -799,7 +804,8 @@ namespace UrbanoMetraj.BoQ
                 double f    = Math.Min(st.StationDist / L, 1.0);
                 st.WorldX   = row.StartX        + (row.EndX        - row.StartX)        * f;
                 st.WorldY   = row.StartY        + (row.EndY        - row.StartY)        * f;
-                st.TerrainZ = row.StartTerrainZ + (row.EndTerrainZ - row.StartTerrainZ) * f;
+                st.TerrainZ = row.StartTerrainZ + (row.EndTerrainZ - row.StartTerrainZ) * f;   // ZKazi
+                st.DolguZ   = row.StartDolguZ   + (row.EndDolguZ   - row.StartDolguZ)   * f;   // ZDolgu
                 st.InvertZ  = row.InvertStart   + (row.InvertEnd   - row.InvertStart)   * f;
 
                 double pipeWall     = (row.PipeOuterDiamM - row.DiameterMm / 1000.0) / 2.0;
@@ -812,8 +818,20 @@ namespace UrbanoMetraj.BoQ
                 double hwExcav    = topWExcav * 0.5;
                 double zSurrTop   = Math.Min(outerPipeBtm + row.HSurround, zTop);
 
-                st.TrueDepth = trueDepth;
-                st.HwExcav   = hwExcav;
+                // Backfill's own top reference (ZDolgu), independent of the excavation
+                // top (ZKazi) — same trapezoid formula re-run with the new level (user
+                // directive 2026-07-06), not sliced off the excavation trapezoid.
+                bool   dolguInvalid   = st.DolguZ < st.InvertZ;
+                double trueDepthDolgu = dolguInvalid ? 0 : Math.Max(0, st.DolguZ - zBot);
+                double topWDolgu      = row.TrWidth + 2.0 * trueDepthDolgu * row.SlopeRatio;
+                double hwDolgu        = topWDolgu * 0.5;
+                double zTopDolgu      = dolguInvalid ? zBot : st.DolguZ;
+                bool   backfillDegenerate = dolguInvalid || zTopDolgu <= zSurrTop;
+
+                st.TrueDepth      = trueDepth;
+                st.HwExcav        = hwExcav;
+                st.TrueDepthDolgu = trueDepthDolgu;
+                st.DolguInvalid   = dolguInvalid;
 
                 st.ExcavPoly = new List<double[]>
                 {
@@ -830,16 +848,16 @@ namespace UrbanoMetraj.BoQ
                     new[] { -hwBed,  outerPipeBtm }, new[] {  hwBed,  outerPipeBtm },
                     new[] {  hwSurr, zSurrTop     }, new[] { -hwSurr, zSurrTop     }
                 };
-                st.BackfillPoly = new List<double[]>
+                st.BackfillPoly = backfillDegenerate ? new List<double[]>() : new List<double[]>
                 {
-                    new[] { -hwSurr,  zSurrTop }, new[] {  hwSurr,  zSurrTop },
-                    new[] {  hwExcav, zTop     }, new[] { -hwExcav, zTop     }
+                    new[] { -hwSurr,  zSurrTop  }, new[] {  hwSurr,  zSurrTop  },
+                    new[] {  hwDolgu, zTopDolgu }, new[] { -hwDolgu, zTopDolgu }
                 };
 
                 st.AreaExcav    = Math.Round(ClipperGeo.Area(st.ExcavPoly),    3);
                 st.AreaBedding  = Math.Round(ClipperGeo.Area(st.BeddingPoly),  3);
                 st.AreaSurround = Math.Round(Math.Max(0, ClipperGeo.Area(st.SurroundPoly) - row.PipeArea), 3);
-                st.AreaBackfill = Math.Round(ClipperGeo.Area(st.BackfillPoly), 3);
+                st.AreaBackfill = backfillDegenerate ? 0.0 : Math.Round(ClipperGeo.Area(st.BackfillPoly), 3);
 
                 st.AreaExcavDeducted    = st.AreaExcav;
                 st.AreaExcavDeductedKL  = st.AreaExcav;
@@ -1100,7 +1118,8 @@ namespace UrbanoMetraj.BoQ
             double L = row.Length2D;
             double f = L > 1e-9 ? Math.Min(t / L, 1.0) : 0.0;
 
-            double terrainZ     = row.StartTerrainZ + (row.EndTerrainZ - row.StartTerrainZ) * f;
+            double terrainZ     = row.StartTerrainZ + (row.EndTerrainZ - row.StartTerrainZ) * f;   // ZKazi
+            double dolguZ       = row.StartDolguZ   + (row.EndDolguZ   - row.StartDolguZ)   * f;   // ZDolgu
             double invertZ      = row.InvertStart   + (row.InvertEnd   - row.InvertStart)   * f;
             double pipeWall     = (row.PipeOuterDiamM - row.DiameterMm / 1000.0) / 2.0;
             double outerPipeBtm = invertZ - pipeWall;
@@ -1114,15 +1133,26 @@ namespace UrbanoMetraj.BoQ
             double hwExcav = (row.TrWidth + 2.0 * trueDepth * row.SlopeRatio) * 0.5 / cosHalf;
             double zSurrTop = Math.Min(outerPipeBtm + row.HSurround, zTop);
 
+            // Backfill's own top reference (ZDolgu), independent of the excavation
+            // top (ZKazi) — mirrors BuildGrossProfiles.
+            bool   dolguInvalid   = dolguZ < invertZ;
+            double trueDepthDolgu = dolguInvalid ? 0 : Math.Max(0, dolguZ - zBot);
+            double hwDolgu        = (row.TrWidth + 2.0 * trueDepthDolgu * row.SlopeRatio) * 0.5 / cosHalf;
+            double zTopDolgu      = dolguInvalid ? zBot : dolguZ;
+            bool   backfillDegenerate = dolguInvalid || zTopDolgu <= zSurrTop;
+
             var st = new SimplifiedStation
             {
-                StationDist = t,
-                WorldX      = wx,
-                WorldY      = wy,
-                TerrainZ    = terrainZ,
-                InvertZ     = invertZ,
-                TrueDepth   = trueDepth,
-                HwExcav     = hwExcav
+                StationDist    = t,
+                WorldX         = wx,
+                WorldY         = wy,
+                TerrainZ       = terrainZ,
+                DolguZ         = dolguZ,
+                InvertZ        = invertZ,
+                TrueDepth      = trueDepth,
+                TrueDepthDolgu = trueDepthDolgu,
+                DolguInvalid   = dolguInvalid,
+                HwExcav        = hwExcav
             };
 
             st.ExcavPoly = new List<double[]> {
@@ -1134,14 +1164,14 @@ namespace UrbanoMetraj.BoQ
             st.SurroundPoly = new List<double[]> {
                 new[] {-hwBed, outerPipeBtm}, new[] {hwBed, outerPipeBtm},
                 new[] {hwSurr, zSurrTop}, new[] {-hwSurr, zSurrTop} };
-            st.BackfillPoly = new List<double[]> {
-                new[] {-hwSurr, zSurrTop}, new[] {hwSurr, zSurrTop},
-                new[] {hwExcav, zTop}, new[] {-hwExcav, zTop} };
+            st.BackfillPoly = backfillDegenerate ? new List<double[]>() : new List<double[]> {
+                new[] {-hwSurr,  zSurrTop }, new[] {hwSurr,  zSurrTop },
+                new[] {hwDolgu, zTopDolgu}, new[] {-hwDolgu, zTopDolgu} };
 
             st.AreaExcav    = Math.Round(ClipperGeo.Area(st.ExcavPoly),    3);
             st.AreaBedding  = Math.Round(ClipperGeo.Area(st.BeddingPoly),  3);
             st.AreaSurround = Math.Round(Math.Max(0, ClipperGeo.Area(st.SurroundPoly) - row.PipeArea), 3);
-            st.AreaBackfill = Math.Round(ClipperGeo.Area(st.BackfillPoly), 3);
+            st.AreaBackfill = backfillDegenerate ? 0.0 : Math.Round(ClipperGeo.Area(st.BackfillPoly), 3);
 
             st.AreaExcavDeducted      = st.AreaExcav;
             st.AreaExcavDeductedKL    = st.AreaExcav;
@@ -1457,6 +1487,9 @@ namespace UrbanoMetraj.BoQ
                 WorldX               = src.WorldX,
                 WorldY               = src.WorldY,
                 TerrainZ             = src.TerrainZ,
+                DolguZ               = src.DolguZ,
+                TrueDepthDolgu       = src.TrueDepthDolgu,
+                DolguInvalid         = src.DolguInvalid,
                 InvertZ              = src.InvertZ,
                 TrueDepth            = src.TrueDepth,
                 HwExcav              = src.HwExcav,
@@ -1752,8 +1785,9 @@ namespace UrbanoMetraj.BoQ
                         {
                             StationDist          = Math.Round(enterDist + t * (exitDist - enterDist), 3),
                             WorldX = bs.WorldX,  WorldY = bs.WorldY,
-                            TerrainZ = bs.TerrainZ, InvertZ = bs.InvertZ,
-                            TrueDepth = bs.TrueDepth, HwExcav = bs.HwExcav,
+                            TerrainZ = bs.TerrainZ, DolguZ = bs.DolguZ, InvertZ = bs.InvertZ,
+                            TrueDepth = bs.TrueDepth, TrueDepthDolgu = bs.TrueDepthDolgu,
+                            DolguInvalid = bs.DolguInvalid, HwExcav = bs.HwExcav,
                             ExcavPoly    = bs.ExcavPoly,    BeddingPoly  = bs.BeddingPoly,
                             SurroundPoly = bs.SurroundPoly, BackfillPoly = bs.BackfillPoly,
                             AreaExcav            = bs.AreaExcav,
@@ -1812,6 +1846,9 @@ namespace UrbanoMetraj.BoQ
                 WorldX            = st.WorldX,
                 WorldY            = st.WorldY,
                 TerrainZ          = st.TerrainZ,
+                DolguZ            = st.DolguZ,
+                TrueDepthDolgu    = st.TrueDepthDolgu,
+                DolguInvalid      = st.DolguInvalid,
                 InvertZ           = st.InvertZ,
                 TrueDepth         = st.TrueDepth,
                 TopWidthExcav     = st.HwExcav * 2.0,
@@ -1922,6 +1959,11 @@ namespace UrbanoMetraj.BoQ
             result.VExcavKL -= vWedgeE;
             result.VExcavSP -= vWedgeE;
 
+            // BackfillPoly is empty when this station's Dolgu Seviyesi resolved
+            // below the invert (degenerate — see BuildGrossProfiles/BuildBisectorStation);
+            // no backfill wedge to subtract in that case.
+            if (st.BackfillPoly == null || st.BackfillPoly.Count < 4) return;
+
             double hw1B = -st.BackfillPoly[0][0];
             double hw2B =  st.BackfillPoly[2][0];
             double hB   =  st.BackfillPoly[2][1] - st.BackfillPoly[0][1];
@@ -1947,6 +1989,10 @@ namespace UrbanoMetraj.BoQ
         {
             public double StationDist;
             public double WorldX, WorldY, TerrainZ, InvertZ, TrueDepth, HwExcav;
+            /// <summary>ZDolgu interpolated at this station — backfill's own top reference (independent of TerrainZ/ZKazi).</summary>
+            public double DolguZ, TrueDepthDolgu;
+            /// <summary>True when DolguZ is below InvertZ at this station — invalid Dolgu Seviyesi; AreaBackfill stays 0 here.</summary>
+            public bool   DolguInvalid;
             public List<double[]> ExcavPoly, BeddingPoly, SurroundPoly, BackfillPoly;
             public double AreaExcav, AreaBedding, AreaSurround, AreaBackfill;
             public double AreaExcavDeducted;

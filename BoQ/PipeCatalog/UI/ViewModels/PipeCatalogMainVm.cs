@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
+using UrbanoMetraj.BoQ.ExcelImport;
 using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 using UrbanoMetraj.BoQ.PipeCatalogs.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
@@ -89,6 +90,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
         public ICommand SaveCommand            { get; }
         public ICommand ExportCommand          { get; }
         public ICommand ImportCommand          { get; }
+        public ICommand ImportExcelCommand     { get; }
         public ICommand ManageClassesCommand   { get; }
 
         // ── Selected pipe ─────────────────────────────────────────────────────
@@ -116,6 +118,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             SaveCommand          = new RelayCommand(OnSave,          _ => _isDirty);
             ExportCommand        = new RelayCommand(OnExport,        _ => Families.Count > 0);
             ImportCommand        = new RelayCommand(OnImport);
+            ImportExcelCommand   = new RelayCommand(OnImportExcel,    _ => IsFamilySelected);
             ManageClassesCommand = new RelayCommand(OnManageClasses);
         }
 
@@ -277,6 +280,51 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
                                            _catalog.Families.Count);
             }
             catch (Exception ex) { ShowError("İçe aktarma hatası", ex); }
+        }
+
+        private void OnImportExcel(object _)
+        {
+            if (_selectedFamily == null)
+            {
+                MessageBox.Show("Önce içe aktarılacak boruların ekleneceği aileyi seçin veya oluşturun.",
+                    "Aile Seçilmedi", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            string path = PickFile("Excel (*.xlsx)|*.xlsx", "Excel'den Boru İçe Aktar");
+            if (path == null) return;
+
+            try
+            {
+                string[] headers;
+                System.Collections.Generic.List<string[]> rows;
+                ExcelSheetReader.ReadFirstSheet(path, out headers, out rows);
+
+                if (rows.Count == 0)
+                {
+                    StatusText = "Excel dosyasında veri satırı bulunamadı.";
+                    return;
+                }
+
+                var dlg = new ColumnMappingDialog(Path.GetFileName(path), headers, rows,
+                    PipeCatalogExcelImportService.Fields, Application.Current?.MainWindow);
+                if (dlg.ShowDialog() != true) return;
+
+                var pipes = PipeCatalogExcelImportService.Build(rows, dlg.Result);
+                if (pipes.Count == 0)
+                {
+                    StatusText = "Eşleştirilen sütunlardan hiç boru satırı üretilemedi.";
+                    return;
+                }
+
+                foreach (var p in pipes)
+                    _selectedFamily.Pipes.Add(p);
+
+                MarkDirty();
+                StatusText = string.Format("Excel'den {0} boru \"{1}\" ailesine eklendi — kaydetmek için Kaydet'e basın.",
+                                           pipes.Count, _selectedFamily.FamilyName);
+            }
+            catch (Exception ex) { ShowError("Excel içe aktarma hatası", ex); }
         }
 
         // ── Called by PipeCatalogCommand after live extraction completes ──────

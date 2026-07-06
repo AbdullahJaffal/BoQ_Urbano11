@@ -44,5 +44,13 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
         public bool          IsComposite           { get; set; }
 
         public List<SubPiece> SubPieces            { get; set; } = new List<SubPiece>();
+
+        /// <summary>
+        /// When true, one or more sub-base pieces are placed physically below this base.
+        /// These affect excavation/backfill depth only; ring distribution ignores them.
+        /// </summary>
+        public bool                 TemelAltiParcaEnabled { get; set; }
+
+        public List<TemelAltiParca> TemelAltiParcalar     { get; set; } = new List<TemelAltiParca>();
     }
 }

@@ -49,6 +49,15 @@ namespace UrbanoMetraj.BoQ
                 return;
             }
 
+            // NetLength is runtime-only (never persisted — see SectionDebugRow.NetLength),
+            // so it must be re-computed after every Load(), same as ManholeAIService's own
+            // post-processing pass does within RunFullCalculation.
+            PipeNetLengthService.Compute(report, settings.NetLengthMode);
+            // ManholeItem.SubBaseVolume (Yataklama Hacmi column) is likewise runtime-only —
+            // computed by ManholeExcavOverlapService.Compute, which is explicitly documented
+            // as safe to call multiple times and needs only report.Systems/SectionDebug,
+            // both fully restored by Load() above.
+            ManholeExcavOverlapService.Compute(report);
             ManholeConnectionLinkService.Populate(report);
 
             string defaultName = string.IsNullOrWhiteSpace(doc.Name)

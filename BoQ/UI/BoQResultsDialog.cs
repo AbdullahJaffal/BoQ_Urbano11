@@ -35,28 +35,55 @@ namespace UrbanoMetraj.BoQ.UI
         private readonly Document    _doc;
 
         private TabControl _tabs;
-        private ComboBox   _cmbKazi;
-        private ComboBox   _cmbDolgu;
-        private ComboBox   _cmbBaca;
-        private ComboBox   _cmbBacaKazi;
         private ComboBox   _cmbLanguage;
         private TextBox    _txtExportPath;
         private Label      _lblInfo;
 
-        private OverlapAssignment SelectedExcavationOverlap => IndexToOverlap(_cmbKazi.SelectedIndex);
-        private OverlapAssignment SelectedBackfillOverlap   => IndexToOverlap(_cmbDolgu.SelectedIndex);
-        private bool              BacaKaziHesapla           => _cmbBacaKazi?.SelectedIndex == 0;
+        private OverlapAssignment _excavationOverlap;
+        private OverlapAssignment _backfillOverlap;
+        private ManholeType       _manholeTypeSetting;
+        private bool              _bacaKaziHesapla;
+        private string            _bacaKirmiziKotSurface;
+        private string            _bacaAraziKotuSurface;
+        private string            _bacaTerrasmanKotuSurface;
+        private string            _bacaKirmiziKotC3DSurface;
+        private string            _bacaAraziKotuC3DSurface;
+        private string            _bacaTerrasmanKotuC3DSurface;
+        private string            _kaziSeviyesi;
+        private string            _dolguSeviyesi;
+        private string            _bacaKapakSeviyesi;
+        private RingFillMode      _ringFillMode;
+        private NetLengthMode     _netLengthMode;
+
+        private OverlapAssignment SelectedExcavationOverlap => _excavationOverlap;
+        private OverlapAssignment SelectedBackfillOverlap   => _backfillOverlap;
+        private bool              BacaKaziHesapla           => _bacaKaziHesapla;
 
         private const int CW     = 820;
         private const int MARGIN = 10;
         private const int GW     = CW - MARGIN * 2;
-        private const int TABS_TOP = 104;
+        private const int TABS_TOP = 74;
 
         public BoQResultsDialog(BoQReport report, BoQSettings savedSettings, Document doc)
         {
             _report        = report;
             _savedSettings = savedSettings;
             _doc           = doc;
+            _excavationOverlap  = _savedSettings?.ExcavationOverlap ?? OverlapAssignment.Split;
+            _backfillOverlap    = _savedSettings?.BackfillOverlap ?? OverlapAssignment.Split;
+            _manholeTypeSetting = _savedSettings?.ManholeType ?? ManholeType.PreCast;
+            _bacaKaziHesapla    = _savedSettings?.BacaKaziHesapla ?? false;
+            _bacaKirmiziKotSurface    = _savedSettings?.BacaKirmiziKotSurface ?? "Arazi1";
+            _bacaAraziKotuSurface     = _savedSettings?.BacaAraziKotuSurface ?? "Arazi1";
+            _bacaTerrasmanKotuSurface = _savedSettings?.BacaTerrasmanKotuSurface ?? "Arazi1";
+            _bacaKirmiziKotC3DSurface    = _savedSettings?.BacaKirmiziKotC3DSurface ?? "";
+            _bacaAraziKotuC3DSurface     = _savedSettings?.BacaAraziKotuC3DSurface ?? "";
+            _bacaTerrasmanKotuC3DSurface = _savedSettings?.BacaTerrasmanKotuC3DSurface ?? "";
+            _kaziSeviyesi       = _savedSettings?.KaziSeviyesi ?? "Kırmızı Kot";
+            _dolguSeviyesi      = _savedSettings?.DolguSeviyesi ?? "Kırmızı Kot";
+            _bacaKapakSeviyesi  = _savedSettings?.BacaKapakSeviyesi ?? "Kırmızı Kot";
+            _ringFillMode       = _savedSettings?.RingFillMode ?? RingFillMode.Greedy;
+            _netLengthMode      = _savedSettings?.NetLengthMode ?? NetLengthMode.OuterDiameter;
             BuildForm();
             // Pre-compute pipe–manhole overlap volumes so BacaKazi deduction is available.
             ManholeExcavOverlapService.Compute(_report);
@@ -180,11 +207,17 @@ namespace UrbanoMetraj.BoQ.UI
         {
             base.OnFormClosed(e);
             if (_savedSettings == null || _doc == null) return;
-            if (_report?.GeneratedAt == default || !DwgBoQStore.HasData(_doc.Database)) return;
+            // _doc.Database is null once the drawing has been closed while this
+            // dialog was still open (the Document object itself outlives the
+            // close) — must check separately from _doc itself, or HasData
+            // throws NullReferenceException on db.TransactionManager.
+            var db = _doc.Database;
+            if (db == null) return;
+            if (_report?.GeneratedAt == default || !DwgBoQStore.HasData(db)) return;
             try
             {
                 using (_doc.LockDocument())
-                    DwgBoQStore.UpdateSettings(_doc.Database, _report.GeneratedAt, _savedSettings);
+                    DwgBoQStore.UpdateSettings(db, _report.GeneratedAt, _savedSettings);
             }
             catch { }
         }
@@ -193,69 +226,12 @@ namespace UrbanoMetraj.BoQ.UI
 
         private void BuildOptionsBar()
         {
-            // ── Row 1: Kazı / Dolgu / Baca dropdowns + Hesapla ───────────────
+            // ── Action buttons ────────────────────────────────────────────────
             int row1 = 36;
-
-            var lblKazi = new Label
-            {
-                Text = "Kazı:", Left = MARGIN, Top = row1 + 4, Width = 38,
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-            _cmbKazi = MakeMethodCombo(MARGIN + 42, row1,
-                _savedSettings?.ExcavationOverlap ?? OverlapAssignment.Split);
-
-            var lblDolgu = new Label
-            {
-                Text = "Dolgu:", Left = MARGIN + 162, Top = row1 + 4, Width = 46,
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-            _cmbDolgu = MakeMethodCombo(MARGIN + 210, row1,
-                _savedSettings?.BackfillOverlap ?? OverlapAssignment.Split);
-
-            var lblBaca = new Label
-            {
-                Text = "Baca:", Left = MARGIN + 330, Top = row1 + 4, Width = 40,
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-            _cmbBaca = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Left = MARGIN + 374, Top = row1, Width = 106
-            };
-            _cmbBaca.Items.AddRange(new object[] { "Prefabrik", "Yerinde Döküm" });
-            _cmbBaca.SelectedIndex =
-                (_savedSettings?.ManholeType ?? ManholeType.PreCast) == ManholeType.PreCast ? 0 : 1;
-
-            var lblBacaKazi = new Label
-            {
-                Text = "B.Kazısı:", Left = MARGIN + 488, Top = row1 + 4, Width = 62,
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-            _cmbBacaKazi = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Left = MARGIN + 552, Top = row1, Width = 90
-            };
-            _cmbBacaKazi.Items.AddRange(new object[] { "Hesapla", "Yoksay" });
-            _cmbBacaKazi.SelectedIndex = (_savedSettings?.BacaKaziHesapla ?? false) ? 0 : 1;
-
-            // Cheap re-aggregate (BoQScenarioAggregator.Apply) over already-computed
-            // KU/KL/SP data — no Clipper, no re-save. Renamed from "Hesapla" (was
-            // misleading — it never runs the real calculation) since it really just
-            // rebuilds the tabs for the chosen Kazı/Dolgu/Baca Kazısı preference.
-            var btnGosterSonuc = new Button
-            {
-                Text = "Sonuçları Göster", Left = MARGIN + 650, Top = row1 - 1, Width = 150, Height = 28,
-                FlatStyle = FlatStyle.Flat
-            };
-            btnGosterSonuc.Click += (s, e) => Recalculate();
-
-            // ── Row 2: action buttons ─────────────────────────────────────────
-            int row2 = 66;
 
             var btnRefresh = new Button
             {
-                Text = "Metraj Verisi Güncelle", Left = MARGIN, Top = row2 - 1,
+                Text = "Metraj Verisi Güncelle", Left = MARGIN, Top = row1 - 1,
                 Width = 168, Height = 28, FlatStyle = FlatStyle.Flat
             };
             btnRefresh.Click += (s, e) =>
@@ -267,7 +243,7 @@ namespace UrbanoMetraj.BoQ.UI
 
             var btnSolids = new Button
             {
-                Text = "3B Katı", Left = MARGIN + 176, Top = row2 - 1, Width = 86, Height = 28,
+                Text = "3B Katı", Left = MARGIN + 176, Top = row1 - 1, Width = 86, Height = 28,
                 FlatStyle = FlatStyle.Flat
             };
             btnSolids.Click += (s, e) =>
@@ -282,7 +258,7 @@ namespace UrbanoMetraj.BoQ.UI
             var btnSettings = new Button
             {
                 Text = "⚙ Ayarlar",
-                Left = MARGIN + 270, Top = row2 - 1, Width = 100, Height = 28,
+                Left = MARGIN + 270, Top = row1 - 1, Width = 100, Height = 28,
                 FlatStyle = FlatStyle.Flat,
                 ForeColor = Color.FromArgb(60, 60, 60)
             };
@@ -290,20 +266,54 @@ namespace UrbanoMetraj.BoQ.UI
             {
                 double curSolid   = _savedSettings?.SolidDisplayInterval  ?? 5.0;
                 double curSection = _savedSettings?.CrossSectionInterval   ?? 5.0;
-                using (var dlg = new GeneralSettingsDialog(curSolid, curSection))
+                var c3dSurfaceNames = Civil3DSurfaceService.GetSurfaceNames(_doc);
+                using (var dlg = new GeneralSettingsDialog(curSolid, curSection,
+                    _excavationOverlap, _backfillOverlap, _manholeTypeSetting, _bacaKaziHesapla,
+                    _bacaKirmiziKotSurface, _bacaAraziKotuSurface, _bacaTerrasmanKotuSurface,
+                    c3dSurfaceNames,
+                    _bacaKirmiziKotC3DSurface, _bacaAraziKotuC3DSurface, _bacaTerrasmanKotuC3DSurface,
+                    _kaziSeviyesi, _dolguSeviyesi, _bacaKapakSeviyesi, _ringFillMode, _netLengthMode))
                 {
                     if (dlg.ShowDialog(this) != System.Windows.Forms.DialogResult.OK) return;
                     if (_savedSettings != null)
                     {
                         _savedSettings.SolidDisplayInterval  = dlg.SolidDisplayInterval;
                         _savedSettings.CrossSectionInterval  = dlg.CrossSectionInterval;
+                        _savedSettings.BacaKirmiziKotSurface    = dlg.BacaKirmiziKotSurface;
+                        _savedSettings.BacaAraziKotuSurface     = dlg.BacaAraziKotuSurface;
+                        _savedSettings.BacaTerrasmanKotuSurface = dlg.BacaTerrasmanKotuSurface;
+                        _savedSettings.BacaKirmiziKotC3DSurface    = dlg.BacaKirmiziKotC3DSurface;
+                        _savedSettings.BacaAraziKotuC3DSurface     = dlg.BacaAraziKotuC3DSurface;
+                        _savedSettings.BacaTerrasmanKotuC3DSurface = dlg.BacaTerrasmanKotuC3DSurface;
+                        _savedSettings.KaziSeviyesi       = dlg.KaziSeviyesi;
+                        _savedSettings.DolguSeviyesi      = dlg.DolguSeviyesi;
+                        _savedSettings.BacaKapakSeviyesi  = dlg.BacaKapakSeviyesi;
+                        _savedSettings.RingFillMode       = dlg.RingFillMode;
+                        _savedSettings.NetLengthMode      = dlg.NetLengthMode;
                     }
+                    _excavationOverlap  = dlg.ExcavationOverlap;
+                    _backfillOverlap    = dlg.BackfillOverlap;
+                    _manholeTypeSetting = dlg.SelectedManholeType;
+                    _bacaKaziHesapla    = dlg.BacaKaziHesapla;
+                    _bacaKirmiziKotSurface    = dlg.BacaKirmiziKotSurface;
+                    _bacaAraziKotuSurface     = dlg.BacaAraziKotuSurface;
+                    _bacaTerrasmanKotuSurface = dlg.BacaTerrasmanKotuSurface;
+                    _bacaKirmiziKotC3DSurface    = dlg.BacaKirmiziKotC3DSurface;
+                    _bacaAraziKotuC3DSurface     = dlg.BacaAraziKotuC3DSurface;
+                    _bacaTerrasmanKotuC3DSurface = dlg.BacaTerrasmanKotuC3DSurface;
+                    _kaziSeviyesi       = dlg.KaziSeviyesi;
+                    _dolguSeviyesi      = dlg.DolguSeviyesi;
+                    _bacaKapakSeviyesi  = dlg.BacaKapakSeviyesi;
+                    _ringFillMode       = dlg.RingFillMode;
+                    _netLengthMode      = dlg.NetLengthMode;
+                    PipeNetLengthService.Compute(_report, _netLengthMode);
+                    Recalculate();
                 }
             };
 
             var btnSections = new Button
             {
-                Text = "Kesit Çiz", Left = MARGIN + 378, Top = row2 - 1, Width = 90, Height = 28,
+                Text = "Kesit Çiz", Left = MARGIN + 378, Top = row1 - 1, Width = 90, Height = 28,
                 FlatStyle = FlatStyle.Flat
             };
             btnSections.Click += (s, e) =>
@@ -320,7 +330,7 @@ namespace UrbanoMetraj.BoQ.UI
             // this is the action that actually deserves it now.
             var btnHesapla = new Button
             {
-                Text = "Hesapla", Left = MARGIN + 478, Top = row2 - 1, Width = 90, Height = 28,
+                Text = "Hesapla", Left = MARGIN + 478, Top = row1 - 1, Width = 90, Height = 28,
                 BackColor = Color.FromArgb(0, 70, 127), ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f, FontStyle.Bold)
             };
@@ -333,29 +343,13 @@ namespace UrbanoMetraj.BoQ.UI
 
             Controls.AddRange(new Control[]
             {
-                lblKazi, _cmbKazi, lblDolgu, _cmbDolgu,
-                lblBaca, _cmbBaca, lblBacaKazi, _cmbBacaKazi, btnGosterSonuc,
                 btnRefresh, btnSolids, btnSettings, btnSections, btnHesapla
             });
         }
 
-        private static ComboBox MakeMethodCombo(int left, int top, OverlapAssignment current)
-        {
-            var c = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Left = left, Top = top, Width = 112
-            };
-            // Index order must match IndexToOverlap below.
-            c.Items.AddRange(new object[] { "50 / 50", "Üst hat", "Alt hat", "Yoksay" });
-            c.SelectedIndex = OverlapToIndex(current);
-            return c;
-        }
-
         // ── Recalculate tables from the cache for the selected methods ─────────
 
-        private ManholeType SelectedManholeType
-            => _cmbBaca.SelectedIndex == 1 ? ManholeType.CastInPlace : ManholeType.PreCast;
+        private ManholeType SelectedManholeType => _manholeTypeSetting;
 
         private void Recalculate()
         {
@@ -388,6 +382,7 @@ namespace UrbanoMetraj.BoQ.UI
                 AddManholesTab(sys);
             }
             AddBomTab(SelectedManholeType);
+            if (SelectedManholeType == ManholeType.PreCast) AddBomDetailTab();
 
             if (keep >= 0 && keep < _tabs.TabPages.Count) _tabs.SelectedIndex = keep;
             _tabs.ResumeLayout();
@@ -412,6 +407,8 @@ namespace UrbanoMetraj.BoQ.UI
             Add(grid, "Toplam geri dolgu (m³)",     $"{_report.TotalBackfillVolume:N3}");
             Add(grid, "Toplam baca kazısı (m³)",
                 BacaKaziHesapla ? $"{_report.TotalManholeExcavationVolume:N3}" : "0,000");
+            Add(grid, "Toplam baca yatakalama (m³)",
+                BacaKaziHesapla ? $"{_report.TotalManholeSubBaseVolume:N3}" : "0,000");
             Add(grid, "Toplam baca geri dolgu (m³)",
                 BacaKaziHesapla ? $"{_report.TotalManholeBackfillVolume:N3}" : "0,000");
             Add(grid, "Çakışmadan düşülen kazı (m³)",  $"{_report.TotalOverlapExcavDeducted:N3}");
@@ -430,7 +427,7 @@ namespace UrbanoMetraj.BoQ.UI
             var grid = MakeGrid();
             foreach (string col in new[]
             {
-                "Boru Hattı", "Çap (mm)", "Malzeme", "Uzunluk (m)",
+                "Boru Hattı", "Çap (mm)", "Malzeme", "Uzunluk (m)", "Net Uzunluk (m)",
                 "Kazı (m³)", "Yataklama (m³)", "Gömlekleme (m³)",
                 "Geri dolgu (m³)", "Düşülen (m³)"
             })
@@ -448,12 +445,12 @@ namespace UrbanoMetraj.BoQ.UI
 
             if (sections != null && sections.Count > 0)
             {
-                double gtLen = 0, gtEx = 0, gtBe = 0, gtSu = 0, gtBa = 0, gtOv = 0;
+                double gtLen = 0, gtNetLen = 0, gtEx = 0, gtBe = 0, gtSu = 0, gtBa = 0, gtOv = 0;
 
                 var groups = sections.GroupBy(r => r.DiameterMm);
                 foreach (var grp in groups)
                 {
-                    double stLen = 0, stEx = 0, stBe = 0, stSu = 0, stBa = 0, stOv = 0;
+                    double stLen = 0, stNetLen = 0, stEx = 0, stBe = 0, stSu = 0, stBa = 0, stOv = 0;
 
                     foreach (var s in grp)
                     {
@@ -462,13 +459,14 @@ namespace UrbanoMetraj.BoQ.UI
                             s.DiameterMm,
                             s.Material,
                             s.Length2D.ToString("N2"),
+                            s.NetLength.ToString("N2"),
                             s.VExcav.ToString("N3"),
                             s.VBedding.ToString("N3"),
                             s.VSurround.ToString("N3"),
                             s.VBackfill.ToString("N3"),
                             (s.OverlapExcavDeducted + s.OverlapBackfillDeducted).ToString("N3"));
 
-                        stLen += s.Length2D;  stEx += s.VExcav;
+                        stLen += s.Length2D;  stNetLen += s.NetLength;  stEx += s.VExcav;
                         stBe  += s.VBedding;  stSu += s.VSurround;
                         stBa  += s.VBackfill;
                         stOv  += s.OverlapExcavDeducted + s.OverlapBackfillDeducted;
@@ -478,6 +476,7 @@ namespace UrbanoMetraj.BoQ.UI
                     int sr = grid.Rows.Add(
                         $"Ara Toplam Ø{grp.Key} mm", "", "",
                         stLen.ToString("N2"),
+                        stNetLen.ToString("N2"),
                         stEx.ToString("N3"),
                         stBe.ToString("N3"),
                         stSu.ToString("N3"),
@@ -490,7 +489,7 @@ namespace UrbanoMetraj.BoQ.UI
                         c.Style.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
                     }
 
-                    gtLen += stLen; gtEx += stEx; gtBe += stBe;
+                    gtLen += stLen; gtNetLen += stNetLen; gtEx += stEx; gtBe += stBe;
                     gtSu  += stSu;  gtBa += stBa; gtOv += stOv;
                 }
 
@@ -498,6 +497,7 @@ namespace UrbanoMetraj.BoQ.UI
                 int tr = grid.Rows.Add(
                     "GENEL TOPLAM", "", "",
                     gtLen.ToString("N2"),
+                    gtNetLen.ToString("N2"),
                     gtEx.ToString("N3"),
                     gtBe.ToString("N3"),
                     gtSu.ToString("N3"),
@@ -513,11 +513,14 @@ namespace UrbanoMetraj.BoQ.UI
             else
             {
                 // Fallback: old DWG without section debug — aggregated view
+                // Net Uzunluk left blank: PipeItem is a diameter+material aggregate with
+                // no per-pipe start/end manhole link to attribute a reduction to.
                 foreach (var p in sys.Pipes)
                 {
                     grid.Rows.Add(
                         "—", p.Diameter, p.Material,
                         p.TotalLength.ToString("N2"),
+                        "",
                         p.TotalExcavationVolume.ToString("N3"),
                         p.TotalBeddingVolume.ToString("N3"),
                         p.TotalSurroundVolume.ToString("N3"),
@@ -530,6 +533,7 @@ namespace UrbanoMetraj.BoQ.UI
                     int tr = grid.Rows.Add(
                         "GENEL TOPLAM", "", "",
                         sys.Pipes.Sum(p => p.TotalLength).ToString("N2"),
+                        "",
                         sys.Pipes.Sum(p => p.TotalExcavationVolume).ToString("N3"),
                         sys.Pipes.Sum(p => p.TotalBeddingVolume).ToString("N3"),
                         sys.Pipes.Sum(p => p.TotalSurroundVolume).ToString("N3"),
@@ -556,7 +560,7 @@ namespace UrbanoMetraj.BoQ.UI
             {
                 "Ad", "Tip", "Çap (mm)", "Derinlik (m)",
                 "Kazı Derin. (m)", "Kazı Hacmi (m³)", "Geri Dolgu (m³)",
-                "X (m)", "Y (m)", "Zemin Z (m)"
+                "Baca Yatakalama (m³)", "X (m)", "Y (m)", "Zemin Z (m)"
             })
                 grid.Columns.Add(col, col);
             grid.Columns[0].Width = 70;
@@ -566,7 +570,8 @@ namespace UrbanoMetraj.BoQ.UI
             grid.Columns[4].Width = 100;
             grid.Columns[5].Width = 105;
             grid.Columns[6].Width = 105;
-            for (int i = 7; i < grid.Columns.Count; i++) grid.Columns[i].Width = 90;
+            grid.Columns[7].Width = 125;
+            for (int i = 8; i < grid.Columns.Count; i++) grid.Columns[i].Width = 90;
 
             bool showMhExcav = BacaKaziHesapla;
             foreach (var m in sys.Manholes)
@@ -577,6 +582,7 @@ namespace UrbanoMetraj.BoQ.UI
                     showMhExcav ? m.ExcavationDepth.ToString("N3")  : "0,000",
                     showMhExcav ? m.ExcavationVolume.ToString("N3") : "0,000",
                     showMhExcav ? m.BackfillVolume.ToString("N3")   : "0,000",
+                    showMhExcav ? m.SubBaseVolume.ToString("N3")    : "0,000",
                     m.X.ToString("N3"), m.Y.ToString("N3"),
                     m.TerrainElevation.ToString("N3"));
             }
@@ -657,6 +663,64 @@ namespace UrbanoMetraj.BoQ.UI
             _tabs.TabPages.Add(page);
         }
 
+        /// <summary>
+        /// One row per (baca, parça) — not an aggregate across every manhole
+        /// (user directive 2026-07-06: "Baca BOM — Prefabrik" only shows a
+        /// combined total; this shows exactly which parts/quantities each
+        /// SPECIFIC baca uses).
+        /// </summary>
+        private void AddBomDetailTab()
+        {
+            var page = new TabPage("Baca BOM — Detaylı");
+            var grid = MakeGrid();
+
+            grid.Columns.Add("Sistem",   "Sistem");
+            grid.Columns.Add("Baca",     "Baca Adı");
+            grid.Columns.Add("Diam",     "Çap (mm)");
+            grid.Columns.Add("Part",     "Parça Adı");
+            grid.Columns.Add("Height",   "Yükseklik (mm)");
+            grid.Columns.Add("Qty",      "Adet");
+            grid.Columns.Add("PozNo",    "Poz No");
+            grid.Columns.Add("Aciklama", "Açıklama");
+            grid.Columns.Add("MatVol",   "Malzeme Hacmi (m³)");
+            grid.Columns.Add("ExtVol",   "Dış Hacim (m³)");
+            grid.Columns[0].Width = 90;
+            grid.Columns[1].Width = 90;
+            grid.Columns[2].Width = 70;
+            grid.Columns[3].Width = 180;
+            grid.Columns[4].Width = 100;
+            grid.Columns[5].Width = 55;
+            grid.Columns[6].Width = 80;
+            grid.Columns[7].Width = 140;
+            grid.Columns[8].Width = 100;
+            grid.Columns[9].Width = 100;
+
+            foreach (var sys in _report.Systems ?? Enumerable.Empty<SystemBoQ>())
+            {
+                foreach (var mh in sys.Manholes.OrderBy(m => m.NodeName, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (mh.StackPreCast == null || mh.StackPreCast.Parts.Count == 0)
+                    {
+                        int r = grid.Rows.Add(sys.SystemName, mh.NodeName, mh.DiameterDisplay,
+                            "(Prefabrik eşleşme bulunamadı)", "", "", "", "", "", "");
+                        grid.Rows[r].DefaultCellStyle.ForeColor = Color.Gray;
+                        grid.Rows[r].DefaultCellStyle.Font = new Font("Segoe UI", 8.5f, FontStyle.Italic);
+                        continue;
+                    }
+
+                    foreach (var part in mh.StackPreCast.Parts)
+                        grid.Rows.Add(sys.SystemName, mh.NodeName, mh.DiameterDisplay,
+                            part.PartName, (part.HeightM * 1000.0).ToString("N1"),
+                            part.Count, part.PozNo, part.Aciklama,
+                            (part.UnitMaterialVolume * part.Count).ToString("N4"),
+                            (part.UnitExternalVolume * part.Count).ToString("N4"));
+                }
+            }
+
+            page.Controls.Add(grid);
+            _tabs.TabPages.Add(page);
+        }
+
         // ── Event handlers ────────────────────────────────────────────────────
 
         private void BrowseExportPath(object sender, EventArgs e)
@@ -715,18 +779,6 @@ namespace UrbanoMetraj.BoQ.UI
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
-
-        private static int OverlapToIndex(OverlapAssignment a)
-            => a == OverlapAssignment.UpperPipe ? 1
-             : a == OverlapAssignment.LowerPipe ? 2
-             : a == OverlapAssignment.Ignore    ? 3
-             : 0;
-
-        private static OverlapAssignment IndexToOverlap(int i)
-            => i == 1 ? OverlapAssignment.UpperPipe
-             : i == 2 ? OverlapAssignment.LowerPipe
-             : i == 3 ? OverlapAssignment.Ignore
-             : OverlapAssignment.Split;
 
         private static DataGridView MakeGrid()
         {

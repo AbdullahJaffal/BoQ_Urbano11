@@ -130,6 +130,7 @@
     <Compile Include="BoQ\Services\BoQScenarioAggregator.cs" />
     <Compile Include="BoQ\Services\ManholeConfigService.cs" />
     <Compile Include="BoQ\Services\ManholeAIService.cs" />
+    <Compile Include="BoQ\Services\PipeNetLengthService.cs" />
     <Compile Include="BoQ\Services\ManholeConnectionLinkService.cs" />
     <Compile Include="BoQ\Services\ManholeExcavOverlapService.cs" />
     <Compile Include="BoQ\Services\ManholeExcavationGeometry.cs" />
@@ -151,6 +152,7 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="BoQ\Services\DwgBoQStore.cs" />
+    <Compile Include="BoQ\Services\Civil3DSurfaceService.cs" />
     <Compile Include="BoQ\UI\GeneralSettingsDialog.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -171,15 +173,23 @@
     <Compile Include="BoQ\UI\ManholeAssignDialog.cs" />
     <Compile Include="BoQ\ManholeAssignCommand.cs" />
     <Compile Include="BoQ\MhProbeCommand.cs" />
+    <!-- ═══ Excel Import (shared column-mapping infrastructure) ════════════════ -->
+    <Compile Include="BoQ\ExcelImport\ExcelSheetReader.cs" />
+    <Compile Include="BoQ\ExcelImport\MappableField.cs" />
+    <Compile Include="BoQ\ExcelImport\ColumnMappingResult.cs" />
+    <Compile Include="BoQ\ExcelImport\ColumnMappingDialog.cs" />
+    <Compile Include="BoQ\ExcelImport\ValueMappingDialog.cs" />
     <!-- ═══ Smart Assembly ══════════════════════════════════════════════════ -->
     <Compile Include="BoQ\SmartAssembly\SmartAssemblyCommand.cs" />
     <Compile Include="BoQ\SmartAssembly\Services\SmartAssemblyCatalogStore.cs" />
+    <Compile Include="BoQ\SmartAssembly\Services\ComponentExcelImportService.cs" />
     <!-- Data Foundation -->
     <!-- Models -->
     <Compile Include="BoQ\SmartAssembly\Models\ComponentRole.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\FootprintShape.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\Footprint.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\SubPiece.cs" />
+    <Compile Include="BoQ\SmartAssembly\Models\TemelAltiParca.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\ComponentFamily.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\ManholeComponent.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\BottomElementComponent.cs" />
@@ -207,6 +217,7 @@
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\PipeRangeRuleVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\RepositoryTabVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SubPieceRowVm.cs" />
+    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\TemelAltiParcaRowVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\MasterRulesTabVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ComponentConstraintVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SystemTypeManagerVm.cs" />
@@ -250,6 +261,7 @@
     <!-- ═══ Pipe Catalog ════════════════════════════════════════════════════ -->
     <Compile Include="BoQ\PipeCatalog\Models\PipeCatalogModels.cs" />
     <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogImportService.cs" />
+    <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogExcelImportService.cs" />
     <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogStore.cs" />
     <Compile Include="BoQ\PipeCatalog\UI\ViewModels\PipeCatalogMainVm.cs" />
     <Compile Include="BoQ\PipeCatalog\UI\Views\PipeCatalogView.xaml.cs">

@@ -711,7 +711,8 @@ namespace UrbanoMetraj.BoQ.Services
             SectionDebugRow row, double t)
         {
             double f        = row.Length2D > 1e-9 ? Math.Min(t / row.Length2D, 1.0) : 0.0;
-            double terrainZ = row.StartTerrainZ + (row.EndTerrainZ - row.StartTerrainZ) * f;
+            double terrainZ = row.StartTerrainZ + (row.EndTerrainZ - row.StartTerrainZ) * f;   // ZKazi
+            double dolguZ   = row.StartDolguZ   + (row.EndDolguZ   - row.StartDolguZ)   * f;   // ZDolgu
             double invertZ  = row.InvertStart   + (row.InvertEnd   - row.InvertStart)   * f;
 
             double depthToInv = Math.Max(0, terrainZ - invertZ);
@@ -721,11 +722,19 @@ namespace UrbanoMetraj.BoQ.Services
             double hwSurr  = row.TopWidthSurr * 0.5;
             double hwExcav = (row.TrWidth + 2.0 * trueDepth * row.SlopeRatio) * 0.5;
 
+            // Backfill's own top reference (ZDolgu), independent of the excavation
+            // top (ZKazi) — mirrors BoQParserService.ComputeStations.
+            bool   dolguInvalid   = dolguZ < invertZ;
+            double trueDepthDolgu = dolguInvalid ? 0 : Math.Max(0, dolguZ - invertZ) + row.TrBedHeight;
+            double hwDolgu        = (row.TrWidth + 2.0 * trueDepthDolgu * row.SlopeRatio) * 0.5;
+
             double zBot     = invertZ - row.TrBedHeight;
             double zTop     = terrainZ;
+            double zTopDolgu = dolguInvalid ? zBot : dolguZ;
             double zSurrTop = Math.Min(invertZ + row.HSurround, zTop);
+            bool   backfillDegenerate = dolguInvalid || zTopDolgu <= zSurrTop;
 
-            return new Dictionary<TrenchLayerType, List<double[]>>
+            var result = new Dictionary<TrenchLayerType, List<double[]>>
             {
                 [TrenchLayerType.Excavation] = new List<double[]>
                 {
@@ -742,12 +751,13 @@ namespace UrbanoMetraj.BoQ.Services
                     new[] { -hwBed,  invertZ  }, new[] { hwBed,  invertZ  },
                     new[] {  hwSurr, zSurrTop }, new[] { -hwSurr, zSurrTop }
                 },
-                [TrenchLayerType.Backfill] = new List<double[]>
+                [TrenchLayerType.Backfill] = backfillDegenerate ? new List<double[]>() : new List<double[]>
                 {
-                    new[] { -hwSurr,  zSurrTop }, new[] { hwSurr,  zSurrTop },
-                    new[] {  hwExcav, zTop     }, new[] { -hwExcav, zTop     }
+                    new[] { -hwSurr,  zSurrTop  }, new[] { hwSurr,  zSurrTop  },
+                    new[] {  hwDolgu, zTopDolgu }, new[] { -hwDolgu, zTopDolgu }
                 },
             };
+            return result;
         }
 
         private static double InvertAt(SectionDebugRow row, double t)

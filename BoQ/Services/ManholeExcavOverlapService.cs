@@ -71,7 +71,7 @@ namespace UrbanoMetraj.BoQ.Services
                 {
                     if (mh.ExcavationDepth <= 1e-6) continue;
 
-                    double zTop    = mh.TerrainElevation;
+                    double zTop    = mh.ZKazi;
                     double zBottom = zTop - mh.ExcavationDepth;  // absolute lowest invert
 
                     // ── Compute the square's rotation angle ───────────────────
@@ -133,6 +133,16 @@ namespace UrbanoMetraj.BoQ.Services
                     // Accumulate bedding + surround overlaps for this manhole's BackfillVolume.
                     double mhBeddingSum  = 0;
                     double mhSurroundSum = 0;
+
+                    // ── Dolgu-basis Z-range (independent of the Kazı range above) ──
+                    // Backfill's own top/bottom, from mh.ZDolgu/mh.DolguFinalDepth —
+                    // NOT derived from zTop/zBottom (user directive 2026-07-06: redo
+                    // the same extraction with the new level, don't slice the Kazı result).
+                    bool   dolguGeomValid   = !mh.DolguInvalid && mh.DolguFinalDepth > 1e-6;
+                    double zTopDolgu    = mh.ZDolgu;
+                    double zBottomDolgu = zTopDolgu - mh.DolguFinalDepth;
+                    double mhBeddingSumDolgu  = 0;
+                    double mhSurroundSumDolgu = 0;
 
                     foreach (var (sdr, invertAtMh, dirX, dirY) in connectedPipes)
                     {
@@ -206,6 +216,46 @@ namespace UrbanoMetraj.BoQ.Services
                             surrVolDbg                    = surrVol;
                         }
 
+                        // ── Bedding/Surround overlap, Dolgu-basis range ───────
+                        // Same zones (bedding/surround are invert-referenced, not
+                        // top-referenced) but clipped to [zBottomDolgu, zTopDolgu]
+                        // instead of [zBottom, zTop] — recomputed rather than reused,
+                        // since the two ranges can differ. Local-only (not written to
+                        // sdr.ManholeBeddingDeducted/ManholeSurroundDeducted, which
+                        // stay Kazı-only diagnostics).
+                        if (dolguGeomValid)
+                        {
+                            double bedZLoD = Math.Max(zBottomDolgu, bedZBot);
+                            double bedZHiD = Math.Min(zTopDolgu,    bedZTop);
+                            if (bedZHiD - bedZLoD > 1e-6)
+                            {
+                                double bedZMidD = (bedZLoD + bedZHiD) * 0.5;
+                                double HbedD    = bedZHiD - bedZLoD;
+                                var bBotD = TrenchRectAt(mh.X, mh.Y, bedZLoD,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                                var bMidD = TrenchRectAt(mh.X, mh.Y, bedZMidD, invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                                var bTopD = TrenchRectAt(mh.X, mh.Y, bedZHiD,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                                double abBotD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, bedZLoD,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bBotD);
+                                double abMidD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, bedZMidD, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bMidD);
+                                double abTopD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, bedZHiD,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bTopD);
+                                mhBeddingSumDolgu += (HbedD / 6.0) * (abBotD + 4.0 * abMidD + abTopD);
+                            }
+
+                            double surrZLoD = Math.Max(zBottomDolgu, surrZBot);
+                            double surrZHiD = Math.Min(zTopDolgu,    surrZTop);
+                            if (surrZHiD - surrZLoD > 1e-6)
+                            {
+                                double surrZMidD = (surrZLoD + surrZHiD) * 0.5;
+                                double HsurrD    = surrZHiD - surrZLoD;
+                                var sBotD = TrenchRectAt(mh.X, mh.Y, surrZLoD,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                                var sMidD = TrenchRectAt(mh.X, mh.Y, surrZMidD, invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                                var sTopD = TrenchRectAt(mh.X, mh.Y, surrZHiD,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
+                                double asBotD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, surrZLoD,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sBotD);
+                                double asMidD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, surrZMidD, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sMidD);
+                                double asTopD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, surrZHiD,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sTopD);
+                                mhSurroundSumDolgu += (HsurrD / 6.0) * (asBotD + 4.0 * asMidD + asTopD);
+                            }
+                        }
+
                         // ── Backfill overlap ──────────────────────────────────
                         // Backfill occupies Z: [invertAtMh + PipeOD + TrSandOverPipe, zTop].
                         // Width grows with SlopeRatio (same as excavation trench).
@@ -233,15 +283,37 @@ namespace UrbanoMetraj.BoQ.Services
                         if (trTop != null) unionTop.Add(trTop);
                     }
 
-                    // ── Baca Geri Dolgu ───────────────────────────────────────
-                    // = ExcavationVolume − ManholeStructureVolume − Σbedding − Σsurround
-                    // ManholeStructureVolume = the resolved precast stack's own external
-                    // volume (Phase 7c) — 0 until the catalog's part volumes are filled in,
-                    // same graceful-degrade convention as everything else in this pass.
-                    double manholeStructureVolume = mh.StackPreCast?.Parts?
+                    // ── StructureVolume: Σ(UnitExternalVolume × Count) ───────────
+                    mh.StructureVolume = mh.StackPreCast?.Parts?
                         .Sum(p => p.UnitExternalVolume * p.Count) ?? 0.0;
-                    mh.BackfillVolume = Math.Max(0,
-                        mh.ExcavationVolume - manholeStructureVolume - mhBeddingSum - mhSurroundSum);
+
+                    // ── SubBaseVolume: Alt Temel Katmanları at pit bottom ─────────
+                    // Uses Simpson's 1/3 rule on the frustum slice at the pit base.
+                    // H = total thickness of ResolvedSubBaseLayers; slice spans
+                    // [zBottom, zBottom+H] where the frustum area grows with slope.
+                    {
+                        double sbH = mh.ResolvedSubBaseLayers != null
+                            ? mh.ResolvedSubBaseLayers.Sum(l => l.ThicknessMm / 1000.0)
+                            : 0.0;
+                        if (sbH > 1e-6 && mh.ExcavBaseSideM > 1e-6)
+                        {
+                            double sideBot = mh.ExcavBaseSideM;
+                            double sideMid = mh.ExcavBaseSideM + 2.0 * (sbH * 0.5) * mh.ExcavSlopeRatio;
+                            double sideTop = mh.ExcavBaseSideM + 2.0 * sbH           * mh.ExcavSlopeRatio;
+                            mh.SubBaseVolume = (sbH / 6.0) * (sideBot * sideBot + 4.0 * sideMid * sideMid + sideTop * sideTop);
+                        }
+                        else
+                        {
+                            mh.SubBaseVolume = 0.0;
+                        }
+                    }
+
+                    // ── Baca Geri Dolgu ───────────────────────────────────────
+                    // = DolguBasisVolume − StructureVolume − SubBaseVolume − Σbedding − Σsurround
+                    // (bedding/surround recomputed against Dolgu-basis Z-range above).
+                    mh.BackfillVolume = dolguGeomValid
+                        ? Math.Max(0, mh.DolguBasisVolume - mh.StructureVolume - mh.SubBaseVolume - mhBeddingSumDolgu - mhSurroundSumDolgu)
+                        : 0.0;
 
                     // ── Geri Dolgu layer split (Phase 7d) ─────────────────────
                     SplitManholeBackfillLayers(mh);
@@ -367,7 +439,7 @@ namespace UrbanoMetraj.BoQ.Services
                 foreach (var mh in sys.Manholes)
                 {
                     if (mh.ExcavationDepth <= 1e-6) continue;
-                    double zTop    = mh.TerrainElevation;
+                    double zTop    = mh.ZKazi;
                     double zBottom = zTop - mh.ExcavationDepth;
                     double rot     = ComputeRotationAngle(mh, outlets, inlets);
                     double halfTop = mh.ExcavBaseSideM / 2.0 + mh.ExcavationDepth * mh.ExcavSlopeRatio;

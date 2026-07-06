@@ -61,8 +61,12 @@
                             ToolTip="Kataloğu seçilen konuma XML olarak dışa aktarır."/>
                     <Button Content="İçe Aktar"
                             Command="{Binding ImportCommand}"
-                            Padding="8,2" Margin="0,0,8,0"
+                            Padding="8,2" Margin="0,0,4,0"
                             ToolTip="Daha önce dışa aktarılmış bir XML dosyasını içe aktarır.&#x0a;Native şema ve Urbano şeması otomatik algılanır."/>
+                    <Button Content="Excel'den İçe Aktar"
+                            Command="{Binding ImportExcelCommand}"
+                            Padding="8,2" Margin="0,0,8,0"
+                            ToolTip="Bir Excel (.xlsx) dosyasından, sütunları eşleştirerek seçili aileye toplu boru ekler."/>
 
                     <Separator Width="1" Height="20" Margin="0,0,8,0" Background="#BBBBBB"/>
 
