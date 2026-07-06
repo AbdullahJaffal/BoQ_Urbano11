@@ -33,6 +33,7 @@ namespace GeoHarness
             T11_ConnectedPipesSkipped();
             T12_CollisionStationInjection();
             T13_LowerPipeDeductedParallel();
+            T14_SpatialGridEquivalence();
 
             Console.WriteLine($"\n── {_pass} passed, {_fail} failed ──");
             return _fail == 0 ? 0 : 1;
@@ -301,6 +302,56 @@ namespace GeoHarness
             Console.WriteLine($"   KeepUpper: lower cedes {ClipperGeo.Area(cedeLowerKU):F4}, upper cedes {ClipperGeo.Area(cedeUpperKU):F4}");
             Check("KeepUpper: lower cedes overlap", ClipperGeo.Area(cedeLowerKU) > 1e-4);
             Check("KeepUpper: upper cedes nothing", ClipperGeo.Area(cedeUpperKU) < 1e-4);
+        }
+
+        private static void T14_SpatialGridEquivalence()
+        {
+            Section("T14 — spatial grid returns identical AABB pairs to brute force");
+
+            // (a) Random cloud: a realistic mix of overlapping and disjoint pipes.
+            //     If the grid ever dropped a truly-overlapping pair, a real clash
+            //     would silently vanish from the volume calc — so assert exact parity
+            //     against the O(n²) scan the grid replaces.
+            var rnd = new Random(12345);
+            var cloud = new List<SectionDebugRow>();
+            for (int i = 0; i < 300; i++)
+            {
+                double sx = rnd.NextDouble() * 200.0;
+                double sy = rnd.NextDouble() * 200.0;
+                double ang = rnd.NextDouble() * Math.PI;
+                double len = 3.0 + rnd.NextDouble() * 40.0;
+                cloud.Add(MakeRow(sx, sy, sx + len * Math.Cos(ang), sy + len * Math.Sin(ang),
+                                  invert: 2.0, terrain: 5.0, od: 0.5));
+            }
+            Check("random cloud (300 pipes) ≡ brute force",
+                  BoQOverlapResolver.VerifyGridEquivalence(cloud) == null);
+
+            // (b) One long pipe spanning the whole extent crossing many short pipes:
+            //     the long pipe registers in many grid cells — verify de-duplication
+            //     and full coverage still match brute force exactly.
+            var spanning = new List<SectionDebugRow>();
+            spanning.Add(MakeRow(0, 100, 200, 100, invert: 2.0, terrain: 5.0, od: 0.5));
+            for (int i = 0; i < 60; i++)
+                spanning.Add(MakeRow(i * 3.0, 90, i * 3.0, 110, invert: 2.5, terrain: 5.0, od: 0.5));
+            Check("long spanning pipe ≡ brute force",
+                  BoQOverlapResolver.VerifyGridEquivalence(spanning) == null);
+
+            // (c) Degenerate cluster: 40 pipes stacked at the exact same location —
+            //     every pair overlaps; the grid must return the complete set.
+            var cluster = new List<SectionDebugRow>();
+            for (int i = 0; i < 40; i++)
+                cluster.Add(MakeRow(10, 10, 20, 10, invert: 2.0, terrain: 5.0, od: 0.5));
+            Check("coincident cluster ≡ brute force",
+                  BoQOverlapResolver.VerifyGridEquivalence(cluster) == null);
+
+            // (d) Fully disjoint: pipes far apart on a diagonal — zero overlapping
+            //     pairs; the grid must not invent any.
+            var disjoint = new List<SectionDebugRow>();
+            for (int i = 0; i < 50; i++)
+                disjoint.Add(MakeRow(i * 100.0, i * 100.0, i * 100.0 + 5, i * 100.0,
+                                     invert: 2.0, terrain: 5.0, od: 0.5));
+            Check("disjoint spread ≡ brute force",
+                  BoQOverlapResolver.VerifyGridEquivalence(disjoint) == null);
         }
 
         // ── synthetic row/station construction ────────────────────────────────

@@ -59,6 +59,119 @@ namespace UrbanoMetraj.BoQ.Services
         }
 
         // =====================================================================
+        // Uniform spatial grid over the footprint AABBs
+        // =====================================================================
+
+        /// <summary>
+        /// A uniform-cell spatial hash over the padded footprint AABBs. Each row is
+        /// registered in every cell its AABB covers, so <see cref="Candidates"/>
+        /// returns a superset of the rows whose AABB overlaps a query row's AABB.
+        /// <para>
+        /// Correctness: if two AABBs overlap, their intersection contains a point, and
+        /// the grid cell holding that point is covered by BOTH AABBs → both rows are
+        /// registered in it → they are mutual candidates. The caller still applies the
+        /// exact <see cref="AabbOverlap"/> test, so no overlapping pair is ever missed
+        /// and no false positive survives. This replaces the O(n²) all-pairs scan with
+        /// a near-linear neighbour query without changing a single resolved pair.
+        /// </para>
+        /// </summary>
+        private sealed class SpatialGrid
+        {
+            private readonly Frame[]     _frames;
+            private readonly List<int>[] _cells;
+            private readonly double      _minX, _minY, _cell;
+            private readonly int         _cols, _rows;
+
+            public SpatialGrid(Frame[] frames)
+            {
+                _frames = frames;
+                int n = frames.Length;
+
+                double minX = double.MaxValue, minY = double.MaxValue;
+                double maxX = double.MinValue, maxY = double.MinValue;
+                double sumSpan = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    var f = frames[i];
+                    if (f.MinX < minX) minX = f.MinX;
+                    if (f.MinY < minY) minY = f.MinY;
+                    if (f.MaxX > maxX) maxX = f.MaxX;
+                    if (f.MaxY > maxY) maxY = f.MaxY;
+                    sumSpan += (f.MaxX - f.MinX) + (f.MaxY - f.MinY);
+                }
+                double gw = Math.Max(0, maxX - minX);
+                double gh = Math.Max(0, maxY - minY);
+
+                // Cell ≈ the average AABB half-perimeter (a typical pipe extent), so a
+                // short manhole-to-manhole segment spans O(1) cells.
+                double cell = n > 0 ? sumSpan / (2.0 * n) : 0;
+                if (cell < 1e-6) cell = Math.Max(Math.Max(gw, gh), 1.0);
+
+                // Keep the total cell count bounded regardless of network span.
+                long cap = Math.Max(4096L, (long)n * 8);
+                for (int guard = 0; guard < 64; guard++)
+                {
+                    long c = (long)(gw / cell) + 1;
+                    long r = (long)(gh / cell) + 1;
+                    if (c * r <= cap) break;
+                    cell *= 1.5;
+                }
+
+                _minX = minX; _minY = minY; _cell = cell;
+                _cols = (int)(gw / cell) + 1;
+                _rows = (int)(gh / cell) + 1;
+                _cells = new List<int>[_cols * _rows];
+
+                for (int i = 0; i < n; i++)
+                {
+                    var f = frames[i];
+                    int cx0 = Col(f.MinX), cx1 = Col(f.MaxX);
+                    int cy0 = Row(f.MinY), cy1 = Row(f.MaxY);
+                    for (int cy = cy0; cy <= cy1; cy++)
+                        for (int cx = cx0; cx <= cx1; cx++)
+                        {
+                            int idx = cy * _cols + cx;
+                            (_cells[idx] ?? (_cells[idx] = new List<int>())).Add(i);
+                        }
+                }
+            }
+
+            private int Col(double x)
+            {
+                int c = (int)((x - _minX) / _cell);
+                return c < 0 ? 0 : (c >= _cols ? _cols - 1 : c);
+            }
+
+            private int Row(double y)
+            {
+                int r = (int)((y - _minY) / _cell);
+                return r < 0 ? 0 : (r >= _rows ? _rows - 1 : r);
+            }
+
+            /// <summary>
+            /// Row indices sharing at least one cell with <paramref name="i"/>'s AABB
+            /// (deduplicated, excluding <paramref name="i"/> itself).
+            /// </summary>
+            public List<int> Candidates(int i)
+            {
+                var f = _frames[i];
+                var seen   = new HashSet<int>();
+                var result = new List<int>();
+                int cx0 = Col(f.MinX), cx1 = Col(f.MaxX);
+                int cy0 = Row(f.MinY), cy1 = Row(f.MaxY);
+                for (int cy = cy0; cy <= cy1; cy++)
+                    for (int cx = cx0; cx <= cx1; cx++)
+                    {
+                        var bucket = _cells[cy * _cols + cx];
+                        if (bucket == null) continue;
+                        foreach (int j in bucket)
+                            if (j != i && seen.Add(j)) result.Add(j);
+                    }
+                return result;
+            }
+        }
+
+        // =====================================================================
         // Entry point
         // =====================================================================
 
@@ -85,15 +198,64 @@ namespace UrbanoMetraj.BoQ.Services
             for (int i = 0; i < rows.Count; i++)
                 frames[i] = BuildFrame(rows[i]);
 
+            // Spatial grid replaces the O(n²) all-pairs scan with a neighbour query.
+            // The exact AabbOverlap gate below still runs, so every resolved pair — and
+            // therefore every volume downstream — is identical to the brute-force scan.
+            var grid = new SpatialGrid(frames);
+
             for (int ai = 0; ai < rows.Count; ai++)
             {
                 var rowA = rows[ai];
                 if (rowA.Stations == null) continue;
                 var fa = frames[ai];
 
+                // Candidate neighbours are whole-pipe (station-independent): resolve
+                // them ONCE per pipe instead of re-scanning at every station. Pipes
+                // meeting at the same manhole (SharesNode) are connected — their
+                // trenches overlap at the junction but that is NOT a real clash to
+                // deduct, so they are excluded here.
+                var neigh = new List<int>();
+                foreach (int bi in grid.Candidates(ai))
+                {
+                    if (SharesNode(rowA, rows[bi])) continue;
+                    if (!AabbOverlap(fa, frames[bi])) continue;
+                    neigh.Add(bi);
+                }
+
                 foreach (var sA in rowA.Stations)
-                    ResolveStation(rowA, fa, sA, rows, frames, ai);
+                    ResolveStation(rowA, fa, sA, rows, frames, ai, neigh);
             }
+        }
+
+        /// <summary>
+        /// Test-only equivalence check: verifies the spatial-grid candidate query
+        /// returns EXACTLY the same AABB-overlapping neighbours as a brute-force
+        /// all-pairs scan, for every row. Returns <c>null</c> on success or a
+        /// human-readable description of the first mismatch. Used by the geometry
+        /// harness to guarantee the grid never drops (or invents) a resolved pair.
+        /// </summary>
+        public static string VerifyGridEquivalence(List<SectionDebugRow> rows)
+        {
+            if (rows == null || rows.Count == 0) return null;
+
+            var frames = new Frame[rows.Count];
+            for (int i = 0; i < rows.Count; i++) frames[i] = BuildFrame(rows[i]);
+            var grid = new SpatialGrid(frames);
+
+            for (int ai = 0; ai < rows.Count; ai++)
+            {
+                var brute = new HashSet<int>();
+                for (int bi = 0; bi < rows.Count; bi++)
+                    if (bi != ai && AabbOverlap(frames[ai], frames[bi])) brute.Add(bi);
+
+                var viaGrid = new HashSet<int>();
+                foreach (int bi in grid.Candidates(ai))
+                    if (AabbOverlap(frames[ai], frames[bi])) viaGrid.Add(bi);
+
+                if (!brute.SetEquals(viaGrid))
+                    return $"row {ai}: brute-force {brute.Count} vs grid {viaGrid.Count} AABB neighbours differ";
+            }
+            return null;
         }
 
         // =====================================================================
@@ -274,11 +436,13 @@ namespace UrbanoMetraj.BoQ.Services
                 foot[i]   = ring != null ? new List<List<double[]>> { ring } : null;
             }
 
-            for (int ai = 0; ai < n - 1; ai++)
+            var grid = new SpatialGrid(frames);
+            for (int ai = 0; ai < n; ai++)
             {
                 if (foot[ai] == null) continue;
-                for (int bi = ai + 1; bi < n; bi++)
+                foreach (int bi in grid.Candidates(ai))
                 {
+                    if (bi <= ai) continue;   // each unordered pair once (from lower index)
                     if (foot[bi] == null) continue;
                     if (SharesNode(rows[ai], rows[bi])) continue;
                     if (!AabbOverlap(frames[ai], frames[bi])) continue;
@@ -363,7 +527,7 @@ namespace UrbanoMetraj.BoQ.Services
 
         private static void ResolveStation(
             SectionDebugRow rowA, Frame fa, CrossSectionStation sA,
-            List<SectionDebugRow> rows, Frame[] frames, int ai)
+            List<SectionDebugRow> rows, Frame[] frames, int ai, List<int> neigh)
         {
             // Gross rings for this station (already computed).
             var gross = new Dictionary<TrenchLayerType, List<double[]>>
@@ -386,20 +550,14 @@ namespace UrbanoMetraj.BoQ.Services
             var surrender = Scenarios.ToDictionary(
                 p => p, p => Layers.ToDictionary(L => L, L => new List<List<double[]>>()));
 
-            // ── Gather clashes from every other pipe ──────────────────────────
-            for (int bi = 0; bi < rows.Count; bi++)
+            // ── Gather clashes from the pre-filtered neighbour set ────────────
+            // `neigh` (built once per pipe in Resolve) already excludes self,
+            // manhole-connected pipes, and rows whose footprint AABB cannot overlap A.
+            // The real per-station work is the geometric projection below.
+            foreach (int bi in neigh)
             {
-                if (bi == ai) continue;
                 var rowB = rows[bi];
-
-                // Pipes meeting at the same manhole (sharing a topology node) are
-                // connected — preceding/following segments or sibling inlets. Their
-                // trenches naturally overlap at the junction, but that is NOT a real
-                // clash to deduct, so skip the pair entirely.
-                if (SharesNode(rowA, rowB)) continue;
-
-                var fb = frames[bi];
-                if (!AabbOverlap(fa, fb)) continue;
+                var fb   = frames[bi];
 
                 var nb = ProjectNeighbour(rowA, fa, sA, rowB, fb, uMinA, uMaxA);
                 if (nb == null) continue;   // no real overlap at this station
@@ -443,37 +601,73 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             }
 
-            // ── Finalise: build the three cached scenario profiles ────────────
-            sA.HasOverlap = stronger.Values.Any(r => r.Count > 0)
-                         || surrender.Values.Any(d => d.Values.Any(r => r.Count > 0));
-
-            var profiles = new Dictionary<TiePreference, ScenarioProfile>();
+            // ── Finalise: build the cached scenario profiles ──────────────────
+            // The three scenarios differ ONLY through the per-preference `surrender`
+            // term; `gross`, `bodyA` and `stronger` are preference-independent. So
+            // when no same-type surrender exists at this station — the common case (no
+            // clash, or a clash that only involves stronger/pipe-body deductions) — all
+            // three profiles are identical: build ONE and share it, skipping two
+            // redundant Clipper passes per station. Stations inside a real crossing
+            // (surrender non-empty) still get three independent profiles, so instant
+            // scenario-switching downstream is unaffected and every net area is
+            // byte-identical to computing all three unconditionally.
+            bool surrenderDiverges = false;
             foreach (var p in Scenarios)
             {
-                var prof = new ScenarioProfile { Preference = p };
                 foreach (var L in Layers)
-                {
-                    List<List<double[]>> net = new List<List<double[]>> { gross[L] };
-
-                    if (TrenchLayerPriority.PipeBodyDeducts(L) && bodyA != null)
-                        net = ClipperGeo.Difference(net, new List<List<double[]>> { bodyA });
-
-                    if (stronger[L].Count > 0)
-                        net = ClipperGeo.Difference(net, ClipperGeo.Union(stronger[L]));
-
-                    if (surrender[p][L].Count > 0)
-                        net = ClipperGeo.Difference(net, ClipperGeo.Union(surrender[p][L]));
-
-                    var slot = prof.Layer(L);
-                    slot.Polygon = net;
-                    slot.NetArea = ClipperGeo.Area(net);
-                }
-                profiles[p] = prof;
+                    if (surrender[p][L].Count > 0) { surrenderDiverges = true; break; }
+                if (surrenderDiverges) break;
             }
 
-            sA.ScenarioKeepUpper = profiles[TiePreference.KeepUpper];
-            sA.ScenarioKeepLower = profiles[TiePreference.KeepLower];
-            sA.ScenarioSplit     = profiles[TiePreference.Split];
+            sA.HasOverlap = stronger.Values.Any(r => r.Count > 0) || surrenderDiverges;
+
+            if (!surrenderDiverges)
+            {
+                var shared = BuildProfile(TiePreference.KeepUpper, gross, stronger, surrender, bodyA);
+                sA.ScenarioKeepUpper = shared;
+                sA.ScenarioKeepLower = shared;
+                sA.ScenarioSplit     = shared;
+            }
+            else
+            {
+                sA.ScenarioKeepUpper = BuildProfile(TiePreference.KeepUpper, gross, stronger, surrender, bodyA);
+                sA.ScenarioKeepLower = BuildProfile(TiePreference.KeepLower, gross, stronger, surrender, bodyA);
+                sA.ScenarioSplit     = BuildProfile(TiePreference.Split,     gross, stronger, surrender, bodyA);
+            }
+        }
+
+        /// <summary>
+        /// Builds one scenario profile for a station:
+        ///   net(L) = gross(L) − pipe body − Union(stronger) − Union(surrender[p]).
+        /// Extracted from the finalise step so identical scenarios (no per-preference
+        /// surrender) can be computed once and shared across all three slots.
+        /// </summary>
+        private static ScenarioProfile BuildProfile(
+            TiePreference p,
+            Dictionary<TrenchLayerType, List<double[]>> gross,
+            Dictionary<TrenchLayerType, List<List<double[]>>> stronger,
+            Dictionary<TiePreference, Dictionary<TrenchLayerType, List<List<double[]>>>> surrender,
+            List<double[]> bodyA)
+        {
+            var prof = new ScenarioProfile { Preference = p };
+            foreach (var L in Layers)
+            {
+                List<List<double[]>> net = new List<List<double[]>> { gross[L] };
+
+                if (TrenchLayerPriority.PipeBodyDeducts(L) && bodyA != null)
+                    net = ClipperGeo.Difference(net, new List<List<double[]>> { bodyA });
+
+                if (stronger[L].Count > 0)
+                    net = ClipperGeo.Difference(net, ClipperGeo.Union(stronger[L]));
+
+                if (surrender[p][L].Count > 0)
+                    net = ClipperGeo.Difference(net, ClipperGeo.Union(surrender[p][L]));
+
+                var slot = prof.Layer(L);
+                slot.Polygon = net;
+                slot.NetArea = ClipperGeo.Area(net);
+            }
+            return prof;
         }
 
         // =====================================================================
