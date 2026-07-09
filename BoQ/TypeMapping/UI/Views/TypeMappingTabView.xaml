@@ -57,14 +57,18 @@
         <Border DockPanel.Dock="Top"
                 BorderBrush="#CCCCCC" BorderThickness="0,0,0,1"
                 Background="#F8F8F8" Padding="6,5">
+            <!-- Unified toolbar: [Kaydet] | [↺ Yenile]
+                 Eşleştirmeler Urbano dışa aktarımından otomatik doldurulur → Ekle/İçe/Dışa/Sil yok;
+                 satırlar yalnızca DWG'ye Kaydet ile yazılır. Refresh (↺ Yenile) diğer sekmelerdeki
+                 gibi sona alındı. -->
             <WrapPanel>
-                <Button Content="Yenile" Command="{Binding RefreshCommand}"
-                        Style="{StaticResource ActionBtn}"
-                        ToolTip="Son Urbano dışa aktarımından (Metraj Verisi Güncelle) kataloğ öğelerini yeniden okur."/>
-                <Separator Width="1" Height="22" Margin="6,0" Background="#CCCCCC"/>
                 <Button Content="💾 Kaydet" Command="{Binding SaveCommand}"
                         Style="{StaticResource KaydetButton}"
                         ToolTip="Eşleştirmeleri aktif çizimin (DWG) içine kaydeder."/>
+                <Separator Width="1" Height="22" Margin="6,0" Background="#CCCCCC"/>
+                <Button Content="↺ Yenile" Command="{Binding RefreshCommand}"
+                        Style="{StaticResource ActionBtn}"
+                        ToolTip="Son Urbano dışa aktarımından (Metraj Verisi Güncelle) kataloğ öğelerini yeniden okur."/>
             </WrapPanel>
         </Border>
 
@@ -89,7 +93,8 @@
                         <ComboBox Width="90" Margin="0,0,8,0"
                                   ItemsSource="{Binding BulkPipeSinifs}"
                                   SelectedItem="{Binding BulkPipeSinif}"/>
-                        <Button Content="Uygula" Padding="10,3"
+                        <Button Content="Uygula"
+                                Style="{StaticResource ActionBtn}"
                                 Command="{Binding ApplyBulkPipeCommand}"
                                 ToolTip="Tabloda Ctrl/Shift ile birden çok satır seçin, sonra Aile+Sınıf'ı buradan seçip uygulayın."/>
                     </StackPanel>
@@ -174,7 +179,8 @@
                                   ItemsSource="{Binding AvailableManholeFamilies}"
                                   SelectedItem="{Binding BulkManholeFamily}"
                                   DisplayMemberPath="Name"/>
-                        <Button Content="Uygula" Padding="10,3"
+                        <Button Content="Uygula"
+                                Style="{StaticResource ActionBtn}"
                                 Command="{Binding ApplyBulkManholeCommand}"
                                 ToolTip="Tabloda Ctrl/Shift ile birden çok satır seçin, sonra Aile'yi buradan seçip uygulayın."/>
                     </StackPanel>
