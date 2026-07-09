@@ -1,16 +1,26 @@
 namespace UrbanoMetraj.BoQ.SmartAssembly.Models
 {
     /// <summary>
-    /// A single sub-base piece placed physically below a <see cref="BottomElementComponent"/>.
-    /// Contributes to excavation / backfill depth calculation but does NOT affect
-    /// ring distribution (ComputeMinDepthM uses EffectiveHeight only).
+    /// A sub-base element placed physically below a manhole (e.g. gravel bed, lean concrete pad).
+    /// Contributes to excavation / backfill depth.
+    /// IsVariable is always false — height is a fixed catalog value.
+    /// <see cref="BaglandiTabanCapiMm"/> links this piece to the correct
+    /// <see cref="BottomElementComponent"/> via its TopOpeningDiameterMm.
     /// </summary>
-    public class TemelAltiParca
+    public class TemelAltiParcaComponent : ManholeComponent
     {
-        public string Ad       { get; set; } = "";
-        public double Boy      { get; set; }  // length mm
-        public double En       { get; set; }  // width mm
-        public double Kalinlik { get; set; }  // thickness mm
-        public string Malzeme  { get; set; } = "";
+        public TemelAltiParcaComponent() { Role = ComponentRole.TemelAltiParca; }
+
+        /// <summary>Plan length of the sub-base slab / pad (mm).</summary>
+        public double Boy              { get; set; }
+
+        /// <summary>Plan width of the sub-base slab / pad (mm).</summary>
+        public double En               { get; set; }
+
+        /// <summary>
+        /// TopOpeningDiameterMm of the Taban this sub-base belongs to (mm).
+        /// Used to find the matching base when assembling the manhole.
+        /// </summary>
+        public double BaglandiTabanCapiMm { get; set; }
     }
 }

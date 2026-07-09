@@ -19,21 +19,22 @@ namespace UrbanoMetraj.BoQ.Services
     {
         public static void Compute(BoQReport report, NetLengthMode mode = NetLengthMode.OuterDiameter)
         {
-            foreach (var sys in report.Systems)
+            // Global lookup across ALL systems — not scoped per system — so a pipe whose
+            // two ends belong to manholes in different networks (cross-system connection)
+            // still gets both ends reduced, not just the one sharing the pipe's own system.
+            var byName = report.Systems
+                .SelectMany(s => s.Manholes)
+                .GroupBy(m => m.NodeName)
+                .ToDictionary(g => g.Key, g => g.First());
+
+            foreach (var row in report.SectionDebug)
             {
-                var byName = sys.Manholes
-                    .GroupBy(m => m.NodeName)
-                    .ToDictionary(g => g.Key, g => g.First());
+                byName.TryGetValue(row.StartNodeName, out var startMh);
+                byName.TryGetValue(row.EndNodeName, out var endMh);
 
-                foreach (var row in report.SectionDebug.Where(r => r.SystemName == sys.SystemName))
-                {
-                    byName.TryGetValue(row.StartNodeName, out var startMh);
-                    byName.TryGetValue(row.EndNodeName, out var endMh);
-
-                    double redStart = Reduction(startMh, row.InvertStart, mode);
-                    double redEnd   = Reduction(endMh, row.InvertEnd, mode);
-                    row.NetLength = Math.Max(0, row.Length2D - redStart - redEnd);
-                }
+                double redStart = Reduction(startMh, row.InvertStart, mode);
+                double redEnd   = Reduction(endMh, row.InvertEnd, mode);
+                row.NetLength = Math.Max(0, row.Length2D - redStart - redEnd);
             }
         }
 

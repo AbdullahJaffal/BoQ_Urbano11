@@ -6,6 +6,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
         MiddleElement,
         Reducer,
         Adjuster,
-        Cover
+        Cover,
+        TemelAltiParca
     }
 }

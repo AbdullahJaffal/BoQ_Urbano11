@@ -25,7 +25,9 @@ namespace UrbanoMetraj.BoQ.UI
         private const string BTN_SOLIDS    = "UM_BTN_SOLIDS";
         private const string BTN_MH_ASSIGN   = "UM_BTN_MH_ASSIGN";
         private const string BTN_BACA_KESIF  = "UM_BTN_BACA_KESIF";
+        private const string BTN_METRAJ_KESIF = "UM_BTN_METRAJ_KESIF";
         private const string BTN_SMART_ASSEM  = "UM_BTN_SMART_ASSEMBLY";
+        private const string BTN_PROJ_SETTINGS  = "UM_BTN_PROJE_AYARLARI";
         private const string BTN_NETWORK_PANEL   = "UM_BTN_NETWORK_PANEL";
 
         public static void Initialize()
@@ -61,9 +63,14 @@ namespace UrbanoMetraj.BoQ.UI
                 Id             = BTN_VIEW,
                 Text           = "Metraj",
                 ShowText       = true,
+                ShowImage      = true,
                 Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_view.png"),
-                CommandHandler = new RibbonCommandRelay("URBANO_BOQ_VIEW"),
+                // Dikey yönelim: etiketi ikonun ALTINA ortalar (UrbanoLock ile
+                // birebir aynı "büyük buton" görünümü). Ayarlanmazsa metin ikonun
+                // yanında/farklı konumda kalabilir.
+                Orientation    = System.Windows.Controls.Orientation.Vertical,
+                LargeImage     = LoadIcon("um_view.png") ?? RibbonIcons.Metraj(),
+                CommandHandler = new RibbonCommandRelay("UT_BOQ_VIEW"),
                 ToolTip        = new RibbonToolTip
                 {
                     Title   = "Metraj (BoQ)",
@@ -78,15 +85,26 @@ namespace UrbanoMetraj.BoQ.UI
                 }
             });
 
+            // ── [GİZLENDİ 2026-07-09] Katalog Ata + Baca Keşif Tablosu ───────────
+            // Bu iki buton kullanıcı isteğiyle ribbon'dan gizlendi. Komutlar hâlâ
+            // tanımlı ve komut satırından çalışır: UT_MANHOLE_ASSIGN ve
+            // UT_BACA_KESIF_TABLOSU. Butonları tekrar göstermek için aşağıdaki
+            // "#if false" satırını "#if true" yapmak yeterli.
+#if false
             // ── Manhole Assign button ────────────────────────────────────────
             panelSource.Items.Add(new RibbonButton
             {
                 Id             = BTN_MH_ASSIGN,
                 Text           = "Katalog\nAta",
                 ShowText       = true,
+                ShowImage      = true,
                 Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_assign.png"),
-                CommandHandler = new RibbonCommandRelay("MANHOLE_ASSIGN"),
+                // Dikey yönelim: etiketi ikonun ALTINA ortalar (UrbanoLock ile
+                // birebir aynı "büyük buton" görünümü). Ayarlanmazsa metin ikonun
+                // yanında/farklı konumda kalabilir.
+                Orientation    = System.Windows.Controls.Orientation.Vertical,
+                LargeImage     = LoadIcon("um_assign.png") ?? RibbonIcons.KatalogAta(),
+                CommandHandler = new RibbonCommandRelay("UT_MANHOLE_ASSIGN"),
                 ToolTip        = new RibbonToolTip
                 {
                     Title   = "Bacaya Katalog Ata",
@@ -102,16 +120,48 @@ namespace UrbanoMetraj.BoQ.UI
                 Id             = BTN_BACA_KESIF,
                 Text           = "Baca Keşif\nTablosu",
                 ShowText       = true,
+                ShowImage      = true,
                 Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_baca_kesif.png"),
-                CommandHandler = new RibbonCommandRelay("BACA_KESIF_TABLOSU"),
+                // Dikey yönelim: etiketi ikonun ALTINA ortalar (UrbanoLock ile
+                // birebir aynı "büyük buton" görünümü). Ayarlanmazsa metin ikonun
+                // yanında/farklı konumda kalabilir.
+                Orientation    = System.Windows.Controls.Orientation.Vertical,
+                LargeImage     = LoadIcon("um_baca_kesif.png") ?? RibbonIcons.BacaKesif(),
+                CommandHandler = new RibbonCommandRelay("UT_BACA_KESIF_TABLOSU"),
                 ToolTip        = new RibbonToolTip
                 {
                     Title   = "Baca Keşif Tablosu",
-                    Content = "URBANO_BOQ_HESAPLA ile kaydedilmiş BoQ verisinden,\n" +
+                    Content = "UT_BOQ_HESAPLA ile kaydedilmiş BoQ verisinden,\n" +
                               "her baca için bir satır olacak şekilde ayrı bir\n" +
                               "Excel keşif tablosu (giriş/çıkış boru, kot, derinlik,\n" +
                               "kazı hacmi, parça dökümü) üretir."
+                }
+            });
+#endif
+
+            // ── Metraj Keşif Tablosu button ───────────────────────────────────
+            panelSource.Items.Add(new RibbonButton
+            {
+                Id             = BTN_METRAJ_KESIF,
+                Text           = "Metraj Keşif\nTablosu",
+                ShowText       = true,
+                ShowImage      = true,
+                Size           = RibbonItemSize.Large,
+                // Dikey yönelim: etiketi ikonun ALTINA ortalar (UrbanoLock ile
+                // birebir aynı "büyük buton" görünümü). Ayarlanmazsa metin ikonun
+                // yanında/farklı konumda kalabilir.
+                Orientation    = System.Windows.Controls.Orientation.Vertical,
+                LargeImage     = LoadIcon("um_metraj_kesif.png") ?? RibbonIcons.MetrajKesif(),
+                CommandHandler = new RibbonCommandRelay("UT_METRAJ_KESIF_TABLOSU"),
+                ToolTip        = new RibbonToolTip
+                {
+                    Title   = "Metraj Keşif Tablosu",
+                    Content = "UT_BOQ_HESAPLA ile kaydedilmiş BoQ verisinden,\n" +
+                              "sayfalara bölünmüş bir metraj keşif tablosu üretir:\n" +
+                              "1. sayfa proje bilgileri (elle doldurulur), ardından\n" +
+                              "her aktif ağ için ayrı sayfa — kazı/dolgu (zemin ve\n" +
+                              "dolgu kataloğu poz no'ları), boru boyları ve baca\n" +
+                              "parçaları; Br. Fiyat elle girilir, Tutar formülle hesaplanır."
                 }
             });
 
@@ -124,18 +174,46 @@ namespace UrbanoMetraj.BoQ.UI
                 Id             = BTN_SMART_ASSEM,
                 Text           = "Akıllı\nMontaj",
                 ShowText       = true,
+                ShowImage      = true,
                 Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_smart_assembly.png"),
-                CommandHandler = new RibbonCommandRelay("SMART_ASSEMBLY"),
+                // Dikey yönelim: etiketi ikonun ALTINA ortalar (UrbanoLock ile
+                // birebir aynı "büyük buton" görünümü). Ayarlanmazsa metin ikonun
+                // yanında/farklı konumda kalabilir.
+                Orientation    = System.Windows.Controls.Orientation.Vertical,
+                LargeImage     = LoadIcon("um_smart_assembly.png") ?? RibbonIcons.AkilliMontaj(),
+                CommandHandler = new RibbonCommandRelay("UT_SMART_ASSEMBLY"),
                 ToolTip        = new RibbonToolTip
                 {
                     Title   = "Akıllı Montaj",
-                    Content = "Tüm katalogları tek pencerede toplayan çok sekmeli sistem:\n" +
-                              "• Baca Parça Kataloğu: ön döküm parça kataloğu.\n" +
-                              "• Baca-Boru Bağlantı Kuralları: boru Ø / derinlik → taban seçim matrisi.\n" +
-                              "• Proje Kurulumu: DWG'ye özgü kural geçersiz kılmaları.\n" +
-                              "• Baca Kazı Kataloğu, Boru Kataloğu, Hendek Kataloğu,\n" +
-                              "  Zemin Kataloğu, Dolgu Kataloğu."
+                    Content = "Katalogları ve kuralları tek pencerede toplayan çok sekmeli sistem:\n" +
+                              "• Prefabrik Baca Kataloğu, Boru Kataloğu, Kazı Tipi\n" +
+                              "  Kataloğu, Dolgu Kataloğu.\n" +
+                              "• Baca Seçim Kuralları: boru Ø / derinlik → taban seçim matrisi.\n" +
+                              "• Baca Kazı Kuralları, Boru Hendek Kuralları.\n" +
+                              "Proje Kurulumu ve Tür Eşleştirme artık ayrı \"Proje Ayarları\" penceresindedir."
+                }
+            });
+
+            // ── Proje Ayarları button ─────────────────────────────────────────
+            // Proje Kurulumu (DWG) + Tür Eşleştirme; Akıllı Montaj penceresiyle
+            // aynı ViewModel'i paylaşan ayrı modeless pencere.
+            panelSource.Items.Add(new RibbonButton
+            {
+                Id             = BTN_PROJ_SETTINGS,
+                Text           = "Proje\nAyarları",
+                ShowText       = true,
+                ShowImage      = true,
+                Size           = RibbonItemSize.Large,
+                Orientation    = System.Windows.Controls.Orientation.Vertical,
+                LargeImage     = LoadIcon("um_proje_ayarlari.png") ?? RibbonIcons.ProjeAyarlari(),
+                CommandHandler = new RibbonCommandRelay("UT_PROJE_AYARLARI"),
+                ToolTip        = new RibbonToolTip
+                {
+                    Title   = "Proje Ayarları",
+                    Content = "DWG'ye özgü ayarlar:\n" +
+                              "• Proje Kurulumu: bu çizime özgü kural geçersiz kılmaları.\n" +
+                              "• Tür Eşleştirme: Urbano katalog öğelerini kendi\n" +
+                              "  kataloglarımıza bağlar."
                 }
             });
 
@@ -148,9 +226,14 @@ namespace UrbanoMetraj.BoQ.UI
                 Id             = BTN_NETWORK_PANEL,
                 Text           = "Ağ\nPaneli",
                 ShowText       = true,
+                ShowImage      = true,
                 Size           = RibbonItemSize.Large,
-                LargeImage     = LoadIcon("um_network_panel.png"),
-                CommandHandler = new RibbonCommandRelay("URBANO_NETWORK_PANEL"),
+                // Dikey yönelim: etiketi ikonun ALTINA ortalar (UrbanoLock ile
+                // birebir aynı "büyük buton" görünümü). Ayarlanmazsa metin ikonun
+                // yanında/farklı konumda kalabilir.
+                Orientation    = System.Windows.Controls.Orientation.Vertical,
+                LargeImage     = LoadIcon("um_network_panel.png") ?? RibbonIcons.AgPaneli(),
+                CommandHandler = new RibbonCommandRelay("UT_NET_PANEL"),
                 ToolTip        = new RibbonToolTip
                 {
                     Title   = "Ağ Seçim Paneli",

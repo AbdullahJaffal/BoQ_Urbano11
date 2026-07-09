@@ -161,7 +161,7 @@ namespace UrbanoMetraj.BoQ.Services
             foreach (var sys in report.Systems)
                 foreach (var mh in sys.Manholes)
                 {
-                    ProcessManhole(mh, report.SectionDebug, settings.RingFillMode, ref excavUnresolvedCount, ref steppedIgnoredCount);
+                    ProcessManhole(mh, report.SectionDebug, settings.RingFillMode, settings.BacaAltiParcaEklensin, settings.BacaKaziDisCapKullan, ref excavUnresolvedCount, ref steppedIgnoredCount);
                     if (mh.StackPreCast == null) unresolvedCount++;
                     else if (mh.StackPreCast.ConstraintViolated)
                     {
@@ -245,6 +245,8 @@ namespace UrbanoMetraj.BoQ.Services
             ManholeItem            mh,
             List<SectionDebugRow>  allSections,
             RingFillMode           ringFillMode,
+            bool                   ekleTemelAltiParca,
+            bool                   pitWidthUsesOuter,
             ref int                excavUnresolvedCount,
             ref int                steppedIgnoredCount)
         {
@@ -268,7 +270,7 @@ namespace UrbanoMetraj.BoQ.Services
                 out ComponentFamily family, out BottomElementComponent taban, out DepthTierRule matchedTier);
 
             // ── Excavation pit geometry (Baca Kazı Kataloğu) ─────────────────
-            ResolveExcavation(mh, family, taban, ref excavUnresolvedCount, ref steppedIgnoredCount);
+            ResolveExcavation(mh, family, taban, ekleTemelAltiParca, pitWidthUsesOuter, ref excavUnresolvedCount, ref steppedIgnoredCount);
 
             // ── Drop-pipe rule (pre-cast logic drives the SmartTypeName) ──────
             var dropInlets   = new List<SectionDebugRow>();
@@ -300,6 +302,21 @@ namespace UrbanoMetraj.BoQ.Services
             mh.StackPreCast = (family != null && taban != null)
                 ? ComputeFamilyStack(mh.Depth, mh.Diameter, family, taban, matchedTier, ringFillMode)
                 : null;
+
+            // Baca Altı Beton Parçası (user directive 2026-07-07): appended to the
+            // BOM parts list AFTER the ring-count/height-budget stacking above has
+            // already run to completion — it is physically below Taban, outside the
+            // stacking column entirely, so it must never influence Gövde/Boyun
+            // counts or any Min/Maks/gap math. Purely additive: on/off never
+            // changes ComputeFamilyStack's own result, only whether this one extra
+            // line is present. mh.ResolvedSubBaseParts was already populated (or
+            // left empty) by ResolveExcavation, gated on the same setting.
+            if (mh.StackPreCast != null && mh.ResolvedSubBaseParts.Count > 0)
+            {
+                var subBase = mh.ResolvedSubBaseParts[0];
+                mh.StackPreCast.Parts.Add(NewStackedPart(subBase, subBase.EffectiveHeight / 1000.0, 1, false));
+                SortPartsByPhysicalOrder(mh.StackPreCast);
+            }
 
             mh.StackCastInPlace = new ManholeStackResult
             {
@@ -523,6 +540,7 @@ namespace UrbanoMetraj.BoQ.Services
         /// </summary>
         private static void ResolveExcavation(
             ManholeItem mh, ComponentFamily family, BottomElementComponent taban,
+            bool ekleTemelAltiParca, bool pitWidthUsesOuter,
             ref int excavUnresolvedCount, ref int steppedIgnoredCount)
         {
             if (taban == null) { excavUnresolvedCount++; return; }
@@ -558,19 +576,35 @@ namespace UrbanoMetraj.BoQ.Services
             // gap is visible instead of silently under/over-stating the volume.
             if (tier.IsSteppedExcavation) steppedIgnoredCount++;
 
-            double baseWidthM  = ResolveFootprintWidthM(taban.Footprint);
+            // Pit width = Taban's own footprint (inner/nominal size, same scalar as
+            // baseSizeMm above) + working clearance on both sides, and — when the
+            // user chose "Dış Çap" (pitWidthUsesOuter) — the precast wall on both
+            // sides too (user directive 2026-07-07). baseSizeMm above stays pure
+            // inner/nominal regardless (rule matching + TemelAltiParca
+            // BaglandiTabanCapiMm both key off the nominal diameter, not the
+            // wall-inclusive outer size).
+            double wallBothSidesM = pitWidthUsesOuter ? 2.0 * (taban.WallThicknessMm / 1000.0) : 0.0;
+            double baseWidthM  = ResolveFootprintWidthM(taban.Footprint) + wallBothSidesM;
             double tabanThickM = taban.TabanKalinligiMm / 1000.0;
 
-            // TemelAltiParca: sub-base pieces defined directly on the Taban component.
-            // Their combined thickness is added to both excavation and backfill depths.
-            // The list itself is also exposed on mh.ResolvedSubBaseParts for the Baca
-            // Kesif Tablosu export (one column per distinct piece dimension).
+            // Baca Altı Beton Parçası (Eklesin/Yok, user directive 2026-07-07):
+            // TemelAltiParcaComponent lives in the same family as the resolved
+            // Taban and is matched purely by BaglandiTabanCapiMm == baseSizeMm
+            // (the same shape-agnostic size scalar used for the excavation rule
+            // match above — diameter for Circular, side for Square, longer side
+            // for Rectangular). No match, or the setting is off, → 0 contribution.
             double temelAltiM = 0.0;
-            if (taban.TemelAltiParcaEnabled && taban.TemelAltiParcalar != null)
+            mh.ResolvedSubBaseParts = new List<TemelAltiParcaComponent>();
+            if (ekleTemelAltiParca && family != null)
             {
-                foreach (var p in taban.TemelAltiParcalar)
-                    temelAltiM += p.Kalinlik / 1000.0;
-                mh.ResolvedSubBaseParts = taban.TemelAltiParcalar;
+                var subBasePart = family.Components
+                    .OfType<TemelAltiParcaComponent>()
+                    .FirstOrDefault(c => Math.Abs(c.BaglandiTabanCapiMm - baseSizeMm) <= 1e-6);
+                if (subBasePart != null)
+                {
+                    temelAltiM = subBasePart.EffectiveHeight / 1000.0;
+                    mh.ResolvedSubBaseParts.Add(subBasePart);
+                }
             }
 
             // mh.ExcavationDepth already holds the raw baseline set in
@@ -848,7 +882,7 @@ namespace UrbanoMetraj.BoQ.Services
             {
                 double perPieceHeight = Math.Max(0, depth - fixedHeight) / variableParticipants.Count;
                 foreach (var vp in variableParticipants)
-                    stack.Parts.Add(NewStackedPart(vp, perPieceHeight, 1, false, isDegisken: true));
+                    stack.Parts.Add(NewStackedPart(vp, perPieceHeight, 1, true, isDegisken: true));
                 stack.ResidualM = 0;
                 isDegisken = true;
                 SortPartsByPhysicalOrder(stack);
@@ -962,10 +996,41 @@ namespace UrbanoMetraj.BoQ.Services
         // of height, not a fixed total — scale by the actual computed height.
         // Non-değişken components keep the catalog value as-is (a fixed total
         // for that component's own EffectiveHeight), unchanged from before.
+        //
+        // Taban exception (user directive 2026-07-08): a değişken Taban is NOT a
+        // pure wall — it has a fixed-thickness floor slab whose volume does not
+        // scale with the (wall-only) height. So its catalog ExternalVolume/
+        // MaterialVolume are the WALL rate per 1 m, and the floor is a separate
+        // fixed volume (FloorExternalVolume/FloorMaterialVolume) added on top:
+        //   volume = wallRate × heightM + floorVolume.
+        // heightM here is the wall height already (EffectiveHeight, which excludes
+        // TabanKalinligiMm — the slab is tracked separately for the pit depth), so
+        // nothing is subtracted. This is the single point where per-unit volumes
+        // are computed; every consumer (tables, Excel, backfill StructureVolume,
+        // BOM totals, DWG serialization) reads the resulting UnitXxxVolume.
         private static StackedPart NewStackedPart(
             ManholeComponent component, double heightM, int count, bool isVariableRing,
             bool isDegisken = false)
-            => new StackedPart
+        {
+            double unitMaterial, unitExternal;
+            var bottom = component as BottomElementComponent;
+            if (isDegisken && bottom != null)
+            {
+                unitMaterial = component.MaterialVolume * heightM + bottom.FloorMaterialVolume;
+                unitExternal = component.ExternalVolume * heightM + bottom.FloorExternalVolume;
+            }
+            else if (isDegisken)
+            {
+                unitMaterial = component.MaterialVolume * heightM;
+                unitExternal = component.ExternalVolume * heightM;
+            }
+            else
+            {
+                unitMaterial = component.MaterialVolume;
+                unitExternal = component.ExternalVolume;
+            }
+
+            return new StackedPart
             {
                 PartName          = component.Name,
                 HeightM           = heightM,
@@ -973,11 +1038,12 @@ namespace UrbanoMetraj.BoQ.Services
                 IsVariableRing    = isVariableRing,
                 PozNo             = component.PozNo,
                 Aciklama          = component.Aciklama,
-                UnitMaterialVolume = isDegisken ? component.MaterialVolume * heightM : component.MaterialVolume,
-                UnitExternalVolume = isDegisken ? component.ExternalVolume * heightM : component.ExternalVolume,
+                UnitMaterialVolume = unitMaterial,
+                UnitExternalVolume = unitExternal,
                 WallThicknessMm    = ResolveWallThicknessMm(component),
                 Role               = component.Role
             };
+        }
 
         // "değişken" (variable-height) pieces are appended to stack.Parts after ALL fixed
         // pieces regardless of their real physical position (see ComputeFamilyStack) — e.g.
@@ -986,8 +1052,15 @@ namespace UrbanoMetraj.BoQ.Services
         // MiddleElement, Reducer, Adjuster, Cover) so consumers that need true vertical order
         // (e.g. PipeNetLengthService's per-ring Z-band lookup) get it right. Stable sort keeps
         // same-role pieces (e.g. multiple Gövde ring sizes) in their existing relative order.
+        //
+        // TemelAltiParca was appended to the enum AFTER Cover (to avoid renumbering
+        // existing roles) but sits physically BELOW BottomElement — RoleSortKey special-
+        // cases it to -1 instead of relying on the raw enum int value.
         private static void SortPartsByPhysicalOrder(ManholeStackResult stack)
-            => stack.Parts = stack.Parts.OrderBy(p => (int)p.Role).ToList();
+            => stack.Parts = stack.Parts.OrderBy(p => RoleSortKey(p.Role)).ToList();
+
+        private static int RoleSortKey(ComponentRole role)
+            => role == ComponentRole.TemelAltiParca ? -1 : (int)role;
 
         /// <summary>Wall thickness (mm) of the underlying component, for types that track one.
         /// Used by PipeNetLengthService to compute a manhole's outer-shell radius at a given

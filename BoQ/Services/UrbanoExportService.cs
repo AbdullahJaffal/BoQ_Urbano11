@@ -344,8 +344,14 @@ namespace UrbanoMetraj.BoQ.Services
                 {
                     try
                     {
+                        // FileShare.ReadWrite (not None): Urbano often keeps its own
+                        // handle open AFTER the "Tamam" success popup — by then the
+                        // file is already fully written, so an exclusive (None) open
+                        // would throw IOException and make us poll for the full timeout
+                        // for no reason. We only need to confirm it exists and is
+                        // non-empty, which a shared open does without blocking.
                         using (var fs = File.Open(
-                            path, FileMode.Open, FileAccess.Read, FileShare.None))
+                            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                         {
                             if (fs.Length > 0)
                             {
@@ -356,7 +362,7 @@ namespace UrbanoMetraj.BoQ.Services
                     }
                     catch (IOException)
                     {
-                        Dbg($"  FileReady poll {i + 1}/{maxIterations} — file locked, still writing...");
+                        Dbg($"  FileReady poll {i + 1}/{maxIterations} — file not readable yet...");
                     }
                 }
                 else

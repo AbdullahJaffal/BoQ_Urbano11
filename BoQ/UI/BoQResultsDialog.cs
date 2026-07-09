@@ -18,11 +18,11 @@ namespace UrbanoMetraj.BoQ.UI
     ///   • press "Sonuçları Göster" to re-aggregate the tables from the cache
     ///     (no Clipper, no re-save — just a display refresh for the chosen
     ///     Kazı/Dolgu/Baca Kazısı preference),
-    ///   • "Metraj Verisi Güncelle" (URBANO_BOQ) to pull fresh data from Urbano
+    ///   • "Metraj Verisi Güncelle" (UT_BOQ) to pull fresh data from Urbano
     ///     and refresh the discovered-catalog-item list for Tür Eşleştirme —
     ///     no geometry/Manhole AI runs here, so this is safe to do before
     ///     linking is complete,
-    ///   • "Hesapla" (URBANO_BOQ_HESAPLA) to run the actual geometry + Manhole
+    ///   • "Hesapla" (UT_BOQ_HESAPLA) to run the actual geometry + Manhole
     ///     AI calculation and save it — meant to be pressed after Tür
     ///     Eşleştirme / Baca-Boru Bağlantı Kuralları links are set up,
     ///   • build the 3-D solids for the selected method,
@@ -36,6 +36,12 @@ namespace UrbanoMetraj.BoQ.UI
 
         private TabControl _tabs;
         private ComboBox   _cmbLanguage;
+        private Button     _btnHesapla;    // disabled until a Kapsam (scope) is active
+        private Button     _btnScopeMain;  // split button main face — runs the last-used scope mode
+        private Button     _btnScopeArrow; // split button arrow — opens the scope-mode menu
+        private ToolTip    _scopeTip;
+        private ToolStripMenuItem _scopeSonItem;   // "Son Seçilen" — disabled until a CAD pick exists
+        private ScopeMode  _scopeMode;
         private TextBox    _txtExportPath;
         private Label      _lblInfo;
 
@@ -43,6 +49,9 @@ namespace UrbanoMetraj.BoQ.UI
         private OverlapAssignment _backfillOverlap;
         private ManholeType       _manholeTypeSetting;
         private bool              _bacaKaziHesapla;
+        private bool              _bacaBacaKaziHesapla;
+        private bool              _bacaAltiParcaEklensin;
+        private bool              _bacaKaziDisCapKullan;
         private string            _bacaKirmiziKotSurface;
         private string            _bacaAraziKotuSurface;
         private string            _bacaTerrasmanKotuSurface;
@@ -58,6 +67,7 @@ namespace UrbanoMetraj.BoQ.UI
         private OverlapAssignment SelectedExcavationOverlap => _excavationOverlap;
         private OverlapAssignment SelectedBackfillOverlap   => _backfillOverlap;
         private bool              BacaKaziHesapla           => _bacaKaziHesapla;
+        private bool              BacaBacaKaziHesapla       => _bacaBacaKaziHesapla;
 
         private const int CW     = 820;
         private const int MARGIN = 10;
@@ -73,6 +83,9 @@ namespace UrbanoMetraj.BoQ.UI
             _backfillOverlap    = _savedSettings?.BackfillOverlap ?? OverlapAssignment.Split;
             _manholeTypeSetting = _savedSettings?.ManholeType ?? ManholeType.PreCast;
             _bacaKaziHesapla    = _savedSettings?.BacaKaziHesapla ?? false;
+            _bacaBacaKaziHesapla = _savedSettings?.BacaBacaKaziHesapla ?? false;
+            _bacaAltiParcaEklensin = _savedSettings?.BacaAltiParcaEklensin ?? false;
+            _bacaKaziDisCapKullan = _savedSettings?.BacaKaziDisCapKullan ?? true;
             _bacaKirmiziKotSurface    = _savedSettings?.BacaKirmiziKotSurface ?? "Arazi1";
             _bacaAraziKotuSurface     = _savedSettings?.BacaAraziKotuSurface ?? "Arazi1";
             _bacaTerrasmanKotuSurface = _savedSettings?.BacaTerrasmanKotuSurface ?? "Arazi1";
@@ -87,6 +100,10 @@ namespace UrbanoMetraj.BoQ.UI
             BuildForm();
             // Pre-compute pipe–manhole overlap volumes so BacaKazi deduction is available.
             ManholeExcavOverlapService.Compute(_report);
+            // Pre-compute manhole-vs-manhole overlap volumes (Bacalar Arası Kazı
+            // Çakışması), needed regardless of the toggle since it only affects
+            // whether the computed deduction is applied to displayed values.
+            ManholeExcavOverlapService.ComputeManholeVsManhole(_report);
             // Show the tables for the saved default method on first open.
             Recalculate();
         }
@@ -219,7 +236,13 @@ namespace UrbanoMetraj.BoQ.UI
                 using (_doc.LockDocument())
                     DwgBoQStore.UpdateSettings(db, _report.GeneratedAt, _savedSettings);
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                // Settings persistence is best-effort on close, but a silent loss of the
+                // user's chosen method/language is worth a diagnostic trail.
+                System.Diagnostics.Trace.WriteLine(
+                    $"[UrbanoMetraj] Ayarlar kaydedilemedi: {ex.Message}");
+            }
         }
 
         // ── Calculation-method toolbar ────────────────────────────────────────
@@ -237,7 +260,7 @@ namespace UrbanoMetraj.BoQ.UI
             btnRefresh.Click += (s, e) =>
             {
                 BoQSimplifiedTestV2Command.RequestReopenView();
-                _doc.SendStringToExecute("URBANO_BOQ\n", true, false, true);
+                _doc.SendStringToExecute("UT_BOQ\n", true, false, true);
                 Close();
             };
 
@@ -251,69 +274,17 @@ namespace UrbanoMetraj.BoQ.UI
                 SolidsCommand.OverrideExcavation      = SelectedExcavationOverlap;
                 SolidsCommand.OverrideBackfill        = SelectedBackfillOverlap;
                 SolidsCommand.OverrideDisplayInterval = _savedSettings?.SolidDisplayInterval ?? 5.0;
-                _doc.SendStringToExecute("URBANO_SOLIDS\nURBANO_BOQ_VIEW\n", true, false, true);
+                _doc.SendStringToExecute("UT_SOLIDS\nUT_BOQ_VIEW\n", true, false, true);
                 Close();
             };
 
-            var btnSettings = new Button
-            {
-                Text = "⚙ Ayarlar",
-                Left = MARGIN + 270, Top = row1 - 1, Width = 100, Height = 28,
-                FlatStyle = FlatStyle.Flat,
-                ForeColor = Color.FromArgb(60, 60, 60)
-            };
-            btnSettings.Click += (s, e) =>
-            {
-                double curSolid   = _savedSettings?.SolidDisplayInterval  ?? 5.0;
-                double curSection = _savedSettings?.CrossSectionInterval   ?? 5.0;
-                var c3dSurfaceNames = Civil3DSurfaceService.GetSurfaceNames(_doc);
-                using (var dlg = new GeneralSettingsDialog(curSolid, curSection,
-                    _excavationOverlap, _backfillOverlap, _manholeTypeSetting, _bacaKaziHesapla,
-                    _bacaKirmiziKotSurface, _bacaAraziKotuSurface, _bacaTerrasmanKotuSurface,
-                    c3dSurfaceNames,
-                    _bacaKirmiziKotC3DSurface, _bacaAraziKotuC3DSurface, _bacaTerrasmanKotuC3DSurface,
-                    _kaziSeviyesi, _dolguSeviyesi, _bacaKapakSeviyesi, _ringFillMode, _netLengthMode))
-                {
-                    if (dlg.ShowDialog(this) != System.Windows.Forms.DialogResult.OK) return;
-                    if (_savedSettings != null)
-                    {
-                        _savedSettings.SolidDisplayInterval  = dlg.SolidDisplayInterval;
-                        _savedSettings.CrossSectionInterval  = dlg.CrossSectionInterval;
-                        _savedSettings.BacaKirmiziKotSurface    = dlg.BacaKirmiziKotSurface;
-                        _savedSettings.BacaAraziKotuSurface     = dlg.BacaAraziKotuSurface;
-                        _savedSettings.BacaTerrasmanKotuSurface = dlg.BacaTerrasmanKotuSurface;
-                        _savedSettings.BacaKirmiziKotC3DSurface    = dlg.BacaKirmiziKotC3DSurface;
-                        _savedSettings.BacaAraziKotuC3DSurface     = dlg.BacaAraziKotuC3DSurface;
-                        _savedSettings.BacaTerrasmanKotuC3DSurface = dlg.BacaTerrasmanKotuC3DSurface;
-                        _savedSettings.KaziSeviyesi       = dlg.KaziSeviyesi;
-                        _savedSettings.DolguSeviyesi      = dlg.DolguSeviyesi;
-                        _savedSettings.BacaKapakSeviyesi  = dlg.BacaKapakSeviyesi;
-                        _savedSettings.RingFillMode       = dlg.RingFillMode;
-                        _savedSettings.NetLengthMode      = dlg.NetLengthMode;
-                    }
-                    _excavationOverlap  = dlg.ExcavationOverlap;
-                    _backfillOverlap    = dlg.BackfillOverlap;
-                    _manholeTypeSetting = dlg.SelectedManholeType;
-                    _bacaKaziHesapla    = dlg.BacaKaziHesapla;
-                    _bacaKirmiziKotSurface    = dlg.BacaKirmiziKotSurface;
-                    _bacaAraziKotuSurface     = dlg.BacaAraziKotuSurface;
-                    _bacaTerrasmanKotuSurface = dlg.BacaTerrasmanKotuSurface;
-                    _bacaKirmiziKotC3DSurface    = dlg.BacaKirmiziKotC3DSurface;
-                    _bacaAraziKotuC3DSurface     = dlg.BacaAraziKotuC3DSurface;
-                    _bacaTerrasmanKotuC3DSurface = dlg.BacaTerrasmanKotuC3DSurface;
-                    _kaziSeviyesi       = dlg.KaziSeviyesi;
-                    _dolguSeviyesi      = dlg.DolguSeviyesi;
-                    _bacaKapakSeviyesi  = dlg.BacaKapakSeviyesi;
-                    _ringFillMode       = dlg.RingFillMode;
-                    _netLengthMode      = dlg.NetLengthMode;
-                    PipeNetLengthService.Compute(_report, _netLengthMode);
-                    Recalculate();
-                }
-            };
+            // ⚙ Ayarlar taşındı → Proje Ayarları penceresi ("Genel Ayarlar" sekmesi,
+            // UT_PROJE_AYARLARI). Ayarlar orada düzenlenip DWG'ye kaydedilir; bu pencere
+            // onları açılışta DWG'den okur ve Hesapla ile uygular.
 
             var btnSections = new Button
             {
-                Text = "Kesit Çiz", Left = MARGIN + 378, Top = row1 - 1, Width = 90, Height = 28,
+                Text = "Kesit Çiz", Left = MARGIN + 270, Top = row1 - 1, Width = 90, Height = 28,
                 FlatStyle = FlatStyle.Flat
             };
             btnSections.Click += (s, e) =>
@@ -321,30 +292,160 @@ namespace UrbanoMetraj.BoQ.UI
                 SectionsCommand.OverrideExcavation           = SelectedExcavationOverlap;
                 SectionsCommand.OverrideBackfill             = SelectedBackfillOverlap;
                 SectionsCommand.OverrideCrossSectionInterval = _savedSettings?.CrossSectionInterval ?? 5.0;
-                _doc.SendStringToExecute("URBANO_SECTIONS\n", true, false, true);
+                _doc.SendStringToExecute("UT_SECTIONS\n", true, false, true);
             };
 
             // The real calculation (geometry + Manhole AI + save), meant to be run
             // after Tür Eşleştirme / Baca-Boru Bağlantı Kuralları links are set up.
             // Takes over the prominent styling the old "Hesapla" button had, since
             // this is the action that actually deserves it now.
-            var btnHesapla = new Button
+            _btnHesapla = new Button
             {
-                Text = "Hesapla", Left = MARGIN + 478, Top = row1 - 1, Width = 90, Height = 28,
+                Text = "Hesapla", Left = MARGIN + 370, Top = row1 - 1, Width = 90, Height = 28,
                 BackColor = Color.FromArgb(0, 70, 127), ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Enabled = false     // enabled only once a Kapsam (scope) is active
             };
-            btnHesapla.Click += (s, e) =>
+            _btnHesapla.Click += (s, e) =>
             {
+                // Scope is already applied by ActivateScope: PendingSelectionScope is
+                // null for "Tüm Aktif Ağlar", set for "CAD Seçimi" / "Son Seçilen".
                 BoQSimplifiedTestV2Command.RequestReopenView();
-                _doc.SendStringToExecute("URBANO_BOQ_HESAPLA\n", true, false, true);
+                _doc.SendStringToExecute("UT_BOQ_HESAPLA\n", true, false, true);
                 Close();
+            };
+
+            // ── Kapsam (calculation scope) — compact split button ────────────────
+            // Main face runs the last-used mode directly; the ▾ arrow opens the menu
+            // to switch mode. Hesapla stays disabled until a mode resolves a scope.
+            _scopeMode = BoQSimplifiedTestV2Command.LastScopeMode;
+            _scopeTip  = new ToolTip();
+
+            _btnScopeMain = new Button
+            {
+                Left = MARGIN + 466, Top = row1 - 1, Width = 30, Height = 28,
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Symbol", 10f),
+                Text = ScopeGlyph(_scopeMode)
+            };
+            _btnScopeArrow = new Button
+            {
+                Left = MARGIN + 496, Top = row1 - 1, Width = 18, Height = 28,
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 7f), Text = "▼"
+            };
+
+            var scopeMenu = new ContextMenuStrip();
+            scopeMenu.Items.Add(ScopeMenuItem("▦  Tüm Aktif Ağlar", ScopeMode.Full));
+            scopeMenu.Items.Add(ScopeMenuItem("✛  CAD Seçimi",       ScopeMode.Cad));
+            _scopeSonItem = ScopeMenuItem("↻  Son Seçilen",          ScopeMode.Son);
+            _scopeSonItem.Enabled = BoQSimplifiedTestV2Command.LastCadScope != null;
+            scopeMenu.Items.Add(_scopeSonItem);
+
+            _btnScopeArrow.Click += (s, e) =>
+                scopeMenu.Show(_btnScopeArrow, new Point(0, _btnScopeArrow.Height));
+            _btnScopeMain.Click += (s, e) =>
+            {
+                if (_scopeMode == ScopeMode.None)
+                    scopeMenu.Show(_btnScopeMain, new Point(0, _btnScopeMain.Height));
+                else
+                    ActivateScope(_scopeMode);
             };
 
             Controls.AddRange(new Control[]
             {
-                btnRefresh, btnSolids, btnSettings, btnSections, btnHesapla
+                btnRefresh, btnSolids, btnSections, _btnHesapla,
+                _btnScopeMain, _btnScopeArrow
             });
+
+            // Reflect the remembered mode + any pending selection on (re)open — without
+            // re-triggering a pick (ActivateScope only runs on user interaction).
+            UpdateScopeButton();
+            bool pendingReady = BoQSimplifiedTestV2Command.PendingSelectionScope != null
+                             && !BoQSimplifiedTestV2Command.PendingSelectionScope.IsEmpty;
+            _btnHesapla.Enabled = _scopeMode == ScopeMode.Full || pendingReady;
+        }
+
+        // ── Scope split-button plumbing ───────────────────────────────────────
+
+        private ToolStripMenuItem ScopeMenuItem(string text, ScopeMode mode)
+        {
+            var mi = new ToolStripMenuItem(text);
+            mi.Click += (s, e) => ActivateScope(mode);
+            return mi;
+        }
+
+        private static string ScopeGlyph(ScopeMode mode)
+        {
+            switch (mode)
+            {
+                case ScopeMode.Full: return "▦";   // ▦ grid — all active networks
+                case ScopeMode.Cad:  return "✛";   // ✛ crosshair — pick from CAD
+                case ScopeMode.Son:  return "↻";   // ↻ repeat — reuse last selection
+                default:             return "▾";   // ▾ nothing chosen yet
+            }
+        }
+
+        private static string ScopeName(ScopeMode mode)
+        {
+            switch (mode)
+            {
+                case ScopeMode.Full: return "Tüm Aktif Ağlar";
+                case ScopeMode.Cad:  return "CAD Seçimi";
+                case ScopeMode.Son:  return "Son Seçilen";
+                default:             return "Kapsam seçin (▾)";
+            }
+        }
+
+        private void UpdateScopeButton()
+        {
+            _btnScopeMain.Text = ScopeGlyph(_scopeMode);
+            _scopeTip.SetToolTip(_btnScopeMain,  "Hesaplama kapsamı: " + ScopeName(_scopeMode));
+            _scopeTip.SetToolTip(_btnScopeArrow, "Kapsam yöntemini değiştir");
+            _lblInfo.Text = BuildInfoLine();
+        }
+
+        // Applies a scope mode: "Tüm Aktif Ağlar" clears any selection; "CAD Seçimi"
+        // launches a fresh pick; "Son Seçilen" reuses the last CAD pick (this session).
+        private void ActivateScope(ScopeMode mode)
+        {
+            _scopeMode = mode;
+            BoQSimplifiedTestV2Command.LastScopeMode = mode;
+
+            switch (mode)
+            {
+                case ScopeMode.Full:
+                    BoQSimplifiedTestV2Command.PendingSelectionScope   = null;
+                    BoQSimplifiedTestV2Command.PendingSelectionSummary = null;
+                    UpdateScopeButton();
+                    _btnHesapla.Enabled = true;
+                    break;
+
+                case ScopeMode.Cad:
+                    BoQSimplifiedTestV2Command.RequestReopenView();
+                    _doc.SendStringToExecute("UT_BOQ_CADSELECT\n", true, false, true);
+                    Close();
+                    break;
+
+                case ScopeMode.Son:
+                    if (BoQSimplifiedTestV2Command.LastCadScope != null
+                        && !BoQSimplifiedTestV2Command.LastCadScope.IsEmpty)
+                    {
+                        BoQSimplifiedTestV2Command.PendingSelectionScope   =
+                            BoQSimplifiedTestV2Command.LastCadScope;
+                        BoQSimplifiedTestV2Command.PendingSelectionSummary =
+                            BoQSimplifiedTestV2Command.LastCadSummary;
+                        UpdateScopeButton();
+                        _btnHesapla.Enabled = true;
+                    }
+                    else
+                    {
+                        MessageBox.Show(this,
+                            "Henüz bir CAD seçimi yapılmadı.\nÖnce 'CAD Seçimi' ile bir seçim yapın.",
+                            "Son Seçilen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        _scopeMode = ScopeMode.None;
+                        UpdateScopeButton();
+                    }
+                    break;
+            }
         }
 
         // ── Recalculate tables from the cache for the selected methods ─────────
@@ -363,6 +464,9 @@ namespace UrbanoMetraj.BoQ.UI
                 _savedSettings.BackfillOverlap   = SelectedBackfillOverlap;
                 _savedSettings.ManholeType       = SelectedManholeType;
                 _savedSettings.BacaKaziHesapla   = BacaKaziHesapla;
+                _savedSettings.BacaBacaKaziHesapla = BacaBacaKaziHesapla;
+                _savedSettings.BacaAltiParcaEklensin = _bacaAltiParcaEklensin;
+                _savedSettings.BacaKaziDisCapKullan = _bacaKaziDisCapKullan;
             }
 
             RebuildTabs();
@@ -405,12 +509,23 @@ namespace UrbanoMetraj.BoQ.UI
             Add(grid, "Toplam yataklama (m³)",      $"{_report.TotalBeddingVolume:N3}");
             Add(grid, "Toplam gömlekleme (m³)",     $"{_report.TotalSurroundVolume:N3}");
             Add(grid, "Toplam geri dolgu (m³)",     $"{_report.TotalBackfillVolume:N3}");
+            double netManholeExcav    = BacaBacaKaziHesapla
+                ? Math.Max(0, _report.TotalManholeExcavationVolume - _report.TotalManholeVsManholeExcavDeducted)
+                : _report.TotalManholeExcavationVolume;
+            double netManholeBackfill = BacaBacaKaziHesapla
+                ? Math.Max(0, _report.TotalManholeBackfillVolume - _report.TotalManholeVsManholeBackfillDeducted)
+                : _report.TotalManholeBackfillVolume;
+
             Add(grid, "Toplam baca kazısı (m³)",
-                BacaKaziHesapla ? $"{_report.TotalManholeExcavationVolume:N3}" : "0,000");
+                BacaKaziHesapla ? $"{netManholeExcav:N3}" : "0,000");
             Add(grid, "Toplam baca yatakalama (m³)",
                 BacaKaziHesapla ? $"{_report.TotalManholeSubBaseVolume:N3}" : "0,000");
             Add(grid, "Toplam baca geri dolgu (m³)",
-                BacaKaziHesapla ? $"{_report.TotalManholeBackfillVolume:N3}" : "0,000");
+                BacaKaziHesapla ? $"{netManholeBackfill:N3}" : "0,000");
+            Add(grid, "Toplam bacalar arası kazı çakışması (m³)",
+                (BacaKaziHesapla && BacaBacaKaziHesapla) ? $"{_report.TotalManholeVsManholeExcavDeducted:N3}" : "0,000");
+            Add(grid, "Toplam bacalar arası geri dolgu çakışması (m³)",
+                (BacaKaziHesapla && BacaBacaKaziHesapla) ? $"{_report.TotalManholeVsManholeBackfillDeducted:N3}" : "0,000");
             Add(grid, "Çakışmadan düşülen kazı (m³)",  $"{_report.TotalOverlapExcavDeducted:N3}");
             Add(grid, "Çakışmadan düşülen dolgu (m³)", $"{_report.TotalOverlapBackfillDeducted:N3}");
             Add(grid, "İstasyon verisi",
@@ -560,7 +675,8 @@ namespace UrbanoMetraj.BoQ.UI
             {
                 "Ad", "Tip", "Çap (mm)", "Derinlik (m)",
                 "Kazı Derin. (m)", "Kazı Hacmi (m³)", "Geri Dolgu (m³)",
-                "Baca Yatakalama (m³)", "X (m)", "Y (m)", "Zemin Z (m)"
+                "Baca Yatakalama (m³)", "B-B Kazı Çak. (m³)", "B-B G.Dolgu Çak. (m³)",
+                "X (m)", "Y (m)", "Zemin Z (m)"
             })
                 grid.Columns.Add(col, col);
             grid.Columns[0].Width = 70;
@@ -571,18 +687,25 @@ namespace UrbanoMetraj.BoQ.UI
             grid.Columns[5].Width = 105;
             grid.Columns[6].Width = 105;
             grid.Columns[7].Width = 125;
-            for (int i = 8; i < grid.Columns.Count; i++) grid.Columns[i].Width = 90;
+            grid.Columns[8].Width = 115;
+            grid.Columns[9].Width = 130;
+            for (int i = 10; i < grid.Columns.Count; i++) grid.Columns[i].Width = 90;
 
-            bool showMhExcav = BacaKaziHesapla;
+            bool showMhExcav   = BacaKaziHesapla;
+            bool showMhOverlap = BacaBacaKaziHesapla;
             foreach (var m in sys.Manholes)
             {
+                double netExcav    = showMhOverlap ? Math.Max(0, m.ExcavationVolume - m.ManholeVsManholeExcavDeducted)    : m.ExcavationVolume;
+                double netBackfill = showMhOverlap ? Math.Max(0, m.BackfillVolume   - m.ManholeVsManholeBackfillDeducted) : m.BackfillVolume;
                 grid.Rows.Add(
                     m.NodeName, m.SmartTypeName ?? "", m.DiameterDisplay,
                     m.Depth.ToString("N2"),
-                    showMhExcav ? m.ExcavationDepth.ToString("N3")  : "0,000",
-                    showMhExcav ? m.ExcavationVolume.ToString("N3") : "0,000",
-                    showMhExcav ? m.BackfillVolume.ToString("N3")   : "0,000",
-                    showMhExcav ? m.SubBaseVolume.ToString("N3")    : "0,000",
+                    showMhExcav ? m.ExcavationDepth.ToString("N3") : "0,000",
+                    showMhExcav ? netExcav.ToString("N3")          : "0,000",
+                    showMhExcav ? netBackfill.ToString("N3")       : "0,000",
+                    showMhExcav ? m.SubBaseVolume.ToString("N3")   : "0,000",
+                    (showMhExcav && showMhOverlap) ? m.ManholeVsManholeExcavDeducted.ToString("N3")    : "0,000",
+                    (showMhExcav && showMhOverlap) ? m.ManholeVsManholeBackfillDeducted.ToString("N3") : "0,000",
                     m.X.ToString("N3"), m.Y.ToString("N3"),
                     m.TerrainElevation.ToString("N3"));
             }
@@ -814,8 +937,15 @@ namespace UrbanoMetraj.BoQ.UI
             int sections = _report.SectionDebug?.Count ?? 0;
             int stations = _report.SectionDebug?.Sum(s => s.Stations?.Count ?? 0) ?? 0;
             int systems  = _report.Systems?.Count ?? 0;
-            return $"Metraj — {systems} sistem  |  {sections} kesit  |  {stations} istasyon" +
-                   $"  |  Oluşturma: {_report.GeneratedAt:g}";
+            string line = $"Metraj — {systems} sistem  |  {sections} kesit  |  {stations} istasyon" +
+                          $"  |  Oluşturma: {_report.GeneratedAt:g}";
+
+            // Surface an active CAD selection so the scope of the shown/next calc is clear.
+            string sel = BoQSimplifiedTestV2Command.PendingSelectionSummary;
+            if ((_scopeMode == ScopeMode.Cad || _scopeMode == ScopeMode.Son)
+                && !string.IsNullOrEmpty(sel))
+                line += $"  |  {ScopeName(_scopeMode)}: {sel}";
+            return line;
         }
 
         private static string BuildDefaultExportPath()

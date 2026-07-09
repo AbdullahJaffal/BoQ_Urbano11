@@ -23,8 +23,10 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
     ///
     /// Commands
     /// ─────────────────────────────────────────────────────────────────────
-    ///  SMART_ASSEMBLY   Open the modeless Smart Assembly window.
-    ///                   Re-activates the existing window if already open.
+    ///  UT_SMART_ASSEMBLY   Open the modeless Akıllı Montaj window (catalogs +
+    ///                   rules). Re-activates the existing window if already open.
+    ///  UT_PROJE_AYARLARI   Open the modeless Proje Ayarları window (Proje Kurulumu
+    ///                   + Tür Eşleştirme), sharing the same ViewModel.
     /// </summary>
     public class SmartAssemblyCommand
     {
@@ -33,18 +35,29 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
         // This is the single shared "Akıllı Montaj" window — every catalog that used
         // to open its own standalone window (Kazı Kuralları, Boru/Hendek/Zemin/Dolgu
         // Katalogları) now lives here as an additional tab.
-        private static SmartAssemblyWindow    _window;
+        private static SmartAssemblyWindow    _window;             // Akıllı Montaj
+        private static ProjectSettingsWindow  _projSettingsWindow; // Proje Ayarları
         private static SmartAssemblyMainVm    _mainVm;
 
-        /// <summary>Returns the live ViewModel so PIPE_CATALOG_LIVE_EXTRACT can
-        /// push catalog updates without re-opening the Akıllı Montaj window.</summary>
-        internal static SmartAssemblyMainVm GetMainVm() =>
-            (_window != null && _window.IsLoaded) ? _mainVm : null;
+        /// <summary>True while either shared window (Akıllı Montaj or Proje Ayarları)
+        /// is still open — both bind the same <see cref="_mainVm"/>.</summary>
+        private static bool AnyWindowOpen() =>
+            (_window             != null && _window.IsLoaded) ||
+            (_projSettingsWindow != null && _projSettingsWindow.IsLoaded);
 
-        /// <summary>Ensures the shared window exists (building it if necessary) and returns its ViewModel.</summary>
-        internal static SmartAssemblyMainVm EnsureMainVm()
+        /// <summary>Returns the live ViewModel so UT_PIPE_CATALOG_LIVE_EXTRACT can
+        /// push catalog updates without re-opening either shared window.</summary>
+        internal static SmartAssemblyMainVm GetMainVm() =>
+            (_mainVm != null && AnyWindowOpen()) ? _mainVm : null;
+
+        /// <summary>Builds the shared ViewModel (and its DWG-bound state) once, reusing
+        /// it while either window is open and rebuilding it from the active DWG after
+        /// both have closed. Does NOT open any window — callers show whichever window
+        /// they need (Akıllı Montaj via <see cref="EnsureMainVm"/>, Proje Ayarları via
+        /// <see cref="ShowProjectSettings"/>).</summary>
+        internal static SmartAssemblyMainVm EnsureVm()
         {
-            if (_window != null && _window.IsLoaded) return _mainVm;
+            if (_mainVm != null && AnyWindowOpen()) return _mainVm;
 
             // Build the shared catalog + load any project templates already in NOD.
             var catalog = new SmartAssemblyMasterCatalog();
@@ -94,22 +107,33 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
                     });
             }
 
-            _window = new SmartAssemblyWindow(_mainVm);
-
-            // ShowModelessWindow integrates the WPF window into AutoCAD's
-            // message pump so keyboard/mouse input reaches it correctly.
-            Application.ShowModelessWindow(_window);
             return _mainVm;
         }
 
-        /// <summary>Opens (or re-activates) the shared window without changing the active tab.</summary>
+        /// <summary>Ensures the shared ViewModel exists AND the Akıllı Montaj window is
+        /// shown, returning the ViewModel. External callers (e.g. UT_PIPE_CATALOG
+        /// live-extract) rely on this build-and-show contract.</summary>
+        internal static SmartAssemblyMainVm EnsureMainVm()
+        {
+            EnsureVm();
+            if (_window == null || !_window.IsLoaded)
+            {
+                _window = new SmartAssemblyWindow(_mainVm);
+                // ShowModelessWindow integrates the WPF window into AutoCAD's
+                // message pump so keyboard/mouse input reaches it correctly.
+                Application.ShowModelessWindow(_window);
+            }
+            return _mainVm;
+        }
+
+        /// <summary>Opens (or re-activates) the Akıllı Montaj window without changing the active tab.</summary>
         internal static void ShowWindow()
         {
             EnsureMainVm();
             _window.Activate();
         }
 
-        /// <summary>Opens (or re-activates) the shared window and jumps to the given tab
+        /// <summary>Opens (or re-activates) the Akıllı Montaj window and jumps to the given tab
         /// (see the TAB_* constants on <see cref="SmartAssemblyMainVm"/>).</summary>
         internal static void ShowWindowOnTab(int tabIndex)
         {
@@ -118,11 +142,31 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
             _window.Activate();
         }
 
+        /// <summary>Opens (or re-activates) the Proje Ayarları window (Proje Kurulumu +
+        /// Tür Eşleştirme), sharing the same ViewModel as the Akıllı Montaj window.</summary>
+        internal static void ShowProjectSettings()
+        {
+            var vm = EnsureVm();
+            if (_projSettingsWindow == null || !_projSettingsWindow.IsLoaded)
+            {
+                _projSettingsWindow = new ProjectSettingsWindow(vm);
+                // Same refresh the tab-select side-effect used to do inside the
+                // Akıllı Montaj window when Proje Kurulumu became active.
+                vm.ProjectSetupTab.RefreshBasesCombo();
+                vm.ProjectSetupTab.RefreshMaterialFamilies();
+                Application.ShowModelessWindow(_projSettingsWindow);
+            }
+            else
+            {
+                _projSettingsWindow.Activate();
+            }
+        }
+
         // =====================================================================
-        // SMART_ASSEMBLY
+        // UT_SMART_ASSEMBLY
         // =====================================================================
 
-        [CommandMethod("SMART_ASSEMBLY", CommandFlags.Modal)]
+        [CommandMethod("UT_SMART_ASSEMBLY", CommandFlags.Modal)]
         public void OpenSmartAssembly()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
@@ -135,7 +179,28 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
             }
             catch (Exception ex)
             {
-                ed.WriteMessage("\nSMART_ASSEMBLY hatası: " + ex.Message);
+                ed.WriteMessage("\nUT_SMART_ASSEMBLY hatası: " + ex.Message);
+            }
+        }
+
+        // =====================================================================
+        // UT_PROJE_AYARLARI
+        // =====================================================================
+
+        [CommandMethod("UT_PROJE_AYARLARI", CommandFlags.Modal)]
+        public void OpenProjectSettings()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var ed  = doc?.Editor;
+            if (doc == null || ed == null) return;
+
+            try
+            {
+                ShowProjectSettings();
+            }
+            catch (Exception ex)
+            {
+                ed.WriteMessage("\nUT_PROJE_AYARLARI hatası: " + ex.Message);
             }
         }
     }

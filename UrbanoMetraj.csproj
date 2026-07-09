@@ -104,19 +104,19 @@
          integer space (×1e6 scaling) for numerical stability. -->
     <PackageReference Include="Clipper2" Version="1.4.0" />
   </ItemGroup>
+  <!-- Shared licensing core. ProjectReference so MSBuild builds UrbanoLicensing
+       first and copies UrbanoLicensing.dll next to UrbanoMetraj.dll (into the
+       build.bat OutputPath, i.e. bin\DebugV<suffix>\). The single loaded instance
+       of this DLL is what keeps one shared session lease across both products. -->
+  <ItemGroup>
+    <ProjectReference Include="..\UrbanoLicensing\UrbanoLicensing.csproj">
+      <Project>{B6C1F2A3-4D5E-4F60-9A1B-2C3D4E5F6071}</Project>
+      <Name>UrbanoLicensing</Name>
+    </ProjectReference>
+  </ItemGroup>
   <ItemGroup>
     <Compile Include="UrbanoPlugin.cs" />
-    <Compile Include="UrbanoDataExtractor.cs" />
-    <Compile Include="UrbanoNodDeepScan.cs" />
-    <Compile Include="UrbanoEntitySnoop.cs" />
-    <Compile Include="UrbanoNodSearch.cs" />
-    <Compile Include="UrbanoXmlExtractor.cs" />
-    <Compile Include="UrbanoCanarySearch.cs" />
-    <Compile Include="UrbanoTargetedSearch.cs" />
-    <Compile Include="UrbanoCanaryFinder.cs" />
-    <Compile Include="UrbanoDecryptXml.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="UrbanoDataMiner.cs" />
     <!-- BoQ extraction feature – Phase 1 BIM Plugin -->
     <Compile Include="BoQ\Models\BoQModels.cs" />
     <Compile Include="BoQ\Models\BoQSettings.cs" />
@@ -136,9 +136,12 @@
     <Compile Include="BoQ\Services\ManholeExcavationGeometry.cs" />
     <Compile Include="BoQ\Services\ExcelExportService.cs" />
     <Compile Include="BoQ\Services\ManholeKesifExportService.cs" />
+    <Compile Include="BoQ\Services\MetrajKesifExportService.cs" />
     <Compile Include="BoQ\Services\SolidBuilderService.cs" />
     <Compile Include="BoQ\Services\CrossSectionDrawService.cs" />
+    <Compile Include="BoQ\Services\CadSelectionScopeService.cs" />
     <Compile Include="BoQ\UI\RibbonSetup.cs" />
+    <Compile Include="BoQ\UI\RibbonIcons.cs" />
     <Compile Include="BoQ\UI\InputBlocker.cs" />
     <!-- ═══ Network Panel (UrbanoLock UT_NETWORK_PANEL clone) ═════════════════ -->
     <Compile Include="BoQ\UI\NetworkPanel\UrbanoLockBridge.cs" />
@@ -153,16 +156,16 @@
     </Compile>
     <Compile Include="BoQ\Services\DwgBoQStore.cs" />
     <Compile Include="BoQ\Services\Civil3DSurfaceService.cs" />
-    <Compile Include="BoQ\UI\GeneralSettingsDialog.cs">
-      <SubType>Form</SubType>
+    <Compile Include="BoQ\UI\GeneralSettingsControl.cs">
+      <SubType>UserControl</SubType>
     </Compile>
     <Compile Include="BoQ\UI\BoQResultsDialog.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="BoQ\BoQViewCommand.cs" />
-    <Compile Include="BoQ\BoQSimplifiedTestCommand.cs" />
     <Compile Include="BoQ\BoQSimplifiedTestV2Command.cs" />
     <Compile Include="BoQ\BacaKesifTablosuCommand.cs" />
+    <Compile Include="BoQ\MetrajKesifTablosuCommand.cs" />
     <Compile Include="BoQ\SolidsCommand.cs" />
     <Compile Include="BoQ\SectionsCommand.cs" />
     <Compile Include="BoQ\SectionsDbCommand.cs" />
@@ -175,6 +178,7 @@
     <Compile Include="BoQ\MhProbeCommand.cs" />
     <!-- ═══ Excel Import (shared column-mapping infrastructure) ════════════════ -->
     <Compile Include="BoQ\ExcelImport\ExcelSheetReader.cs" />
+    <Compile Include="BoQ\ExcelImport\ExcelSheetWriter.cs" />
     <Compile Include="BoQ\ExcelImport\MappableField.cs" />
     <Compile Include="BoQ\ExcelImport\ColumnMappingResult.cs" />
     <Compile Include="BoQ\ExcelImport\ColumnMappingDialog.cs" />
@@ -183,6 +187,7 @@
     <Compile Include="BoQ\SmartAssembly\SmartAssemblyCommand.cs" />
     <Compile Include="BoQ\SmartAssembly\Services\SmartAssemblyCatalogStore.cs" />
     <Compile Include="BoQ\SmartAssembly\Services\ComponentExcelImportService.cs" />
+    <Compile Include="BoQ\SmartAssembly\Services\ComponentExcelExportService.cs" />
     <!-- Data Foundation -->
     <!-- Models -->
     <Compile Include="BoQ\SmartAssembly\Models\ComponentRole.cs" />
@@ -217,7 +222,6 @@
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\PipeRangeRuleVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\RepositoryTabVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SubPieceRowVm.cs" />
-    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\TemelAltiParcaRowVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\MasterRulesTabVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ComponentConstraintVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SystemTypeManagerVm.cs" />
@@ -228,6 +232,9 @@
     <!-- UI – Views (XAML code-behind) -->
     <Compile Include="BoQ\SmartAssembly\UI\Views\SmartAssemblyWindow.xaml.cs">
       <DependentUpon>SmartAssemblyWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="BoQ\SmartAssembly\UI\Views\ProjectSettingsWindow.xaml.cs">
+      <DependentUpon>ProjectSettingsWindow.xaml</DependentUpon>
     </Compile>
     <Compile Include="BoQ\SmartAssembly\UI\Views\SystemTypeManagerWindow.xaml.cs">
       <DependentUpon>SystemTypeManagerWindow.xaml</DependentUpon>
@@ -262,6 +269,7 @@
     <Compile Include="BoQ\PipeCatalog\Models\PipeCatalogModels.cs" />
     <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogImportService.cs" />
     <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogExcelImportService.cs" />
+    <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogExcelExportService.cs" />
     <Compile Include="BoQ\PipeCatalog\Services\PipeCatalogStore.cs" />
     <Compile Include="BoQ\PipeCatalog\UI\ViewModels\PipeCatalogMainVm.cs" />
     <Compile Include="BoQ\PipeCatalog\UI\Views\PipeCatalogView.xaml.cs">
@@ -291,6 +299,10 @@
   <!-- Smart Assembly + Pipe Catalog XAML Pages -->
   <ItemGroup>
     <Page Include="BoQ\SmartAssembly\UI\Views\SmartAssemblyWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="BoQ\SmartAssembly\UI\Views\ProjectSettingsWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

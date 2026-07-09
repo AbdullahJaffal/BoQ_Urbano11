@@ -14,6 +14,39 @@
             <Setter Property="Padding"    Value="4,2"/>
             <Setter Property="Background" Value="#F0F0F0"/>
         </Style>
+
+        <!-- Prominent primary-action (Kaydet) button — accent so it stands out from
+             the quiet secondary buttons around it. -->
+        <Style x:Key="KaydetButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="10,3"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="#00467F" CornerRadius="2"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="b" Property="Background" Value="#9BB8CE"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Compact top-level menu button used for the İçe/Dışa dropdowns. -->
+        <Style x:Key="AktarMenu" TargetType="MenuItem">
+            <Setter Property="Padding" Value="8,3"/>
+        </Style>
     </UserControl.Resources>
 
     <DockPanel LastChildFill="True">
@@ -40,39 +73,48 @@
                 <TextBlock DockPanel.Dock="Top" Text="Boru Aileleri"
                            FontWeight="Bold" Margin="0,0,0,6"/>
 
-                <!-- Toolbar: CRUD + separator + Save/Export/Import + separator + Classes -->
+                <!-- Unified toolbar: [+ Ekle] | [Kaydet] [İçe▾] [Dışa▾] | [⚙]
+                     Aileyi Sil → sağ tık (aşağıdaki DataGrid bağlam menüsü). -->
                 <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                     <Button Content="+ Ekle"
                             Command="{Binding AddFamilyCommand}"
-                            Padding="8,2" Margin="0,0,4,0"/>
-                    <Button Content="Sil"
-                            Command="{Binding DeleteFamilyCommand}"
-                            Padding="8,2" Margin="0,0,8,0"/>
+                            Padding="8,2" Margin="0,0,6,4"
+                            ToolTip="Yeni boru ailesi ekle"/>
 
-                    <Separator Width="1" Height="20" Margin="0,0,8,0" Background="#BBBBBB"/>
+                    <Separator Width="1" Height="20" Margin="0,0,6,4" Background="#BBBBBB"/>
 
                     <Button Content="💾 Kaydet"
                             Command="{Binding SaveCommand}"
-                            Padding="8,2" Margin="0,0,4,0"
+                            Style="{StaticResource KaydetButton}"
+                            Margin="0,0,6,4"
                             ToolTip="Kataloğu dahili konuma kaydeder&#x0a;(%APPDATA%\UrbanoMetraj\PipeCatalog.xml)"/>
-                    <Button Content="Dışa Aktar"
-                            Command="{Binding ExportCommand}"
-                            Padding="8,2" Margin="0,0,4,0"
-                            ToolTip="Kataloğu seçilen konuma XML olarak dışa aktarır."/>
-                    <Button Content="İçe Aktar"
-                            Command="{Binding ImportCommand}"
-                            Padding="8,2" Margin="0,0,4,0"
-                            ToolTip="Daha önce dışa aktarılmış bir XML dosyasını içe aktarır.&#x0a;Native şema ve Urbano şeması otomatik algılanır."/>
-                    <Button Content="Excel'den İçe Aktar"
-                            Command="{Binding ImportExcelCommand}"
-                            Padding="8,2" Margin="0,0,8,0"
-                            ToolTip="Bir Excel (.xlsx) dosyasından, sütunları eşleştirerek seçili aileye toplu boru ekler."/>
 
-                    <Separator Width="1" Height="20" Margin="0,0,8,0" Background="#BBBBBB"/>
+                    <Menu Background="Transparent" VerticalAlignment="Center" Margin="0,0,2,4">
+                        <MenuItem Header="İçe Aktar ▾" Style="{StaticResource AktarMenu}">
+                            <MenuItem Header="XML dosyasından…"
+                                      Command="{Binding ImportCommand}"
+                                      ToolTip="Native şema ve Urbano şeması otomatik algılanır."/>
+                            <MenuItem Header="Excel dosyasından…"
+                                      Command="{Binding ImportExcelCommand}"
+                                      ToolTip="Sütunları eşleştirerek seçili aileye toplu boru ekler."/>
+                        </MenuItem>
+                    </Menu>
+                    <Menu Background="Transparent" VerticalAlignment="Center" Margin="0,0,6,4">
+                        <MenuItem Header="Dışa Aktar ▾" Style="{StaticResource AktarMenu}">
+                            <MenuItem Header="XML olarak…"
+                                      Command="{Binding ExportCommand}"
+                                      ToolTip="Kataloğu seçilen konuma XML olarak dışa aktarır."/>
+                            <MenuItem Header="Excel olarak…"
+                                      Command="{Binding ExportExcelCommand}"
+                                      ToolTip="Her aile ayrı sayfada; sütunlar içe aktarma başlıklarıyla aynıdır."/>
+                        </MenuItem>
+                    </Menu>
 
-                    <Button Content="⚙ Basınç / Rijitlik Sınıfları"
+                    <Separator Width="1" Height="20" Margin="0,0,6,4" Background="#BBBBBB"/>
+
+                    <Button Content="⚙ Sınıflar"
                             Command="{Binding ManageClassesCommand}"
-                            Padding="8,2"
+                            Padding="8,2" Margin="0,0,0,4"
                             ToolTip="Katalog genelinde paylaşılan basınç / rijitlik sınıflarını düzenler (SN6, SN8, PN10…)&#x0a;Tüm aileler bu listeyi paylaşır."/>
                 </WrapPanel>
 
@@ -80,7 +122,15 @@
                           SelectedItem="{Binding SelectedFamily}"
                           AutoGenerateColumns="False" CanUserAddRows="False"
                           SelectionMode="Single"
+                          PreviewMouseRightButtonDown="Grid_SelectRowOnRightClick"
                           ColumnHeaderStyle="{StaticResource ColHeader}">
+                    <DataGrid.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Aileyi Sil"
+                                      Command="{Binding Data.DeleteFamilyCommand,
+                                                Source={StaticResource VmProxy}}"/>
+                        </ContextMenu>
+                    </DataGrid.ContextMenu>
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Aile Adı"
                             Binding="{Binding FamilyName, UpdateSourceTrigger=PropertyChanged}"
@@ -131,19 +181,16 @@
                     </Grid>
                 </Border>
 
-                <!-- Section B: pipe toolbar -->
+                <!-- Section B: pipe toolbar (Çoğalt / Sil → sağ tık bağlam menüsü) -->
                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4" LastChildFill="False">
                     <TextBlock Text="Borular" FontWeight="Bold"
                                VerticalAlignment="Center" DockPanel.Dock="Left"/>
+                    <TextBlock Text="(satırda sağ tık: Çoğalt / Sil)" Foreground="Gray"
+                               FontSize="11" VerticalAlignment="Center"
+                               DockPanel.Dock="Left" Margin="8,0,0,0"/>
                     <Button Content="+ Ekle"
                             Command="{Binding AddPipeCommand}"
                             DockPanel.Dock="Right" Padding="8,2" Margin="4,0,0,0"/>
-                    <Button Content="Çoğalt"
-                            Command="{Binding DuplicatePipeCommand}"
-                            DockPanel.Dock="Right" Padding="8,2" Margin="2,0,0,0"/>
-                    <Button Content="Sil"
-                            Command="{Binding DeletePipeCommand}"
-                            DockPanel.Dock="Right" Padding="8,2" Margin="2,0,0,0"/>
                 </DockPanel>
 
                 <!-- Section C: pipes DataGrid -->
@@ -152,8 +199,20 @@
                           SelectedItem="{Binding SelectedPipe}"
                           AutoGenerateColumns="False" CanUserAddRows="False"
                           SelectionMode="Single"
+                          PreviewMouseRightButtonDown="Grid_SelectRowOnRightClick"
                           ColumnHeaderStyle="{StaticResource ColHeader}"
                           RowEditEnding="PipesGrid_RowEditEnding">
+
+                    <DataGrid.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Çoğalt"
+                                      Command="{Binding Data.DuplicatePipeCommand,
+                                                Source={StaticResource VmProxy}}"/>
+                            <MenuItem Header="Sil"
+                                      Command="{Binding Data.DeletePipeCommand,
+                                                Source={StaticResource VmProxy}}"/>
+                        </ContextMenu>
+                    </DataGrid.ContextMenu>
 
                     <!-- Red background when OD ≠ ID + 2×Et and all three are filled -->
                     <DataGrid.RowStyle>

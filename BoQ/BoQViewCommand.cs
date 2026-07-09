@@ -10,9 +10,9 @@ using UrbanoMetraj.BoQ.UI;
 namespace UrbanoMetraj.BoQ
 {
     /// <summary>
-    /// AutoCAD command: URBANO_BOQ_VIEW
+    /// AutoCAD command: UT_BOQ_VIEW
     ///
-    /// Reads the BoQ data previously stored in the DWG by URBANO_BOQ and
+    /// Reads the BoQ data previously stored in the DWG by UT_BOQ and
     /// shows the <see cref="BoQResultsDialog"/> as a modeless window so the
     /// user can keep using AutoCAD while reviewing quantities.
     /// </summary>
@@ -20,7 +20,7 @@ namespace UrbanoMetraj.BoQ
     {
         private static BoQResultsDialog _openDialog;
 
-        [CommandMethod("URBANO_BOQ_VIEW", CommandFlags.Modal)]
+        [CommandMethod("UT_BOQ_VIEW", CommandFlags.Modal)]
         public void ShowResults()
         {
             // Bring existing window to front if already open.

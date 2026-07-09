@@ -61,7 +61,7 @@
 
   (setq entry (dictsearch nod "URBANO_BOQ"))
   (if (null entry)
-    (progn (prompt "\n[!] URBANO_BOQ غير موجود. شغّل URBANO_BOQ أولاً.") (exit)))
+    (progn (prompt "\n[!] URBANO_BOQ غير موجود. شغّل UT_BOQ أولاً.") (exit)))
   (setq root_id (cdr (assoc -1 entry)))
 
   (setq entry (dictsearch root_id "AGLAR"))

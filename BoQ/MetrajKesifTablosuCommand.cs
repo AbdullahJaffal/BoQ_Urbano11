@@ -12,21 +12,23 @@ using MessageBoxButtons = System.Windows.Forms.MessageBoxButtons;
 using MessageBoxIcon = System.Windows.Forms.MessageBoxIcon;
 using SaveFileDialog = System.Windows.Forms.SaveFileDialog;
 
-[assembly: CommandClass(typeof(UrbanoMetraj.BoQ.BacaKesifTablosuCommand))]
+[assembly: CommandClass(typeof(UrbanoMetraj.BoQ.MetrajKesifTablosuCommand))]
 
 namespace UrbanoMetraj.BoQ
 {
     /// <summary>
-    /// UT_BACA_KESIF_TABLOSU — generates a standalone manhole quantity-takeoff
-    /// workbook from a BoQReport already computed and saved by UT_BOQ_HESAPLA.
+    /// UT_METRAJ_KESIF_TABLOSU — generates the paged "Metraj Keşif Tablosu" workbook
+    /// (project-info sheet + one sheet per active network) from a BoQReport already
+    /// computed and saved by UT_BOQ_HESAPLA.
     ///
-    /// Does NOT talk to Urbano at all (no dialog automation, no STA thread needed)
-    /// — it only reads what's already persisted in the DWG's NOD, so it can be run
-    /// any time after UT_BOQ_HESAPLA, in the same session or a later one.
+    /// Like UT_BACA_KESIF_TABLOSU, this does NOT talk to Urbano (no dialog automation,
+    /// no STA thread) — it only reads what's persisted in the DWG's NOD, so it can be
+    /// run any time after UT_BOQ_HESAPLA. The report's Systems are already scoped
+    /// to the Ağ Seçimi "Aktif" networks, so each becomes one sheet.
     /// </summary>
-    public class BacaKesifTablosuCommand
+    public class MetrajKesifTablosuCommand
     {
-        [CommandMethod("UT_BACA_KESIF_TABLOSU", CommandFlags.Modal)]
+        [CommandMethod("UT_METRAJ_KESIF_TABLOSU", CommandFlags.Modal)]
         public void Run()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
@@ -34,40 +36,35 @@ namespace UrbanoMetraj.BoQ
 
             if (!DwgBoQStore.HasData(doc.Database))
             {
-                ed.WriteMessage("\n[Baca Kesif] Once UT_BOQ_HESAPLA calistirilmali " +
+                ed.WriteMessage("\n[Metraj Kesif] Once UT_BOQ_HESAPLA calistirilmali " +
                                 "(kaydedilmis BoQ verisi bulunamadi).\n");
                 MessageBox.Show(
                     "Once UT_BOQ_HESAPLA komutu calistirilarak BoQ verisi hesaplanip kaydedilmelidir.",
-                    "Baca Kesif Tablosu", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    "Metraj Kesif Tablosu", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
             var (report, settings) = DwgBoQStore.Load(doc.Database);
             if (report == null || settings == null)
             {
-                ed.WriteMessage("\n[Baca Kesif] BoQ verisi okunamadi.\n");
+                ed.WriteMessage("\n[Metraj Kesif] BoQ verisi okunamadi.\n");
                 return;
             }
 
-            // NetLength is runtime-only (never persisted — see SectionDebugRow.NetLength),
-            // so it must be re-computed after every Load(), same as ManholeAIService's own
-            // post-processing pass does within RunFullCalculation.
-            PipeNetLengthService.Compute(report, settings.NetLengthMode);
-            // ManholeItem.SubBaseVolume (Yataklama Hacmi column) is likewise runtime-only —
-            // computed by ManholeExcavOverlapService.Compute, which is explicitly documented
-            // as safe to call multiple times and needs only report.Systems/SectionDebug,
-            // both fully restored by Load() above.
+            // Manhole Yataklama (SubBaseVolume) and Geri Dolgu (BackfillLayerSplits) are
+            // runtime-only (never persisted) — recompute them after Load(), exactly as
+            // BACA_KESIF_TABLOSU does. Safe to call repeatedly; needs only report.Systems/
+            // SectionDebug, both fully restored by Load() above.
             ManholeExcavOverlapService.Compute(report);
-            ManholeConnectionLinkService.Populate(report);
 
             string defaultName = string.IsNullOrWhiteSpace(doc.Name)
-                ? "Baca_Kesif_Tablosu.xlsx"
-                : Path.GetFileNameWithoutExtension(doc.Name) + "_Baca_Kesif_Tablosu.xlsx";
+                ? "Metraj_Kesif_Tablosu.xlsx"
+                : Path.GetFileNameWithoutExtension(doc.Name) + "_Metraj_Kesif_Tablosu.xlsx";
 
             string path;
             using (var dlg = new SaveFileDialog
             {
-                Title = "Baca Kesif Tablosunu Kaydet",
+                Title = "Metraj Kesif Tablosunu Kaydet",
                 Filter = "Excel Workbook (*.xlsx)|*.xlsx",
                 DefaultExt = "xlsx",
                 FileName = defaultName,
@@ -80,11 +77,11 @@ namespace UrbanoMetraj.BoQ
 
             try
             {
-                ManholeKesifExportService.Export(report, settings, path);
-                ed.WriteMessage("\n[Baca Kesif] Tablo kaydedildi: " + path + "\n");
+                MetrajKesifExportService.Export(report, settings, path);
+                ed.WriteMessage("\n[Metraj Kesif] Tablo kaydedildi: " + path + "\n");
 
-                MessageBox.Show("Baca kesif tablosu kaydedildi:\n" + path,
-                    "Baca Kesif Tablosu", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Metraj kesif tablosu kaydedildi:\n" + path,
+                    "Metraj Kesif Tablosu", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                 try
                 {
@@ -97,7 +94,7 @@ namespace UrbanoMetraj.BoQ
             }
             catch (Exception ex)
             {
-                ed.WriteMessage("\n[Baca Kesif] HATA: " + ex.Message + "\n");
+                ed.WriteMessage("\n[Metraj Kesif] HATA: " + ex.Message + "\n");
             }
         }
     }

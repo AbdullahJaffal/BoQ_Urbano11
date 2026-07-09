@@ -7,7 +7,14 @@ using UrbanoMetraj.BoQ.Models;
 
 namespace UrbanoMetraj.BoQ.UI
 {
-    internal sealed class GeneralSettingsDialog : Form
+    /// <summary>
+    /// Embeddable WinForms panel with every general BoQ setting (formerly the modal
+    /// <c>GeneralSettingsDialog</c>). Hosted inside the WPF "Proje Ayarları" window's
+    /// "Genel Ayarlar" tab via a WindowsFormsHost. Exposes the chosen values through
+    /// read-only properties; the hosting tab supplies its own "Kaydet" button and
+    /// persists them to the DWG via <c>DwgBoQStore.SaveSettings</c>.
+    /// </summary>
+    internal sealed class GeneralSettingsControl : UserControl
     {
         private NumericUpDown _nudSolid;
         private NumericUpDown _nudSection;
@@ -15,6 +22,9 @@ namespace UrbanoMetraj.BoQ.UI
         private ComboBox      _cmbDolgu;
         private ComboBox      _cmbBaca;
         private ComboBox      _cmbBacaKazi;
+        private ComboBox      _cmbBacaBacaKazi;
+        private ComboBox      _cmbBacaAltiParca;
+        private ComboBox      _cmbBacaKaziGenislik;
         private ComboBox      _cmbKirmiziKot;
         private ComboBox      _cmbAraziKotu;
         private ComboBox      _cmbTerrasmanKotu;
@@ -26,6 +36,7 @@ namespace UrbanoMetraj.BoQ.UI
         private ComboBox      _cmbBacaKapakSeviyesi;
         private ComboBox      _cmbRingFillMode;
         private ComboBox      _cmbNetLengthMode;
+        private NumericUpDown _nudDegiskenBand;
 
         private static readonly object[] AraziOptions =
         {
@@ -44,6 +55,9 @@ namespace UrbanoMetraj.BoQ.UI
         public OverlapAssignment  BackfillOverlap             => IndexToOverlap(_cmbDolgu.SelectedIndex);
         public ManholeType        SelectedManholeType         => _cmbBaca.SelectedIndex == 1 ? ManholeType.CastInPlace : ManholeType.PreCast;
         public bool                BacaKaziHesapla            => _cmbBacaKazi.SelectedIndex == 0;
+        public bool                BacaBacaKaziHesapla        => _cmbBacaBacaKazi.SelectedIndex == 0;
+        public bool                BacaAltiParcaEklensin      => _cmbBacaAltiParca.SelectedIndex == 0;
+        public bool                BacaKaziDisCapKullan       => _cmbBacaKaziGenislik.SelectedIndex == 0;
         public string             BacaKirmiziKotSurface       => (string)_cmbKirmiziKot.SelectedItem;
         public string             BacaAraziKotuSurface        => (string)_cmbAraziKotu.SelectedItem;
         public string             BacaTerrasmanKotuSurface    => (string)_cmbTerrasmanKotu.SelectedItem;
@@ -55,24 +69,23 @@ namespace UrbanoMetraj.BoQ.UI
         public string             BacaKapakSeviyesi           => (string)_cmbBacaKapakSeviyesi.SelectedItem;
         public RingFillMode       RingFillMode                => _cmbRingFillMode.SelectedIndex == 1 ? RingFillMode.BestFit : RingFillMode.Greedy;
         public NetLengthMode      NetLengthMode               => _cmbNetLengthMode.SelectedIndex == 1 ? NetLengthMode.InnerDiameter : NetLengthMode.OuterDiameter;
+        public double             MetrajDegiskenParcaBandM    => (double)_nudDegiskenBand.Value;
 
-        public GeneralSettingsDialog(double solidInterval, double sectionInterval,
+        public GeneralSettingsControl(double solidInterval, double sectionInterval,
             OverlapAssignment excavationOverlap, OverlapAssignment backfillOverlap,
-            ManholeType manholeType, bool bacaKaziHesapla,
+            ManholeType manholeType, bool bacaKaziHesapla, bool bacaBacaKaziHesapla,
+            bool bacaAltiParcaEklensin, bool bacaKaziDisCapKullan,
             string kirmiziKotSurface, string araziKotuSurface, string terrasmanKotuSurface,
             List<string> c3dSurfaceNames,
             string kirmiziKotC3DSurface, string araziKotuC3DSurface, string terrasmanKotuC3DSurface,
             string kaziSeviyesi, string dolguSeviyesi, string bacaKapakSeviyesi,
-            RingFillMode ringFillMode, NetLengthMode netLengthMode)
+            RingFillMode ringFillMode, NetLengthMode netLengthMode,
+            double metrajDegiskenParcaBandM)
         {
-            Text            = "Genel Ayarlar";
-            ClientSize      = new Size(480, 744);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox     = false;
-            MinimizeBox     = false;
-            StartPosition   = FormStartPosition.CenterParent;
-            Font            = new Font("Segoe UI", 9f);
-            BackColor       = Color.WhiteSmoke;
+            Size       = new Size(480, 848);
+            AutoScroll = true;
+            Font       = new Font("Segoe UI", 9f);
+            BackColor  = Color.WhiteSmoke;
 
             // ── 3B Katı grubu ─────────────────────────────────────────────────
             var grp1 = new GroupBox
@@ -109,7 +122,7 @@ namespace UrbanoMetraj.BoQ.UI
             // ── Kesit Çizim grubu ─────────────────────────────────────────────
             var grp2 = new GroupBox
             {
-                Text = "Kesit Çizim Ayarları (URBANO_SECTIONS)",
+                Text = "Kesit Çizim Ayarları (UT_SECTIONS)",
                 Left = 10, Top = 118, Width = 460, Height = 100
             };
             grp2.Controls.AddRange(new Control[]
@@ -142,7 +155,7 @@ namespace UrbanoMetraj.BoQ.UI
             var grp3 = new GroupBox
             {
                 Text = "Hesaplama Seçenekleri",
-                Left = 10, Top = 226, Width = 460, Height = 178
+                Left = 10, Top = 226, Width = 460, Height = 312
             };
             var lblKazi = new Label
             {
@@ -210,10 +223,78 @@ namespace UrbanoMetraj.BoQ.UI
             _cmbNetLengthMode.Items.AddRange(new object[] { "Dış Çap", "İç Çap" });
             _cmbNetLengthMode.SelectedIndex = netLengthMode == NetLengthMode.InnerDiameter ? 1 : 0;
 
+            var lblBacaBacaKazi = new Label
+            {
+                Text = "Bacalar Arası Kazı Çakışması:", Left = 8, Top = 158, Width = 190,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            _cmbBacaBacaKazi = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Left = 202, Top = 154, Width = 100
+            };
+            _cmbBacaBacaKazi.Items.AddRange(new object[] { "Hesapla", "Yoksay" });
+            _cmbBacaBacaKazi.SelectedIndex = bacaBacaKaziHesapla ? 0 : 1;
+
+            var lblBacaAltiParca = new Label
+            {
+                Text = "Baca Altı Beton Parçası:", Left = 8, Top = 190, Width = 190,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            _cmbBacaAltiParca = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Left = 202, Top = 186, Width = 100
+            };
+            _cmbBacaAltiParca.Items.AddRange(new object[] { "Eklesin", "Yok" });
+            _cmbBacaAltiParca.SelectedIndex = bacaAltiParcaEklensin ? 0 : 1;
+
+            var lblBacaKaziGenislik = new Label
+            {
+                Text = "Baca Kazı Genişliği:", Left = 8, Top = 222, Width = 190,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            _cmbBacaKaziGenislik = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Left = 202, Top = 218, Width = 100
+            };
+            _cmbBacaKaziGenislik.Items.AddRange(new object[] { "Dış Çap", "İç Çap" });
+            _cmbBacaKaziGenislik.SelectedIndex = bacaKaziDisCapKullan ? 0 : 1;
+
+            // Metraj-only: how variable-height rings (değişken parça) are banded in the
+            // Metraj Keşif Tablosu. Saved to the DWG like every other setting here.
+            var lblDegiskenBand = new Label
+            {
+                Text = "Değişken Parça Yük. Aralığı (Metraj):", Left = 8, Top = 254, Width = 210,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            _nudDegiskenBand = new NumericUpDown
+            {
+                Left = 222, Top = 250, Width = 70,
+                Minimum = 0.10m, Maximum = 5.00m, Increment = 0.10m, DecimalPlaces = 2,
+                Value = (decimal)Math.Max(0.10, Math.Min(5.0,
+                    metrajDegiskenParcaBandM <= 0 ? 0.5 : metrajDegiskenParcaBandM))
+            };
+            var lblDegiskenBandUnit = new Label
+            {
+                Text = "m", Left = 297, Top = 254, Width = 20, TextAlign = ContentAlignment.MiddleLeft
+            };
+            var lblDegiskenBandHint = new Label
+            {
+                Text = "Aynı yükseklik aralığındaki değişken halkalar tek satırda toplanır.",
+                Left = 8, Top = 280, Width = 440, Height = 20,
+                ForeColor = Color.Gray, Font = new Font("Segoe UI", 7.5f),
+                TextAlign = ContentAlignment.TopLeft
+            };
+
             grp3.Controls.AddRange(new Control[]
             {
                 lblKazi, _cmbKazi, lblDolgu, _cmbDolgu, lblBaca, _cmbBaca, lblBacaKazi, _cmbBacaKazi,
-                lblRingFillMode, _cmbRingFillMode, lblNetLengthMode, _cmbNetLengthMode
+                lblRingFillMode, _cmbRingFillMode, lblNetLengthMode, _cmbNetLengthMode,
+                lblBacaBacaKazi, _cmbBacaBacaKazi, lblBacaAltiParca, _cmbBacaAltiParca,
+                lblBacaKaziGenislik, _cmbBacaKaziGenislik,
+                lblDegiskenBand, _nudDegiskenBand, lblDegiskenBandUnit, lblDegiskenBandHint
             });
             Controls.Add(grp3);
 
@@ -223,7 +304,7 @@ namespace UrbanoMetraj.BoQ.UI
             var grp4 = new GroupBox
             {
                 Text = "Kot Ayarları",
-                Left = 10, Top = 414, Width = 460, Height = 148
+                Left = 10, Top = 548, Width = 460, Height = 148
             };
 
             var lblColBaca = new Label
@@ -276,7 +357,7 @@ namespace UrbanoMetraj.BoQ.UI
             var grp5 = new GroupBox
             {
                 Text = "Seviye Ayarları",
-                Left = 10, Top = 572, Width = 460, Height = 120
+                Left = 10, Top = 706, Width = 460, Height = 120
             };
 
             var lblKaziSeviyesi = new Label
@@ -307,25 +388,6 @@ namespace UrbanoMetraj.BoQ.UI
                 lblBacaKapakSeviyesi, _cmbBacaKapakSeviyesi
             });
             Controls.Add(grp5);
-
-            // ── Tamam / İptal ─────────────────────────────────────────────────
-            var btnOk = new Button
-            {
-                Text = "Kaydet", DialogResult = DialogResult.OK,
-                Left = 308, Top = 700, Width = 76, Height = 28,
-                BackColor = Color.FromArgb(0, 70, 127), ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f, FontStyle.Bold)
-            };
-            var btnCancel = new Button
-            {
-                Text = "İptal", DialogResult = DialogResult.Cancel,
-                Left = 392, Top = 700, Width = 76, Height = 28,
-                FlatStyle = FlatStyle.Flat
-            };
-
-            Controls.AddRange(new Control[] { btnOk, btnCancel });
-            AcceptButton = btnOk;
-            CancelButton = btnCancel;
         }
 
         private static ComboBox MakeAraziCombo(int left, int top, string current)

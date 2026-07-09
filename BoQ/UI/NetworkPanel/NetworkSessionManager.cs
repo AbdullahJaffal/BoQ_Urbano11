@@ -88,21 +88,27 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
         public static void SetAllActive(IEnumerable<string> networkIds, bool active)
         {
             var ids = networkIds?.ToList() ?? new List<string>();
+
+            // Collect only the networks whose visibility actually flips, so the
+            // batch below toggles exactly the same layers the per-network path did.
+            var toToggle = new List<string>();
             foreach (var id in ids)
             {
                 if (active)
                 {
                     _active.Add(id);
-                    if (_visible.Add(id))
-                        ApplyLayerVisibility(id, true);
+                    if (_visible.Add(id)) toToggle.Add(id);
                 }
                 else
                 {
                     _active.Remove(id);
-                    if (_visible.Remove(id))
-                        ApplyLayerVisibility(id, false);
+                    if (_visible.Remove(id)) toToggle.Add(id);
                 }
             }
+
+            // Single transaction + single Regen for the whole set (see remarks on
+            // ApplyLayerVisibilityBatch) — avoids the N-Regen flicker on [TÜMÜ].
+            ApplyLayerVisibilityBatch(toToggle, active);
             RaiseChanged();
         }
 
@@ -113,8 +119,10 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
             {
                 if (visible) _visible.Add(id);
                 else         _visible.Remove(id);
-                ApplyLayerVisibility(id, visible);
             }
+
+            // One transaction + one Regen for all networks at once.
+            ApplyLayerVisibilityBatch(ids, visible);
             RaiseChanged();
         }
 
@@ -228,9 +236,20 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
         private static void ApplyLayerVisibility(string networkId, bool visible)
         {
             if (string.IsNullOrEmpty(networkId)) return;
+            ApplyLayerVisibilityBatch(new[] { networkId }, visible);
+        }
 
-            if (!_layerCache.TryGetValue(networkId, out var layerIds) || layerIds.Count == 0)
-                return;
+        /// <summary>
+        /// Turns the layers of every supplied network on/off inside a <b>single</b>
+        /// document lock + transaction, followed by <b>one</b> Editor.Regen() at the
+        /// end. This is what keeps the [TÜMÜ] master toggle cheap: the old per-network
+        /// path opened a fresh transaction and issued a Regen for each network, so
+        /// N networks meant N full-drawing regens — the visible flicker/heaviness.
+        /// The layer outcome is identical to calling the single-network path per id.
+        /// </summary>
+        private static void ApplyLayerVisibilityBatch(IEnumerable<string> networkIds, bool visible)
+        {
+            if (networkIds == null) return;
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
@@ -243,19 +262,26 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
                 {
                     bool anyChanged = false;
 
-                    foreach (var id in layerIds)
+                    foreach (var networkId in networkIds)
                     {
-                        if (id.IsNull || !id.IsValid || id.IsErased) continue;
+                        if (string.IsNullOrEmpty(networkId)) continue;
+                        if (!_layerCache.TryGetValue(networkId, out var layerIds) || layerIds.Count == 0)
+                            continue;
 
-                        LayerTableRecord lr;
-                        try   { lr = tr.GetObject(id, OpenMode.ForRead) as LayerTableRecord; }
-                        catch { continue; }
-                        if (lr == null) continue;
-
-                        if (lr.IsOff == visible)
+                        foreach (var id in layerIds)
                         {
-                            lr = tr.GetObject(id, OpenMode.ForWrite) as LayerTableRecord;
-                            if (lr != null) { lr.IsOff = !visible; anyChanged = true; }
+                            if (id.IsNull || !id.IsValid || id.IsErased) continue;
+
+                            LayerTableRecord lr;
+                            try   { lr = tr.GetObject(id, OpenMode.ForRead) as LayerTableRecord; }
+                            catch { continue; }
+                            if (lr == null) continue;
+
+                            if (lr.IsOff == visible)
+                            {
+                                lr = tr.GetObject(id, OpenMode.ForWrite) as LayerTableRecord;
+                                if (lr != null) { lr.IsOff = !visible; anyChanged = true; }
+                            }
                         }
                     }
 

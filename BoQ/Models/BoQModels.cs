@@ -33,6 +33,46 @@ namespace UrbanoMetraj.BoQ.Models
         public double WidthM { get; set; }
     }
 
+    /// <summary>
+    /// A CAD-selection calculation scope: the manholes/pipes the user picked from
+    /// the drawing (URBANO_BOQ_CADSELECT). When present, URBANO_BOQ_HESAPLA restricts
+    /// the geometry, clash detection and output to the sections these resolve to
+    /// (see <c>BoQParserService.ApplySelectionScope</c>). Manhole depths are still
+    /// computed from ALL connected pipes (physically correct), only clash+output are
+    /// scoped. Null / <see cref="IsEmpty"/> => whole-active-network calc, as before.
+    ///
+    /// Raw picked data is captured here (GUIDs + pipe line endpoints); it is resolved
+    /// into actual sections later, once the parser has the sn/en topology, so no
+    /// dependency on parse order is baked into the selection command.
+    /// </summary>
+    public sealed class SelectionScope
+    {
+        /// <summary>AG_GUID of every selected MANHOLE entity (circle / block reference).</summary>
+        public HashSet<string> ManholeGuids { get; }
+            = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>AG_GUID of every selected PIPE entity that carried one.</summary>
+        public HashSet<string> PipeGuids { get; }
+            = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Endpoints {x1,y1,x2,y2} of each selected pipe line — geometry fallback for
+        /// pipes whose drawing entity has no usable GUID (matched to a section's two
+        /// node coordinates within tolerance, mirroring UrbanoLock's RestoreScopeSelector).
+        /// </summary>
+        public List<double[]> PipeSegments { get; } = new List<double[]>();
+
+        public bool IsEmpty =>
+            ManholeGuids.Count == 0 && PipeGuids.Count == 0 && PipeSegments.Count == 0;
+    }
+
+    /// <summary>
+    /// Calculation-scope mode chosen in the Metraj window's split button:
+    /// <see cref="Full"/> = all active networks, <see cref="Cad"/> = a fresh drawing
+    /// selection, <see cref="Son"/> = reuse the last CAD selection (this session).
+    /// </summary>
+    public enum ScopeMode { None, Full, Cad, Son }
+
     // =========================================================================
     // Phase 1 – Pipe and Manhole aggregation models
     // =========================================================================
@@ -94,15 +134,11 @@ namespace UrbanoMetraj.BoQ.Models
         public Footprint ResolvedFootprint { get; set; }
 
         /// <summary>
-        /// Sub-base pieces (Temel Altı Parça) physically below the resolved Taban,
-        /// from BottomElementComponent.TemelAltiParcalar (empty when the Taban has
-        /// none, or TemelAltiParcaEnabled is false, or no Taban is resolved yet).
-        /// Set by ManholeAIService.ResolveExcavation alongside the excavation-depth
-        /// calculation that already consumes this same list's combined thickness.
-        /// Used by ManholeKesifExportService to build one column per distinct
-        /// piece dimension across the sheet.
+        /// Catalog sub-base components (TemelAltiParcaComponent) linked to the resolved Taban
+        /// via BaglandiTabanCapiMm. Empty when none are defined in the catalog or no Taban
+        /// is resolved yet. Set by ManholeAIService alongside the excavation-depth calculation.
         /// </summary>
-        public List<TemelAltiParca> ResolvedSubBaseParts { get; set; } = new List<TemelAltiParca>();
+        public List<TemelAltiParcaComponent> ResolvedSubBaseParts { get; set; } = new List<TemelAltiParcaComponent>();
 
         /// <summary>
         /// The matched ManholeExcavationDepthTier's Alt Temel Katmanları (sub-base
@@ -305,11 +341,38 @@ namespace UrbanoMetraj.BoQ.Models
         /// </summary>
         public double BackfillVolume { get; set; }
 
+        /// <summary>
+        /// This manhole's own share of excavation volume that overlaps with every
+        /// adjacent manhole pit (Bacalar Arası Kazı Çakışması), summed across all
+        /// overlapping neighbours. Computed via the half-plane geometric split in
+        /// ManholeExcavOverlapService.ComputeManholeVsManhole (runtime only, reset
+        /// and re-accumulated on every call). 0 when no overlap.
+        /// </summary>
+        public double ManholeVsManholeExcavDeducted { get; set; }
+
+        /// <summary>
+        /// Same as <see cref="ManholeVsManholeExcavDeducted"/> but computed
+        /// independently against the Dolgu-basis Z-range (ZDolgu/DolguFinalDepth)
+        /// instead of the Kazı-basis range — the two pits can differ in extent,
+        /// same independence convention as everywhere else in this pipeline.
+        /// </summary>
+        public double ManholeVsManholeBackfillDeducted { get; set; }
+
         // ── Baca Keşif Tablosu — inlet/outlet linkage (populated by ManholeConnectionLinkService) ──
         /// <summary>Connected inlet pipes (pipes whose EndNodeName == this manhole). Empty until ManholeConnectionLinkService.Populate() runs.</summary>
         public List<ManholeConnectionInfo> Inlets  { get; set; } = new List<ManholeConnectionInfo>();
         /// <summary>Connected outlet pipes (pipes whose StartNodeName == this manhole). Empty until ManholeConnectionLinkService.Populate() runs.</summary>
         public List<ManholeConnectionInfo> Outlets { get; set; } = new List<ManholeConnectionInfo>();
+
+        /// <summary>
+        /// Sum of SectionDebugRow.ManholeExcavDeducted across every connected pipe
+        /// (inlets + outlets) — the total volume where this manhole's excavation
+        /// frustum overlaps its connected pipe trenches (already computed per pipe
+        /// by ManholeExcavOverlapService.Compute; this is just that same value
+        /// summed per manhole). Populated by ManholeConnectionLinkService.Populate(),
+        /// which must run AFTER ManholeExcavOverlapService.Compute.
+        /// </summary>
+        public double TotalPipeExcavOverlap { get; set; }
     }
 
     /// <summary>One pipe connection to a manhole — either an inlet or an outlet (see ManholeItem.Inlets/Outlets).</summary>
@@ -689,6 +752,12 @@ namespace UrbanoMetraj.BoQ.Models
 
         public double TotalManholeBackfillVolume =>
             Systems.SelectMany(s => s.Manholes).Sum(m => m.BackfillVolume);
+
+        public double TotalManholeVsManholeExcavDeducted =>
+            Systems.SelectMany(s => s.Manholes).Sum(m => m.ManholeVsManholeExcavDeducted);
+
+        public double TotalManholeVsManholeBackfillDeducted =>
+            Systems.SelectMany(s => s.Manholes).Sum(m => m.ManholeVsManholeBackfillDeducted);
     }
 
     // =========================================================================

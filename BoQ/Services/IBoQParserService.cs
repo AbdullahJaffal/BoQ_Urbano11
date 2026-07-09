@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Autodesk.AutoCAD.EditorInput;
 using UrbanoMetraj.BoQ.Models;
 
@@ -19,7 +20,15 @@ namespace UrbanoMetraj.BoQ.Services
         /// elevation resolution (ZKazi/ZDolgu/ZBacaKapak) — null uses the
         /// BoQSettings defaults (Kırmızı Kot = Arazi1 = TH1 for all three),
         /// preserving the historical "always TH1" behaviour.
+        /// <paramref name="activeSystems"/> scopes the parse to the given network
+        /// names (URBANOLOCK — Ağ Seçimi "Aktif" set): nodes/sections of any other
+        /// network are skipped entirely, so their volumes AND warnings never appear.
+        /// null (default) parses the whole drawing, as before.
+        /// <paramref name="selectionScope"/> further restricts the calc to a drawing
+        /// selection (CAD Seçimi): only the sections the picked manholes/pipes resolve
+        /// to are kept for clash + output. null (default) = no selection restriction.
         /// </summary>
-        BoQReport Parse(string xmlPath, Editor ed = null, BoQSettings settings = null);
+        BoQReport Parse(string xmlPath, Editor ed = null, BoQSettings settings = null,
+                        ISet<string> activeSystems = null, SelectionScope selectionScope = null);
     }
 }

@@ -19,16 +19,16 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
     /// <summary>
     /// Commands
     /// ────────────────────────────────────────────────────────────
-    ///  PIPE_CATALOG              — opens the shared Akıllı Montaj window on the
+    ///  UT_PIPE_CATALOG              — opens the shared Akıllı Montaj window on the
     ///                              "Boru Kataloğu" tab (formerly a standalone window).
     ///
-    ///  PIPE_CATALOG_LIVE_EXTRACT — triggers ARS_EXPORT_XML on an STA thread
+    ///  UT_PIPE_CATALOG_LIVE_EXTRACT — triggers ARS_EXPORT_XML on an STA thread
     ///                              and parses the resulting XML for pipe
     ///                              catalog data (families, DN/OD/ID/wall).
     ///
     /// Threading contract (mirrors BoQCommand exactly)
     /// ────────────────────────────────────────────────────────────
-    ///  1. PIPE_CATALOG_LIVE_EXTRACT sets up static shared state.
+    ///  1. UT_PIPE_CATALOG_LIVE_EXTRACT sets up static shared state.
     ///  2. InputBlocker.Show() disables the AutoCAD main window.
     ///  3. A background STA thread starts UrbanoExportService.WaitAndAutomate().
     ///  4. doc.SendStringToExecute("_ARS_EXPORT_XML\n") is queued and the
@@ -46,10 +46,10 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
         private static EventHandler _idleHandler;
 
         // =====================================================================
-        // PIPE_CATALOG  — open / activate the catalog manager tab
+        // UT_PIPE_CATALOG  — open / activate the catalog manager tab
         // =====================================================================
 
-        [CommandMethod("PIPE_CATALOG")]
+        [CommandMethod("UT_PIPE_CATALOG")]
         public void OpenPipeCatalog()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
@@ -62,15 +62,15 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
             }
             catch (Exception ex)
             {
-                ed.WriteMessage("\nPIPE_CATALOG hatası: " + ex.Message);
+                ed.WriteMessage("\nUT_PIPE_CATALOG hatası: " + ex.Message);
             }
         }
 
         // =====================================================================
-        // PIPE_CATALOG_LIVE_EXTRACT  — Mode C: STA-thread ARS_EXPORT_XML
+        // UT_PIPE_CATALOG_LIVE_EXTRACT  — Mode C: STA-thread ARS_EXPORT_XML
         // =====================================================================
 
-        [CommandMethod("PIPE_CATALOG_LIVE_EXTRACT", CommandFlags.Modal)]
+        [CommandMethod("UT_PIPE_CATALOG_LIVE_EXTRACT", CommandFlags.Modal)]
         public void LiveExtractPipeCatalog()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;

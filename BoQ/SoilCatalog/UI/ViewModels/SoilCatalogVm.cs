@@ -42,6 +42,18 @@ namespace UrbanoMetraj.BoQ.SoilCatalog.UI.ViewModels
             get => _model.BoqItemCode;
             set { _model.BoqItemCode = value; OnPropertyChanged(); }
         }
+
+        public string KaziTipi
+        {
+            get => _model.KaziTipi;
+            set { _model.KaziTipi = value; OnPropertyChanged(); }
+        }
+
+        public string Aciklama
+        {
+            get => _model.Aciklama;
+            set { _model.Aciklama = value; OnPropertyChanged(); }
+        }
     }
 
     // =========================================================================
@@ -131,7 +143,9 @@ namespace UrbanoMetraj.BoQ.SoilCatalog.UI.ViewModels
             {
                 SoilName      = src.SoilName,
                 BulkingFactor = src.BulkingFactor,
-                BoqItemCode   = src.BoqItemCode
+                BoqItemCode   = src.BoqItemCode,
+                KaziTipi      = src.KaziTipi,
+                Aciklama      = src.Aciklama
             };
             var vm = new SoilClassificationVm(clone);
             Items.Add(vm);

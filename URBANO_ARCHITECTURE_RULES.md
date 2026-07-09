@@ -48,7 +48,7 @@ The dialog automation **must** run on a dedicated **STA thread**, not `Task.Run`
   log messages must be buffered and flushed only **after** `WM_CLOSE` is sent.
 
 ```csharp
-// Correct pattern (from BoQCommand.cs)
+// Correct pattern (from BoQSimplifiedTestV2Command.cs)
 var cts    = new CancellationTokenSource();
 var svc    = new UrbanoExportService(ed);
 var thread = new Thread(() => { success = svc.WaitAndAutomate(exportPath, cts.Token); });
@@ -944,9 +944,8 @@ cell.Style.Numberformat.Format = "#,##0.00";  // lowercase — correct for EPPlu
 | `BoQ/Services/ManholeConfigService.cs` | Pre-cast catalog template generator (EPPlus) |
 | `BoQ/Services/ExcelExportService.cs` | BoQ Excel workbook writer (EPPlus) |
 | `BoQ/Models/BoQModels.cs` | All data models (PipeItem, ManholeItem, CatalogPart, …) |
-| `BoQ/BoQCommand.cs` | AutoCAD command entry point (`URBANO_BOQ`) |
-| `UrbanoXmlExtractor.cs` | Diagnostic: ExtractUrbanoXML command (NOD dump) |
-| `UrbanoDataExtractor.cs` | Diagnostic: ExtractUrbanoDataDeep (XData + label scan) |
+| `BoQ/BoQSimplifiedTestV2Command.cs` | Command entry points: `URBANO_BOQ` (extract-only) + `URBANO_BOQ_HESAPLA` (full calc + save) |
+| `BoQ/BoQViewCommand.cs` | `URBANO_BOQ_VIEW` — Metraj results window (`BoQResultsDialog`), ribbon entry point |
 
 ## Appendix B — Urbano Command Reference
 
@@ -955,11 +954,16 @@ cell.Style.Numberformat.Format = "#,##0.00";  // lowercase — correct for EPPlu
 | `ARS_EXPORT_XML` | Opens modal export dialog — automate with UrbanoExportService |
 | `ARS_LABEL_N` | Regenerates all node (manhole) label entities with current data |
 | `ARS_LABEL_S` | Regenerates all section (pipe) label entities with current data |
-| `ExtractUrbanoXML` | Our diagnostic: dumps all NOD XML to Desktop |
-| `ExtractUrbanoDataDeep` | Our diagnostic: full XData + NOD + label scan for selected entities |
-| `ExtractUrbanoNOD` | Our diagnostic: raw NOD dump to Desktop\UrbanoNOD.txt |
-| `URBANO_BOQ` | Our main command: full BoQ extraction and Excel export |
+| `URBANO_BOQ` | Pull Urbano's XML export + refresh the discovered-catalog list for Type Mapping (no geometry, no save) |
+| `URBANO_BOQ_HESAPLA` | Full geometry + Manhole AI calculation + save — run after Type Mapping / Baca-Boru links are set |
+| `URBANO_BOQ_VIEW` | Open the Metraj (BoQ) results window — the ribbon's main entry point |
+| `SMART_ASSEMBLY` | Open the unified multi-tab catalog manager (Akıllı Montaj) |
+
+> The reverse-engineering diagnostic commands (`ExtractUrbanoXML`, `ExtractUrbanoDataDeep`,
+> `ExtractUrbanoNOD`, `SnoopUrbanoData`, `URBANO_MINE`, `URBANO_DERIN`, …) were removed once
+> the schema above was confirmed. Recover them from git history if future schema archaeology
+> is ever needed.
 
 ---
 
-*Last updated: 2026-05-14 — reflects UrbanoMetraj build DebugV11 (Phase 2 complete)*
+*Last updated: 2026-07-07 — legacy CSV-BoQ pipeline + diagnostic scanners removed; URBANO_BOQ split into extract (`URBANO_BOQ`) + calc (`URBANO_BOQ_HESAPLA`).*

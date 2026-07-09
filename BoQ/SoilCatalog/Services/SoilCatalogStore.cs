@@ -31,7 +31,11 @@ namespace UrbanoMetraj.BoQ.SoilCatalog.Services
                 foreach (var s in SoilCatalogXmlManager.LoadInternal())
                     list.Add(s);
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine(
+                    $"[UrbanoMetraj] Zemin kataloğu yüklenemedi: {ex.Message}");
+            }
             return list;
         }
     }

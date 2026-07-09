@@ -183,8 +183,15 @@ namespace UrbanoMetraj.BoQ.ExcelImport
         private DataGrid BuildPreviewGrid()
         {
             var dt = new DataTable();
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var h in _headers)
-                dt.Columns.Add(h);
+            {
+                string name = h;
+                int suffix = 2;
+                while (!usedNames.Add(name))
+                    name = h + " (" + suffix++ + ")";
+                dt.Columns.Add(name);
+            }
             foreach (var row in _rows.Take(8))
                 dt.Rows.Add(row.Cast<object>().ToArray());
 

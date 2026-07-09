@@ -9,10 +9,11 @@ An AutoCAD Civil 3D 2023 plugin (DLL) that extracts Bill-of-Quantities data from
 ## Build & Run
 
 ```bat
-build_v7.bat
+build.bat            :: -> bin\DebugVLocal\
+build.bat 112        :: -> bin\DebugV112\
 ```
 
-This calls MSBuild targeting `bin\DebugV7\`. When the output DLL is locked by a running AutoCAD, increment the output folder suffix (DebugV8, DebugV9, …) — **do not kill AutoCAD**. The `/p:Platform=x64` flag is required; omitting it silently no-ops. The `.csproj` uses an explicit `<Compile>` list, so new `.cs` files must be added manually.
+`build.bat` calls MSBuild with `/p:Platform=x64` (required — omitting it silently no-ops) and writes a git-ignored `build_v<suffix>_out.txt` log. When the output DLL is locked by a running AutoCAD, pass a new suffix (`build.bat 113`, `114`, …) to target a fresh output folder — **do not kill AutoCAD**. The `.csproj` uses an explicit `<Compile>` list, so new `.cs` files must be added manually. (The old `build_v7.bat`…`build_v61.bat` family was consolidated into this single script.)
 
 ## Tests (Geometry Harness)
 
@@ -43,8 +44,9 @@ ExcelExportService.cs → .xlsx (EPPlus 4.5.3.3)
 
 | File | Role |
 |------|------|
-| `UrbanoPlugin.cs` | `IExtensionApplication` entry point; ribbon init |
-| `BoQ/BoQCommand.cs` | `URBANO_BOQ` command; orchestrates STA thread + Idle handler |
+| `UrbanoPlugin.cs` | `IExtensionApplication` entry point; ribbon init (no typed commands) |
+| `BoQ/BoQSimplifiedTestV2Command.cs` | `UT_BOQ` (extract-only) + `UT_BOQ_HESAPLA` (full geometry + Manhole AI calc + save); orchestrates STA thread + Idle handler |
+| `BoQ/BoQViewCommand.cs` | `UT_BOQ_VIEW` — opens the Metraj window (`BoQResultsDialog`); ribbon's main entry point |
 | `BoQ/Services/UrbanoExportService.cs` | 5-phase modal dialog automation (Win32 + UIAutomation) |
 | `BoQ/Services/BoQParserService.cs` | Hex-float XML decoder; topology graph parser |
 | `BoQ/Services/ClipperGeo.cs` | Clipper2 integer-space polygon boolean operations |

@@ -19,7 +19,7 @@ namespace UrbanoMetraj.BoQ
         public static OverlapAssignment? OverrideBackfill;
         public static double             OverrideDisplayInterval = 5.0;
 
-        [CommandMethod("URBANO_SOLIDS", CommandFlags.Modal)]
+        [CommandMethod("UT_SOLIDS", CommandFlags.Modal)]
         public void GenerateSolids()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
@@ -29,7 +29,7 @@ namespace UrbanoMetraj.BoQ
             {
                 ed.WriteMessage(
                     "\n[Solids] لا توجد بيانات BoQ في هذا الملف.\n" +
-                    "         شغّل URBANO_BOQ أولاً لحساب الكميات وحفظ الاحداثيات.\n");
+                    "         شغّل UT_BOQ أولاً لحساب الكميات وحفظ الاحداثيات.\n");
                 return;
             }
 
@@ -50,7 +50,7 @@ namespace UrbanoMetraj.BoQ
 
             if (report?.SectionDebug == null || report.SectionDebug.Count == 0)
             {
-                ed.WriteMessage("\n[Solids] لا توجد بيانات مقاطع. أعد تشغيل URBANO_BOQ.\n");
+                ed.WriteMessage("\n[Solids] لا توجد بيانات مقاطع. أعد تشغيل UT_BOQ.\n");
                 return;
             }
 

@@ -29,7 +29,13 @@ namespace UrbanoMetraj.BoQ.Services
                     tr.Commit();
                 }
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                // No Civil document / no surfaces → return an empty picker list, but
+                // record why so an empty surface dropdown isn't a total mystery.
+                System.Diagnostics.Trace.WriteLine(
+                    $"[UrbanoMetraj] Civil 3D yüzey adları okunamadı: {ex.Message}");
+            }
             return names;
         }
     }

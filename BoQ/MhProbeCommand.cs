@@ -19,9 +19,9 @@ using Exception = System.Exception;
 namespace UrbanoMetraj.BoQ
 {
     /// <summary>
-    /// MH_PROBE — temporary diagnostic command.
+    /// UT_MH_PROBE — temporary diagnostic command.
     ///
-    /// Triggers ARS_EXPORT_XML (same automation as URBANO_BOQ), then in the Idle
+    /// Triggers ARS_EXPORT_XML (same automation as UT_BOQ), then in the Idle
     /// callback reads only node GUIDs + names from the XML and cross-references
     /// them against the MANHOLE_ASSIGNMENTS stored in the DWG NOD.
     ///
@@ -40,7 +40,7 @@ namespace UrbanoMetraj.BoQ
         // Command entry point
         // =====================================================================
 
-        [CommandMethod("MH_PROBE", CommandFlags.Modal)]
+        [CommandMethod("UT_MH_PROBE", CommandFlags.Modal)]
         public void RunProbe()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
@@ -49,7 +49,7 @@ namespace UrbanoMetraj.BoQ
 
             if (_idleHandler != null)
             {
-                ed.WriteMessage("\n[MH_PROBE] Önceki çalışma henüz bitmedi, bekleyin.\n");
+                ed.WriteMessage("\n[UT_MH_PROBE] Önceki çalışma henüz bitmedi, bekleyin.\n");
                 return;
             }
 
@@ -57,7 +57,7 @@ namespace UrbanoMetraj.BoQ
             _xmlPath = Path.Combine(Path.GetTempPath(), "mh_probe_export.xml");
             TryDelete(_xmlPath);
 
-            ed.WriteMessage("\n[MH_PROBE] ARS_EXPORT_XML başlatılıyor...");
+            ed.WriteMessage("\n[UT_MH_PROBE] ARS_EXPORT_XML başlatılıyor...");
 
             var exportService = new UrbanoExportService(ed);
             var cts = new System.Threading.CancellationTokenSource(DialogTimeout);
@@ -80,7 +80,7 @@ namespace UrbanoMetraj.BoQ
         {
             bool ok = false;
             try   { ok = svc.WaitAndAutomate(_xmlPath, cts.Token); }
-            catch (Exception ex) { _ed?.WriteMessage($"\n[MH_PROBE] Hata: {ex.Message}"); }
+            catch (Exception ex) { _ed?.WriteMessage($"\n[UT_MH_PROBE] Hata: {ex.Message}"); }
             finally { cts.Dispose(); }
 
             _idleHandler = ok ? (EventHandler)OnIdleProbe : OnIdleAbort;
@@ -97,7 +97,7 @@ namespace UrbanoMetraj.BoQ
             _idleHandler = null;
             InputBlocker.Hide();
             Reset();
-            _ed?.WriteMessage("\n[MH_PROBE] XML export başarısız oldu.\n");
+            _ed?.WriteMessage("\n[UT_MH_PROBE] XML export başarısız oldu.\n");
         }
 
         // =====================================================================
@@ -124,7 +124,7 @@ namespace UrbanoMetraj.BoQ
 
                 if (!File.Exists(xmlPath))
                 {
-                    ed.WriteMessage("\n[MH_PROBE] XML dosyası bulunamadı.\n");
+                    ed.WriteMessage("\n[UT_MH_PROBE] XML dosyası bulunamadı.\n");
                     return;
                 }
 
@@ -137,7 +137,7 @@ namespace UrbanoMetraj.BoQ
 
                 if (tplMain == null)
                 {
-                    ed.WriteMessage("\n[MH_PROBE] XML'de tpl/main bulunamadı.\n");
+                    ed.WriteMessage("\n[UT_MH_PROBE] XML'de tpl/main bulunamadı.\n");
                     return;
                 }
 
@@ -151,14 +151,14 @@ namespace UrbanoMetraj.BoQ
                     guidToName[guid] = string.IsNullOrEmpty(name) ? "(isimsiz)" : name;
                 }
 
-                ed.WriteMessage($"\n[MH_PROBE] XML'den {guidToName.Count} baca node'u okundu.");
+                ed.WriteMessage($"\n[UT_MH_PROBE] XML'den {guidToName.Count} baca node'u okundu.");
 
                 // ── 2. Load stored assignments ────────────────────────────────
                 var assignments = ManholeAssignStore.HasData(db)
                     ? ManholeAssignStore.Load(db)
                     : new List<ManholeAssignment>();
 
-                ed.WriteMessage($"\n[MH_PROBE] DWG'de {assignments.Count} atama kaydı bulundu.");
+                ed.WriteMessage($"\n[UT_MH_PROBE] DWG'de {assignments.Count} atama kaydı bulundu.");
 
                 // ── 3. Load catalog for group name lookup ─────────────────────
                 var groupNames = new Dictionary<string, string>(
@@ -181,7 +181,7 @@ namespace UrbanoMetraj.BoQ
 
                 ed.WriteMessage("\n");
                 ed.WriteMessage("\n══════════════════════════════════════════════════════");
-                ed.WriteMessage("\n  MH_PROBE — AG_GUID  ↔  Node Adı  ↔  Katalog Grubu");
+                ed.WriteMessage("\n  UT_MH_PROBE — AG_GUID  ↔  Node Adı  ↔  Katalog Grubu");
                 ed.WriteMessage("\n══════════════════════════════════════════════════════");
 
                 int matched = 0, unmatched = 0;
@@ -227,7 +227,7 @@ namespace UrbanoMetraj.BoQ
             }
             catch (Exception ex)
             {
-                ed?.WriteMessage($"\n[MH_PROBE ERROR] {ex.GetType().Name}: {ex.Message}\n");
+                ed?.WriteMessage($"\n[UT_MH_PROBE ERROR] {ex.GetType().Name}: {ex.Message}\n");
             }
             finally
             {

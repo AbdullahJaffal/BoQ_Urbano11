@@ -156,7 +156,8 @@ namespace UrbanoMetraj.BoQ.Services
         // Public entry point
         // =====================================================================
 
-        public BoQReport Parse(string xmlPath, Editor ed = null, BoQSettings settings = null)
+        public BoQReport Parse(string xmlPath, Editor ed = null, BoQSettings settings = null,
+                               ISet<string> activeSystems = null, SelectionScope selectionScope = null)
         {
             if (!File.Exists(xmlPath))
                 throw new FileNotFoundException($"Urbano export not found: {xmlPath}");
@@ -180,17 +181,23 @@ namespace UrbanoMetraj.BoQ.Services
             report.CatalogItems = ExtractCatalogItemInfos(doc);
 
             Dbg(ed, "\n  [BoQ] Parsing nodes…");
-            var nodes = ParseNodes(doc, catDict, sysNames, notes, ed);
+            var nodes = ParseNodes(doc, catDict, sysNames, notes, ed, activeSystems);
             Dbg(ed, $"\n         {nodes.Count} node(s) found.");
 
             Dbg(ed, "\n  [BoQ] Resolving Kot/Seviye Ayarları elevations…");
             ResolveElevations(nodes, settings, notes);
 
             Dbg(ed, "\n  [BoQ] Parsing sections + excavation…");
-            var sections = ParseSections(doc, catDict, sysNames, nodes, notes, ed);
+            var sections = ParseSections(doc, catDict, sysNames, nodes, notes, ed, activeSystems);
             Dbg(ed, $"\n         {sections.Count} section(s) calculated.");
 
             ComputeManholeDepths(nodes, sections, notes, ed);
+
+            // CAD Seçimi: restrict clash + output to the picked sections. Manhole
+            // depths above were computed from ALL connected pipes first, so they stay
+            // physically correct — only the overlap engine and the report are scoped.
+            if (selectionScope != null && !selectionScope.IsEmpty)
+                ApplySelectionScope(ref nodes, ref sections, selectionScope, notes, ed);
 
             Dbg(ed, "\n  [BoQ] Aggregating report + per-station clash detection…");
             AggregateIntoReport(report, sysNames, nodes, sections,
@@ -198,6 +205,110 @@ namespace UrbanoMetraj.BoQ.Services
             report.DiscoveryNotes = notes;
 
             return report;
+        }
+
+        // =====================================================================
+        // CAD Seçimi — restrict the parse output to a drawing selection
+        //
+        // A section is in-scope when: its own GUID was picked directly (a pipe entity
+        // carrying AG_GUID), OR both its end nodes were picked ("select two manholes =
+        // the pipe between them"), OR a picked pipe line's endpoints match the section's
+        // two node coordinates (geometry fallback for pipe entities without a usable
+        // GUID — mirrors UrbanoLock's RestoreScopeSelector). In-scope manholes are
+        // exactly the end nodes of the in-scope sections, so a picked manhole with no
+        // picked connected pipe is dropped (the user's stricter rule).
+        // =====================================================================
+
+        private const double SelectionNodeTol = 0.2;   // mirrors UrbanoLock RestoreScopeSelector.NodeTol
+
+        private static void ApplySelectionScope(
+            ref Dictionary<string, NodeInfo> nodes,
+            ref List<SectionInfo>            sections,
+            SelectionScope scope, List<string> notes, Editor ed)
+        {
+            // Picked manhole GUIDs that are actually real nodes in this parse.
+            var pickedManholes = new HashSet<string>(
+                scope.ManholeGuids.Where(nodes.ContainsKey), StringComparer.OrdinalIgnoreCase);
+
+            var kept = new List<SectionInfo>();
+            foreach (var s in sections)
+            {
+                bool inScope =
+                       (s.Guid != null && scope.PipeGuids.Contains(s.Guid))
+                    || (!string.IsNullOrEmpty(s.SnGuid) && !string.IsNullOrEmpty(s.EnGuid)
+                        && pickedManholes.Contains(s.SnGuid) && pickedManholes.Contains(s.EnGuid))
+                    || SectionMatchesPickedPipe(s, scope.PipeSegments, nodes);
+                if (inScope) kept.Add(s);
+            }
+
+            var keepNodeGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in kept)
+            {
+                if (!string.IsNullOrEmpty(s.SnGuid)) keepNodeGuids.Add(s.SnGuid);
+                if (!string.IsNullOrEmpty(s.EnGuid)) keepNodeGuids.Add(s.EnGuid);
+            }
+
+            int ignoredManholes = pickedManholes.Count(g => !keepNodeGuids.Contains(g));
+
+            sections = kept;
+            nodes = nodes.Where(kv => keepNodeGuids.Contains(kv.Key))
+                         .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+            string note = $"CAD Seçimi: {kept.Count} boru + {nodes.Count} baca hesaplandı";
+            if (ignoredManholes > 0)
+                note += $"; {ignoredManholes} baca bağlı seçili boru olmadığı için yok sayıldı";
+            notes.Add(note);
+            Dbg(ed, $"\n  [BoQ] {note}.");
+        }
+
+        // True when any picked pipe line's endpoints coincide (within tolerance, either
+        // orientation) with the section's two node positions.
+        private static bool SectionMatchesPickedPipe(
+            SectionInfo s, List<double[]> pipeSegments, Dictionary<string, NodeInfo> nodes)
+        {
+            if (pipeSegments == null || pipeSegments.Count == 0) return false;
+            if (string.IsNullOrEmpty(s.SnGuid) || string.IsNullOrEmpty(s.EnGuid)) return false;
+            if (!nodes.TryGetValue(s.SnGuid, out var sn) || !nodes.TryGetValue(s.EnGuid, out var en))
+                return false;
+
+            double t2 = SelectionNodeTol * SelectionNodeTol;
+            foreach (var seg in pipeSegments)
+            {
+                if (seg == null || seg.Length < 4) continue;
+                bool fwd = PointsNearSq(seg[0], seg[1], sn.X, sn.Y, t2)
+                        && PointsNearSq(seg[2], seg[3], en.X, en.Y, t2);
+                bool rev = PointsNearSq(seg[0], seg[1], en.X, en.Y, t2)
+                        && PointsNearSq(seg[2], seg[3], sn.X, sn.Y, t2);
+                if (fwd || rev) return true;
+            }
+            return false;
+        }
+
+        private static bool PointsNearSq(double ax, double ay, double bx, double by, double tolSq)
+        {
+            double dx = ax - bx, dy = ay - by;
+            return dx * dx + dy * dy <= tolSq;
+        }
+
+        // =====================================================================
+        // Lightweight catalog-only extraction (no topology parse)
+        // =====================================================================
+
+        /// <summary>
+        /// Loads the export and returns ONLY its embedded catalog-item list (the
+        /// &lt;catalogs&gt; block), skipping ALL node/section parsing, elevation
+        /// resolution, geometry and aggregation. Used by "Metraj Verisi Güncelle"
+        /// (URBANO_BOQ), whose sole job is to refresh the Tür Eşleştirme
+        /// discovered-item list — running the full topology parse there (dozens of
+        /// networks) was pure waste, its BoQReport discarded. The real calculation
+        /// is URBANO_BOQ_HESAPLA.
+        /// </summary>
+        public static List<CatalogItemInfo> ExtractCatalogItems(string xmlPath)
+        {
+            if (!File.Exists(xmlPath))
+                throw new FileNotFoundException($"Urbano export not found: {xmlPath}");
+            XDocument doc = LoadXmlRobust(xmlPath);
+            return ExtractCatalogItemInfos(doc);
         }
 
         // =====================================================================
@@ -498,7 +609,8 @@ namespace UrbanoMetraj.BoQ.Services
             Dictionary<string, Dictionary<string, string>> catDict,
             Dictionary<int, string> sysNames,
             List<string> notes,
-            Editor ed)
+            Editor ed,
+            ISet<string> activeSystems = null)
         {
             var result  = new Dictionary<string, NodeInfo>(StringComparer.OrdinalIgnoreCase);
             var tplMain = FindMainTpl(doc);
@@ -511,6 +623,10 @@ namespace UrbanoMetraj.BoQ.Services
 
                 var props  = ReadTopoProps(nEl);
                 int    sysId = DecodeIntProp  (GetProp(props, "AG_ID_SYSTEM"));
+                // Scope to active networks (URBANOLOCK — Ağ Seçimi); null = parse all.
+                if (activeSystems != null &&
+                    !activeSystems.Contains(sysNames.ContainsKey(sysId) ? sysNames[sysId] : $"System_{sysId}"))
+                    continue;
                 string name  = DecodeStrProp  (GetProp(props, "AG_NAME"));
                 double th1   = DecodeFloatProp(GetProp(props, "TH1"));
                 // TH2 (existing ground) stays 0 when absent from this export — 0 is the
@@ -682,7 +798,8 @@ namespace UrbanoMetraj.BoQ.Services
             Dictionary<int, string> sysNames,
             Dictionary<string, NodeInfo> nodes,
             List<string> notes,
-            Editor ed)
+            Editor ed,
+            ISet<string> activeSystems = null)
         {
             var result  = new List<SectionInfo>();
             var tplMain = FindMainTpl(doc);
@@ -699,6 +816,10 @@ namespace UrbanoMetraj.BoQ.Services
 
                 var props    = ReadTopoProps(sEl);
                 int    sysId = DecodeIntProp  (GetProp(props, "AG_ID_SYSTEM"));
+                // Scope to active networks (URBANOLOCK — Ağ Seçimi); null = parse all.
+                if (activeSystems != null &&
+                    !activeSystems.Contains(sysNames.ContainsKey(sysId) ? sysNames[sysId] : $"System_{sysId}"))
+                    continue;
                 double ll10  = DecodeFloatProp(GetProp(props, "LL10"));
                 double ll11  = DecodeFloatProp(GetProp(props, "LL11"));
                 // LLPOS tells us which pipe cross-section point LL10/LL11 measures:
@@ -1437,7 +1558,7 @@ namespace UrbanoMetraj.BoQ.Services
             // ── Step 2: Resolve all 3 preference scenarios per station (cached) ─
             // The new Clipper2 engine pre-computes every layer's net geometry under
             // Keep Upper / Keep Lower / 50-50 Split and caches them on each station.
-            // (Legacy ApplyStationClashes is superseded and no longer called.)
+            // (Legacy ApplyStationClashes was superseded by this engine and removed.)
             Dbg(ed, $"\n  [BoQ] Resolving overlap scenarios for {sdrs.Count} section(s)…");
             BoQOverlapResolver.Resolve(sdrs);
             BoQOverlapResolver.ApplyExcavationAveraging(sdrs, crossingBands);
@@ -1810,334 +1931,6 @@ namespace UrbanoMetraj.BoQ.Services
             return Math.Abs(sum) * 0.5;
         }
 
-        // ── List<double[]> ↔ List<Vec2> converters ───────────────────────────
-
-        private static List<Vec2> ToVec2List(List<double[]> poly)
-        {
-            var r = new List<Vec2>(poly?.Count ?? 0);
-            if (poly != null)
-                foreach (var p in poly)
-                    if (p != null && p.Length >= 2) r.Add(new Vec2(p[0], p[1]));
-            return r;
-        }
-
-        private static List<double[]> FromVec2List(List<Vec2> poly)
-        {
-            var r = new List<double[]>(poly?.Count ?? 0);
-            if (poly != null)
-                foreach (var v in poly) r.Add(new[] { v.X, v.Y });
-            return r;
-        }
-
-        // ── Closest point on a segment ────────────────────────────────────────
-
-        private static void ClosestPointOnSegment(
-            double px, double py,
-            double ax, double ay, double bx, double by,
-            out double t, out double cx, out double cy)
-        {
-            double dx = bx - ax, dy = by - ay;
-            double lenSq = dx * dx + dy * dy;
-            if (lenSq < 1e-16) { t = 0; cx = ax; cy = ay; return; }
-            t  = Math.Max(0, Math.Min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
-            cx = ax + t * dx;
-            cy = ay + t * dy;
-        }
-
-        // =====================================================================
-        // Per-station clash detection
-        // =====================================================================
-        //
-        //  For every unique pair of sections (A, B) whose plan-view bounding
-        //  boxes overlap, each station of A is tested against B's trench
-        //  cross-section projected into A's local (U, Z) perpendicular frame.
-        //
-        //  Projection formula: B has a normalised axis T_B and perpendicular
-        //  N_B.  A vertex of B at local coordinate (V, Z) in B's own frame
-        //  maps to A's U-axis as:
-        //
-        //    U_A = U_center_B  +  V × (N_A · N_B)
-        //        = U_center_B  +  V × (T_A · T_B)          [dot product identity]
-        //    Z_A = Z                                         [unchanged — vertical]
-        //
-        //  The intersection area of A's ExcavPoly and the projected B polygon
-        //  gives the per-station overlap area.  The deduction (full, half, or
-        //  zero depending on OverlapAssignment and which pipe is deeper) is
-        //  subtracted from AreaExcavNet / AreaBackfillNet.
-        //  ExcavPolyModified stores the REMAINING polygon (A minus the overlap zone)
-        //  so the 3-D solid builder can loft it directly.
-        //
-        //  Limitation: for nearly perpendicular pipes (T_A · T_B ≈ 0) the
-        //  projection collapses to a line → zero intersection area → no
-        //  per-station deduction.  This is geometrically correct in the
-        //  cross-section frame but means the volume overlap for crossing pipes
-        //  is captured at the stations nearest the crossing point only.
-        // =====================================================================
-
-        private static void ApplyStationClashes(
-            List<SectionDebugRow> rows,
-            OverlapAssignment     excavAssign,
-            OverlapAssignment     backfillAssign)
-        {
-            if (rows == null || rows.Count < 2) return;
-
-            // Pre-compute normalised axis + perpendicular for every section
-            var axisDir = new Vec2[rows.Count];
-            var perpDir = new Vec2[rows.Count];
-            for (int i = 0; i < rows.Count; i++)
-            {
-                var r  = rows[i];
-                double dx  = r.EndX - r.StartX, dy = r.EndY - r.StartY;
-                double len = Math.Sqrt(dx * dx + dy * dy);
-                if (len < 1e-9) { axisDir[i] = new Vec2(1, 0); perpDir[i] = new Vec2(0, 1); }
-                else
-                {
-                    axisDir[i] = new Vec2(dx / len, dy / len);
-                    perpDir[i] = new Vec2(-dy / len, dx / len);
-                }
-            }
-
-            int clashPairs = 0;
-
-            for (int ai = 0; ai < rows.Count - 1; ai++)
-            {
-                var rowA = rows[ai];
-                if (rowA.Stations == null || rowA.Stations.Count == 0) continue;
-                var Na = perpDir[ai];
-
-                double amHW  = Math.Max(rowA.TopWidthExcavS, rowA.TopWidthExcavE) * 0.5;
-                double aMinX = Math.Min(rowA.StartX, rowA.EndX) - amHW;
-                double aMaxX = Math.Max(rowA.StartX, rowA.EndX) + amHW;
-                double aMinY = Math.Min(rowA.StartY, rowA.EndY) - amHW;
-                double aMaxY = Math.Max(rowA.StartY, rowA.EndY) + amHW;
-
-                for (int bi = ai + 1; bi < rows.Count; bi++)
-                {
-                    var rowB = rows[bi];
-                    if (rowB.Stations == null || rowB.Stations.Count == 0) continue;
-                    var Nb = perpDir[bi];
-
-                    // Quick AABB reject
-                    double bmHW  = Math.Max(rowB.TopWidthExcavS, rowB.TopWidthExcavE) * 0.5;
-                    double bMinX = Math.Min(rowB.StartX, rowB.EndX) - bmHW;
-                    double bMaxX = Math.Max(rowB.StartX, rowB.EndX) + bmHW;
-                    double bMinY = Math.Min(rowB.StartY, rowB.EndY) - bmHW;
-                    double bMaxY = Math.Max(rowB.StartY, rowB.EndY) + bmHW;
-                    if (aMaxX < bMinX || bMaxX < aMinX || aMaxY < bMinY || bMaxY < aMinY) continue;
-
-                    // projFactor = N_A · N_B = T_A · T_B
-                    double proj = axisDir[ai].X * axisDir[bi].X + axisDir[ai].Y * axisDir[bi].Y;
-
-                    // Which pipe is deeper (lower invert = lower pipe)
-                    double avgInvA = (rowA.InvertStart + rowA.InvertEnd) * 0.5;
-                    double avgInvB = (rowB.InvertStart + rowB.InvertEnd) * 0.5;
-                    bool aIsLower  = avgInvA <= avgInvB;
-
-                    bool anyClash = false;
-
-                    // ── A's stations: project B into A's U-Z frame ────────────
-                    foreach (var sta in rowA.Stations)
-                    {
-                        if (sta.ExcavPoly == null || sta.ExcavPoly.Count < 3) continue;
-
-                        ClosestPointOnSegment(sta.WorldX, sta.WorldY,
-                            rowB.StartX, rowB.StartY, rowB.EndX, rowB.EndY,
-                            out double tB, out double cxB, out double cyB);
-
-                        // uBc  = B's centreline offset in A's perpendicular frame (for clip direction)
-                        // uAinB = A's station offset in B's perpendicular frame (for correct boundary)
-                        double uBc   = (cxB - sta.WorldX) * Na.X + (cyB - sta.WorldY) * Na.Y;
-                        double uAinB = (sta.WorldX - cxB) * Nb.X + (sta.WorldY - cyB) * Nb.Y;
-
-                        // Interpolate B's cross-section at tB
-                        double invZB = rowB.InvertStart   + tB * (rowB.InvertEnd   - rowB.InvertStart);
-                        double terZB = rowB.StartTerrainZ + tB * (rowB.EndTerrainZ - rowB.StartTerrainZ);
-                        double depB  = Math.Max(0, terZB - invZB);
-                        double tdB   = depB + rowB.TrBedHeight;
-                        double topWB = rowB.TrWidth + 2.0 * tdB * rowB.SlopeRatio;
-                        double zBotB = invZB - rowB.TrBedHeight;
-                        double hwBB  = rowB.TrWidth * 0.5;
-                        double hwTB  = topWB * 0.5;
-
-                        // Build B's region in A's U-Z frame.
-                        // Correct formula: (u,Z) in A's cross-section is inside B's trench iff
-                        //   |uAinB + u*proj| <= hw_B(Z)
-                        // => boundary at u = (±hw_B - uAinB) / proj
-                        // For proj ≈ 0 (perpendicular pipes): B covers A's full U range if
-                        //   A's centreline (uAinB) is within B's half-width, else no overlap.
-                        if (sta.ExcavPolyModified != null && sta.ExcavPolyModified.Count == 0) continue;
-                        var aVec    = (sta.ExcavPolyModified != null && sta.ExcavPolyModified.Count >= 3)
-                                      ? ToVec2List(sta.ExcavPolyModified)
-                                      : ToVec2List(sta.ExcavPoly);
-                        double uMinA = aVec.Min(p => p.X), uMaxA = aVec.Max(p => p.X);
-                        List<Vec2> bInA;
-                        {
-                            double absP = Math.Abs(proj);
-                            if (absP < 1e-4)
-                            {
-                                if (Math.Abs(uAinB) > (hwBB + hwTB) * 0.5 + 1e-9) continue;
-                                bInA = EnsureCCW(new List<Vec2>
-                                {
-                                    new Vec2(uMinA, zBotB), new Vec2(uMaxA, zBotB),
-                                    new Vec2(uMaxA, terZB), new Vec2(uMinA, terZB)
-                                });
-                            }
-                            else
-                            {
-                                double uLB = (-hwBB - uAinB) / proj, uRB = ( hwBB - uAinB) / proj;
-                                double uLT = (-hwTB - uAinB) / proj, uRT = ( hwTB - uAinB) / proj;
-                                if (proj < 0) { double t; t=uLB; uLB=uRB; uRB=t; t=uLT; uLT=uRT; uRT=t; }
-                                uLB = Math.Max(uMinA, Math.Min(uMaxA, uLB));
-                                uRB = Math.Max(uMinA, Math.Min(uMaxA, uRB));
-                                uLT = Math.Max(uMinA, Math.Min(uMaxA, uLT));
-                                uRT = Math.Max(uMinA, Math.Min(uMaxA, uRT));
-                                if (Math.Abs(uRB - uLB) < 1e-9 && Math.Abs(uRT - uLT) < 1e-9) continue;
-                                bInA = EnsureCCW(new List<Vec2>
-                                {
-                                    new Vec2(uLB, zBotB), new Vec2(uRB, zBotB),
-                                    new Vec2(uRT, terZB), new Vec2(uLT, terZB)
-                                });
-                            }
-                        }
-                        var inter = PolygonIntersection(aVec, bInA);
-                        if (inter.Count < 3) continue;
-                        double interArea = PolygonArea(inter);
-                        if (interArea < 1e-7) continue;
-
-                        sta.HasOverlap = true;
-
-                        // Clip excav cumulatively: each clash cuts from the previous result
-                        var remEx = ComputeRemainingPoly(aVec, bInA, uBc, aIsLower, excavAssign);
-                        if (remEx != null)  // null = A wins this clash → polygon unchanged
-                            sta.ExcavPolyModified = remEx.Count >= 3
-                                ? FromVec2List(remEx) : new List<double[]>();
-
-                        // Clip backfill cumulatively
-                        if (sta.BackfillPoly != null && sta.BackfillPoly.Count >= 3)
-                        {
-                            var bfBase = (sta.BackfillPolyModified != null && sta.BackfillPolyModified.Count >= 3)
-                                         ? ToVec2List(sta.BackfillPolyModified)
-                                         : ToVec2List(sta.BackfillPoly);
-                            var remBf = ComputeRemainingPoly(bfBase, bInA, uBc, aIsLower, backfillAssign);
-                            if (remBf != null)
-                                sta.BackfillPolyModified = remBf.Count >= 3
-                                    ? FromVec2List(remBf) : new List<double[]>();
-                        }
-                        anyClash = true;
-                    }
-
-                    // ── B's stations: project A into B's U-Z frame ────────────
-                    foreach (var stb in rowB.Stations)
-                    {
-                        if (stb.ExcavPoly == null || stb.ExcavPoly.Count < 3) continue;
-
-                        ClosestPointOnSegment(stb.WorldX, stb.WorldY,
-                            rowA.StartX, rowA.StartY, rowA.EndX, rowA.EndY,
-                            out double tA, out double cxA, out double cyA);
-
-                        double uAc   = (cxA - stb.WorldX) * Nb.X + (cyA - stb.WorldY) * Nb.Y;
-                        double uBinA = (stb.WorldX - cxA) * Na.X + (stb.WorldY - cyA) * Na.Y;
-
-                        double invZA = rowA.InvertStart   + tA * (rowA.InvertEnd   - rowA.InvertStart);
-                        double terZA = rowA.StartTerrainZ + tA * (rowA.EndTerrainZ - rowA.StartTerrainZ);
-                        double depA  = Math.Max(0, terZA - invZA);
-                        double tdA   = depA + rowA.TrBedHeight;
-                        double topWA = rowA.TrWidth + 2.0 * tdA * rowA.SlopeRatio;
-                        double zBotA = invZA - rowA.TrBedHeight;
-                        double hwBA  = rowA.TrWidth * 0.5;
-                        double hwTA  = topWA * 0.5;
-
-                        if (stb.ExcavPolyModified != null && stb.ExcavPolyModified.Count == 0) continue;
-                        var bVec    = (stb.ExcavPolyModified != null && stb.ExcavPolyModified.Count >= 3)
-                                      ? ToVec2List(stb.ExcavPolyModified)
-                                      : ToVec2List(stb.ExcavPoly);
-                        double uMinB = bVec.Min(p => p.X), uMaxB = bVec.Max(p => p.X);
-                        List<Vec2> aInB;
-                        {
-                            double absP = Math.Abs(proj);
-                            if (absP < 1e-4)
-                            {
-                                if (Math.Abs(uBinA) > (hwBA + hwTA) * 0.5 + 1e-9) continue;
-                                aInB = EnsureCCW(new List<Vec2>
-                                {
-                                    new Vec2(uMinB, zBotA), new Vec2(uMaxB, zBotA),
-                                    new Vec2(uMaxB, terZA), new Vec2(uMinB, terZA)
-                                });
-                            }
-                            else
-                            {
-                                double uLB = (-hwBA - uBinA) / proj, uRB = ( hwBA - uBinA) / proj;
-                                double uLT = (-hwTA - uBinA) / proj, uRT = ( hwTA - uBinA) / proj;
-                                if (proj < 0) { double t; t=uLB; uLB=uRB; uRB=t; t=uLT; uLT=uRT; uRT=t; }
-                                uLB = Math.Max(uMinB, Math.Min(uMaxB, uLB));
-                                uRB = Math.Max(uMinB, Math.Min(uMaxB, uRB));
-                                uLT = Math.Max(uMinB, Math.Min(uMaxB, uLT));
-                                uRT = Math.Max(uMinB, Math.Min(uMaxB, uRT));
-                                if (Math.Abs(uRB - uLB) < 1e-9 && Math.Abs(uRT - uLT) < 1e-9) continue;
-                                aInB = EnsureCCW(new List<Vec2>
-                                {
-                                    new Vec2(uLB, zBotA), new Vec2(uRB, zBotA),
-                                    new Vec2(uRT, terZA), new Vec2(uLT, terZA)
-                                });
-                            }
-                        }
-                        var inter = PolygonIntersection(bVec, aInB);
-                        if (inter.Count < 3) continue;
-                        double interArea = PolygonArea(inter);
-                        if (interArea < 1e-7) continue;
-
-                        stb.HasOverlap = true;
-
-                        // Clip excav cumulatively
-                        var remExB = ComputeRemainingPoly(bVec, aInB, uAc, !aIsLower, excavAssign);
-                        if (remExB != null)
-                            stb.ExcavPolyModified = remExB.Count >= 3
-                                ? FromVec2List(remExB) : new List<double[]>();
-
-                        // Clip backfill cumulatively
-                        if (stb.BackfillPoly != null && stb.BackfillPoly.Count >= 3)
-                        {
-                            var bfBase2 = (stb.BackfillPolyModified != null && stb.BackfillPolyModified.Count >= 3)
-                                          ? ToVec2List(stb.BackfillPolyModified)
-                                          : ToVec2List(stb.BackfillPoly);
-                            var remBfB = ComputeRemainingPoly(bfBase2, aInB, uAc, !aIsLower, backfillAssign);
-                            if (remBfB != null)
-                                stb.BackfillPolyModified = remBfB.Count >= 3
-                                    ? FromVec2List(remBfB) : new List<double[]>();
-                        }
-                        anyClash = true;
-                    }
-
-                    if (anyClash)
-                    {
-                        clashPairs++;
-                        string la = rowA.PipeName, lb = rowB.PipeName;
-                        rowA.ClashLog.Add(
-                            $"OVERLAP with [{lb}] ({(aIsLower ? "A=lower" : "A=upper")}): " +
-                            $"excav={excavAssign}, backfill={backfillAssign}");
-                        rowB.ClashLog.Add(
-                            $"OVERLAP with [{la}] ({(aIsLower ? "B=upper" : "B=lower")}): " +
-                            $"excav={excavAssign}, backfill={backfillAssign}");
-                    }
-                }
-            }
-
-            // Derive net areas from the final clipped polygons — single source of truth
-            // so that AreaExcavNet is always consistent with the geometry used for 3-D lofting.
-            foreach (var row in rows)
-            {
-                if (row.Stations == null) continue;
-                foreach (var sta in row.Stations)
-                {
-                    if (sta.ExcavPolyModified != null)
-                        sta.AreaExcavNet = sta.ExcavPolyModified.Count >= 3
-                            ? Math.Round(PolyArea2D(sta.ExcavPolyModified), 8) : 0.0;
-                    if (sta.BackfillPolyModified != null)
-                        sta.AreaBackfillNet = sta.BackfillPolyModified.Count >= 3
-                            ? Math.Round(PolyArea2D(sta.BackfillPolyModified), 8) : 0.0;
-                }
-            }
-        }
 
         // =====================================================================
         // Helpers

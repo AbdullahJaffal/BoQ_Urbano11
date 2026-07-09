@@ -5,6 +5,8 @@
 
     <UserControl.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        <!-- Proxy so ContextMenu items (outside the visual tree) can reach VM commands -->
+        <conv:BindingProxy x:Key="VmProxy" Data="{Binding}"/>
 
         <Style x:Key="ColHeader" TargetType="DataGridColumnHeader">
             <Setter Property="FontWeight" Value="SemiBold"/>
@@ -15,6 +17,34 @@
         <Style x:Key="ActionBtn" TargetType="Button">
             <Setter Property="Padding" Value="10,3"/>
             <Setter Property="Margin"  Value="0,0,4,0"/>
+        </Style>
+
+        <!-- Prominent primary-action (Kaydet) button — accent so it stands out. -->
+        <Style x:Key="KaydetButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="10,3"/>
+            <Setter Property="Margin"     Value="0,0,4,0"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="#00467F" CornerRadius="2"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="b" Property="Background" Value="#9BB8CE"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </UserControl.Resources>
 
@@ -31,28 +61,29 @@
         <Border DockPanel.Dock="Top"
                 BorderBrush="#CCCCCC" BorderThickness="0,0,0,1"
                 Background="#F8F8F8" Padding="6,5">
+            <!-- Unified toolbar: [+ Ekle] | [Kaydet] [İçe] [Dışa]
+                 Çoğalt / Sil → satırda sağ tık (aşağıdaki DataGrid bağlam menüsü). -->
             <WrapPanel>
 
                 <Button Content="+ Ekle"  Command="{Binding AddCommand}"
-                        Style="{StaticResource ActionBtn}"/>
-                <Button Content="Çoğalt"  Command="{Binding DuplicateCommand}"
-                        Style="{StaticResource ActionBtn}"/>
-                <Button Content="Sil"     Command="{Binding DeleteCommand}"
                         Style="{StaticResource ActionBtn}"/>
 
                 <Separator Width="1" Height="22" Margin="6,0" Background="#CCCCCC"/>
 
                 <Button Content="💾 Kaydet" Command="{Binding SaveCommand}"
-                        Style="{StaticResource ActionBtn}"
+                        Style="{StaticResource KaydetButton}"
                         ToolTip="Dolgu kataloğunu dahili konuma kaydeder&#x0a;(%APPDATA%\UrbanoMetraj\DolguCatalog.xml)"/>
+
+                <Button Content="İçe Aktar" Command="{Binding ImportCommand}"
+                        Style="{StaticResource ActionBtn}"
+                        ToolTip="Daha önce dışa aktarılmış bir XML dosyasını içe aktarır."/>
 
                 <Button Content="Dışa Aktar" Command="{Binding ExportCommand}"
                         Style="{StaticResource ActionBtn}"
                         ToolTip="Kataloğu seçilen konuma XML olarak dışa aktarır."/>
 
-                <Button Content="İçe Aktar" Command="{Binding ImportCommand}"
-                        Style="{StaticResource ActionBtn}"
-                        ToolTip="Daha önce dışa aktarılmış bir XML dosyasını içe aktarır."/>
+                <TextBlock Text="(satırda sağ tık: Çoğalt / Sil)" Foreground="Gray"
+                           FontSize="11" VerticalAlignment="Center" Margin="6,0,0,0"/>
 
             </WrapPanel>
         </Border>
@@ -63,7 +94,16 @@
                   SelectedItem="{Binding SelectedItem}"
                   AutoGenerateColumns="False" CanUserAddRows="False"
                   SelectionMode="Single"
+                  PreviewMouseRightButtonDown="Grid_SelectRowOnRightClick"
                   ColumnHeaderStyle="{StaticResource ColHeader}">
+            <DataGrid.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Çoğalt"
+                              Command="{Binding Data.DuplicateCommand, Source={StaticResource VmProxy}}"/>
+                    <MenuItem Header="Sil"
+                              Command="{Binding Data.DeleteCommand, Source={StaticResource VmProxy}}"/>
+                </ContextMenu>
+            </DataGrid.ContextMenu>
             <DataGrid.Columns>
 
                 <DataGridTextColumn Header="Poz No"
@@ -74,9 +114,25 @@
                     Binding="{Binding DolguAdi, UpdateSourceTrigger=PropertyChanged}"
                     Width="*"/>
 
-                <DataGridTextColumn Header="Açıklama"
-                    Binding="{Binding Aciklama, UpdateSourceTrigger=PropertyChanged}"
-                    Width="*"/>
+                <DataGridTemplateColumn Header="Açıklama" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Aciklama}"
+                                       TextWrapping="Wrap"
+                                       Padding="2,1"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <TextBox Text="{Binding Aciklama, UpdateSourceTrigger=PropertyChanged}"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     MinHeight="60"
+                                     VerticalScrollBarVisibility="Auto"
+                                     Padding="2,1"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
 
             </DataGrid.Columns>
         </DataGrid>

@@ -27,6 +27,7 @@
     <Compile Include="..\..\BoQ\SmartAssembly\Models\Footprint.cs" />
     <Compile Include="..\..\BoQ\SmartAssembly\Models\FootprintShape.cs" />
     <Compile Include="..\..\BoQ\SmartAssembly\Models\ComponentRole.cs" />
+    <Compile Include="..\..\BoQ\SmartAssembly\Models\ManholeComponent.cs" />
     <Compile Include="..\..\BoQ\SmartAssembly\Models\TemelAltiParca.cs" />
     <Compile Include="..\..\BoQ\Services\ClipperGeo.cs" />
     <Compile Include="..\..\BoQ\Services\BoQOverlapResolver.cs" />

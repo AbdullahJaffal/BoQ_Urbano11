@@ -50,8 +50,8 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                 OnPropertyChanged(nameof(IsMiddleOrAdjusterSelected));
                 OnPropertyChanged(nameof(IsReducerSelected));
                 OnPropertyChanged(nameof(IsCoverSelected));
+                OnPropertyChanged(nameof(IsTemelAltiParcaSelected));
                 LoadSubPieces();
-                LoadTemelAltiParcalar();
             }
         }
 
@@ -61,15 +61,17 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                                                || _selectedComponent?.Model is AdjusterComponent;
         public bool IsReducerSelected          => _selectedComponent?.Model is ReducerComponent;
         public bool IsCoverSelected            => _selectedComponent?.Model is CoverComponent;
+        public bool IsTemelAltiParcaSelected   => _selectedComponent?.Model is TemelAltiParcaComponent;
 
         // ── Role picker ────────────────────────────────────────────────────────
         public ComponentRoleItem[] AllRoles { get; } =
         {
-            new ComponentRoleItem(ComponentRole.BottomElement, "Taban"),
-            new ComponentRoleItem(ComponentRole.MiddleElement, "Gövde Halkası"),
-            new ComponentRoleItem(ComponentRole.Reducer,       "Konik"),
-            new ComponentRoleItem(ComponentRole.Adjuster,      "Boyun bileziği"),
-            new ComponentRoleItem(ComponentRole.Cover,         "Rögar Kapağı"),
+            new ComponentRoleItem(ComponentRole.BottomElement,  "Taban"),
+            new ComponentRoleItem(ComponentRole.MiddleElement,  "Gövde Halkası"),
+            new ComponentRoleItem(ComponentRole.Reducer,        "Konik"),
+            new ComponentRoleItem(ComponentRole.Adjuster,       "Boyun bileziği"),
+            new ComponentRoleItem(ComponentRole.Cover,          "Rögar Kapağı"),
+            new ComponentRoleItem(ComponentRole.TemelAltiParca, "Temel Altı Parça"),
         };
 
         private ComponentRole _newRole = ComponentRole.MiddleElement;
@@ -88,19 +90,6 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
         public bool IsSubPieceSelected => _selectedSubPiece != null;
 
-        // ── Temel Altı Parçalar ────────────────────────────────────────────────
-        public ObservableCollection<TemelAltiParcaRowVm> TemelAltiParcalar { get; }
-            = new ObservableCollection<TemelAltiParcaRowVm>();
-
-        private TemelAltiParcaRowVm _selectedTemelAltiParca;
-        public TemelAltiParcaRowVm SelectedTemelAltiParca
-        {
-            get => _selectedTemelAltiParca;
-            set { Set(ref _selectedTemelAltiParca, value); OnPropertyChanged(nameof(IsTemelAltiParcaSelected)); }
-        }
-
-        public bool IsTemelAltiParcaSelected => _selectedTemelAltiParca != null;
-
         // ── Commands ───────────────────────────────────────────────────────────
         public ICommand AddFamilyCommand    { get; }
         public ICommand DeleteFamilyCommand { get; }
@@ -109,12 +98,11 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public ICommand DuplicateCommand    { get; }
         public ICommand SaveCommand         { get; }
         public ICommand ExportCommand       { get; }
+        public ICommand ExportExcelCommand  { get; }
         public ICommand ImportCommand       { get; }
         public ICommand ImportExcelCommand  { get; }
-        public ICommand AddSubPieceCommand        { get; }
-        public ICommand DeleteSubPieceCommand     { get; }
-        public ICommand AddTemelAltiParcaCommand    { get; }
-        public ICommand DeleteTemelAltiParcaCommand { get; }
+        public ICommand AddSubPieceCommand    { get; }
+        public ICommand DeleteSubPieceCommand { get; }
 
         // Aliases so Tab 1 XAML bindings that still use old names keep compiling
         public ICommand SaveCurrentCommand => SaveCommand;
@@ -151,12 +139,11 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             DuplicateCommand    = new RelayCommand(OnDuplicate, _ => IsComponentSelected);
             SaveCommand         = new RelayCommand(OnSave);
             ExportCommand       = new RelayCommand(OnExport);
+            ExportExcelCommand  = new RelayCommand(OnExportExcel, _ => Families.Count > 0);
             ImportCommand       = new RelayCommand(OnImport);
             ImportExcelCommand  = new RelayCommand(OnImportExcel, _ => IsFamilySelected);
-            AddSubPieceCommand          = new RelayCommand(OnAddSubPiece,           _ => IsBottomElementSelected);
-            DeleteSubPieceCommand       = new RelayCommand(OnDeleteSubPiece,        _ => IsSubPieceSelected);
-            AddTemelAltiParcaCommand    = new RelayCommand(OnAddTemelAltiParca,    _ => IsBottomElementSelected);
-            DeleteTemelAltiParcaCommand = new RelayCommand(OnDeleteTemelAltiParca, _ => IsTemelAltiParcaSelected);
+            AddSubPieceCommand    = new RelayCommand(OnAddSubPiece,    _ => IsBottomElementSelected);
+            DeleteSubPieceCommand = new RelayCommand(OnDeleteSubPiece, _ => IsSubPieceSelected);
 
             // Auto-load from fixed AppData path (silent, like PipeCatalog)
             var path = MasterCatalogXmlManager.DefaultComponentsPath;
@@ -209,6 +196,8 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                     comp = new AdjusterComponent      { Name = "Yeni Ayar Halkası", FamilyTag = "Standard-Precast", YukseltmeParcasi = true }; break;
                 case ComponentRole.Cover:
                     comp = new CoverComponent         { Name = "Yeni Rögar Kapağı", LoadClass = "D400",             ZorunluParca = true };    break;
+                case ComponentRole.TemelAltiParca:
+                    comp = new TemelAltiParcaComponent { Name = "Yeni Temel Altı",  FamilyTag = "Standard-Precast" }; break;
                 default: // MiddleElement
                     comp = new MiddleElementComponent { Name = "Yeni Halka",        FamilyTag = "Standard-Precast", YukseltmeParcasi = true }; break;
             }
@@ -245,6 +234,8 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                     FamilyTag            = b.FamilyTag,
                     ExternalVolume       = b.ExternalVolume,
                     MaterialVolume       = b.MaterialVolume,
+                    FloorExternalVolume  = b.FloorExternalVolume,
+                    FloorMaterialVolume  = b.FloorMaterialVolume,
                     WallThicknessMm      = b.WallThicknessMm,
                     TopOpeningDiameterMm = b.TopOpeningDiameterMm,
                     IsComposite          = b.IsComposite,
@@ -265,10 +256,6 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                 foreach (var sp in b.SubPieces)
                     cb.SubPieces.Add(new SubPiece
                         { Name = sp.Name, HeightMm = sp.HeightMm, Description = sp.Description });
-                cb.TemelAltiParcaEnabled = b.TemelAltiParcaEnabled;
-                foreach (var tap in b.TemelAltiParcalar)
-                    cb.TemelAltiParcalar.Add(new TemelAltiParca
-                        { Ad = tap.Ad, Boy = tap.Boy, En = tap.En, Kalinlik = tap.Kalinlik, Malzeme = tap.Malzeme });
                 clone = cb;
             }
             else
@@ -313,15 +300,27 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                         else
                         {
                             var cv = src as CoverComponent;
-                            if (cv == null) return;
-                            clone = new CoverComponent
+                            if (cv != null)
+                                clone = new CoverComponent
+                                {
+                                    Name = cv.Name + " - Kopya", EffectiveHeight = cv.EffectiveHeight,
+                                    FamilyTag = cv.FamilyTag, ExternalVolume = cv.ExternalVolume,
+                                    MaterialVolume = cv.MaterialVolume,
+                                    LoadClass = cv.LoadClass, ClearOpeningMm = cv.ClearOpeningMm,
+                                    IsVariable = cv.IsVariable, ZorunluParca = cv.ZorunluParca
+                                };
+                            else
                             {
-                                Name = cv.Name + " - Kopya", EffectiveHeight = cv.EffectiveHeight,
-                                FamilyTag = cv.FamilyTag, ExternalVolume = cv.ExternalVolume,
-                                MaterialVolume = cv.MaterialVolume,
-                                LoadClass = cv.LoadClass, ClearOpeningMm = cv.ClearOpeningMm,
-                                IsVariable = cv.IsVariable, ZorunluParca = cv.ZorunluParca
-                            };
+                                var tap = src as TemelAltiParcaComponent;
+                                if (tap == null) return;
+                                clone = new TemelAltiParcaComponent
+                                {
+                                    Name = tap.Name + " - Kopya", EffectiveHeight = tap.EffectiveHeight,
+                                    FamilyTag = tap.FamilyTag, ExternalVolume = tap.ExternalVolume,
+                                    MaterialVolume = tap.MaterialVolume, Aciklama = tap.Aciklama,
+                                    Boy = tap.Boy, En = tap.En, BaglandiTabanCapiMm = tap.BaglandiTabanCapiMm
+                                };
+                            }
                         }
                     }
                 }
@@ -374,40 +373,6 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             _selectedComponent?.RecalcEffectiveHeight();
         }
 
-        // ── Temel Altı Parça CRUD ──────────────────────────────────────────────
-
-        private void LoadTemelAltiParcalar()
-        {
-            TemelAltiParcalar.Clear();
-            SelectedTemelAltiParca = null;
-            var b = _selectedComponent?.Model as BottomElementComponent;
-            if (b == null) return;
-            foreach (var tap in b.TemelAltiParcalar)
-                TemelAltiParcalar.Add(new TemelAltiParcaRowVm(tap));
-        }
-
-        private void OnAddTemelAltiParca(object _)
-        {
-            var b = _selectedComponent?.Model as BottomElementComponent;
-            if (b == null) return;
-            var tap = new TemelAltiParca { Ad = "Yeni Parça " + (b.TemelAltiParcalar.Count + 1) };
-            b.TemelAltiParcalar.Add(tap);
-            var vm = new TemelAltiParcaRowVm(tap);
-            TemelAltiParcalar.Add(vm);
-            Application.Current?.Dispatcher?.BeginInvoke(
-                DispatcherPriority.Background,
-                new Action(() => SelectedTemelAltiParca = vm));
-        }
-
-        private void OnDeleteTemelAltiParca(object _)
-        {
-            if (_selectedTemelAltiParca == null) return;
-            var b = _selectedComponent?.Model as BottomElementComponent;
-            b?.TemelAltiParcalar.Remove(_selectedTemelAltiParca.Model);
-            TemelAltiParcalar.Remove(_selectedTemelAltiParca);
-            SelectedTemelAltiParca = null;
-        }
-
         // ── XML persistence (PipeCatalog pattern) ──────────────────────────────
 
         private void TryLoadFamilies(string path, bool silent)
@@ -458,6 +423,18 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                 StatusText = "Dışa aktarıldı: " + Path.GetFileName(path);
             }
             catch (Exception ex) { ShowError("Dışa aktarma hatası", ex); }
+        }
+
+        private void OnExportExcel(object _)
+        {
+            var path = PickSaveExcelPath("Kataloğu Excel'e Aktar", "BacaParcaKatalogu.xlsx");
+            if (path == null) return;
+            try
+            {
+                ComponentExcelExportService.Export(_catalog.Families, path);
+                StatusText = "Excel'e aktarıldı: " + Path.GetFileName(path);
+            }
+            catch (Exception ex) { ShowError("Excel'e aktarma hatası", ex); }
         }
 
         private void OnImport(object _)
@@ -539,6 +516,14 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             var dlg = new SaveFileDialog
                 { Title = title, Filter = "Smart Assembly XML (*.xml)|*.xml",
                   DefaultExt = ".xml", FileName = defaultName };
+            return dlg.ShowDialog() == true ? dlg.FileName : null;
+        }
+
+        private static string PickSaveExcelPath(string title, string defaultName)
+        {
+            var dlg = new SaveFileDialog
+                { Title = title, Filter = "Excel (*.xlsx)|*.xlsx",
+                  DefaultExt = ".xlsx", FileName = defaultName };
             return dlg.ShowDialog() == true ? dlg.FileName : null;
         }
 

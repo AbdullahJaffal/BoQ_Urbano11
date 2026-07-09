@@ -22,6 +22,24 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
         public double        WallThicknessMm       { get; set; }
 
         /// <summary>
+        /// Fixed external (spatial) volume of the base SLAB / floor only (m³) — the
+        /// part that does NOT scale with height. For a "değişken" (variable-height)
+        /// Taban, the volume is computed as ExternalVolume (wall, per 1 m) ×
+        /// EffectiveHeight + FloorExternalVolume. Ignored for fixed-height Tabans
+        /// (which quote a single total in ExternalVolume). See
+        /// ManholeAIService.NewStackedPart.
+        /// </summary>
+        public double        FloorExternalVolume   { get; set; }
+
+        /// <summary>
+        /// Fixed material (net concrete) volume of the base SLAB / floor only (m³) —
+        /// the height-independent counterpart of <see cref="FloorExternalVolume"/>,
+        /// added on top of MaterialVolume (wall, per 1 m) × EffectiveHeight for a
+        /// "değişken" Taban.
+        /// </summary>
+        public double        FloorMaterialVolume   { get; set; }
+
+        /// <summary>
         /// Structural slab thickness at the bottom of the base (mm).
         /// Added to EffectiveHeight to give the full installed height of the base element.
         /// </summary>
@@ -44,13 +62,5 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
         public bool          IsComposite           { get; set; }
 
         public List<SubPiece> SubPieces            { get; set; } = new List<SubPiece>();
-
-        /// <summary>
-        /// When true, one or more sub-base pieces are placed physically below this base.
-        /// These affect excavation/backfill depth only; ring distribution ignores them.
-        /// </summary>
-        public bool                 TemelAltiParcaEnabled { get; set; }
-
-        public List<TemelAltiParca> TemelAltiParcalar     { get; set; } = new List<TemelAltiParca>();
     }
 }

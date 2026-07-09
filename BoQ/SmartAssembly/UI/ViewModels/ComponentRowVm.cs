@@ -30,12 +30,13 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             {
                 switch (_model.Role)
                 {
-                    case ComponentRole.BottomElement: return "Taban";
-                    case ComponentRole.MiddleElement: return "Gövde Halkası";
-                    case ComponentRole.Reducer:       return "Konik";
-                    case ComponentRole.Adjuster:      return "Boyun bileziği";
-                    case ComponentRole.Cover:         return "Rögar Kapağı";
-                    default:                          return _model.Role.ToString();
+                    case ComponentRole.BottomElement:   return "Taban";
+                    case ComponentRole.MiddleElement:   return "Gövde Halkası";
+                    case ComponentRole.Reducer:         return "Konik";
+                    case ComponentRole.Adjuster:        return "Boyun bileziği";
+                    case ComponentRole.Cover:           return "Rögar Kapağı";
+                    case ComponentRole.TemelAltiParca:  return "Temel Altı Parça";
+                    default:                            return _model.Role.ToString();
                 }
             }
         }
@@ -184,6 +185,23 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             }
         }
 
+        // ── BottomElement — floor (base slab) volumes ─────────────────────────
+        // Fixed, height-independent counterparts of ExternalVolume/MaterialVolume
+        // (which, for a değişken Taban, are the WALL rate per 1 m). Null for any
+        // non-BottomElement component so the binding stays inert there.
+
+        public double? FloorExternalVolume
+        {
+            get { var b = _model as BottomElementComponent; return b != null ? (double?)b.FloorExternalVolume : null; }
+            set { var b = _model as BottomElementComponent; if (b != null && value.HasValue) { b.FloorExternalVolume = value.Value; OnPropertyChanged(); } }
+        }
+
+        public double? FloorMaterialVolume
+        {
+            get { var b = _model as BottomElementComponent; return b != null ? (double?)b.FloorMaterialVolume : null; }
+            set { var b = _model as BottomElementComponent; if (b != null && value.HasValue) { b.FloorMaterialVolume = value.Value; OnPropertyChanged(); } }
+        }
+
         // ── BottomElement — top opening (shaft link diameter) ──────────────────
 
         public double? TopOpeningDiamMm
@@ -285,18 +303,27 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             }
         }
 
-        // ── BottomElement — temel altı parça ─────────────────────────────────
+        // ── TemelAltiParcaComponent ────────────────────────────────────────────
 
-        public bool TemelAltiParcaEnabled
+        /// <summary>False for TemelAltiParcaComponent — hides the "değişken" checkbox in the UI.</summary>
+        public bool ShowIsVariable => !(_model is TemelAltiParcaComponent);
+
+        public double? Boy
         {
-            get { var b = _model as BottomElementComponent; return b?.TemelAltiParcaEnabled ?? false; }
-            set
-            {
-                var b = _model as BottomElementComponent;
-                if (b == null) return;
-                b.TemelAltiParcaEnabled = value;
-                OnPropertyChanged();
-            }
+            get { var t = _model as TemelAltiParcaComponent; return t != null ? (double?)t.Boy : null; }
+            set { var t = _model as TemelAltiParcaComponent; if (t != null && value.HasValue) { t.Boy = value.Value; OnPropertyChanged(); } }
+        }
+
+        public double? En
+        {
+            get { var t = _model as TemelAltiParcaComponent; return t != null ? (double?)t.En : null; }
+            set { var t = _model as TemelAltiParcaComponent; if (t != null && value.HasValue) { t.En = value.Value; OnPropertyChanged(); } }
+        }
+
+        public double? BaglandiTabanCapiMm
+        {
+            get { var t = _model as TemelAltiParcaComponent; return t != null ? (double?)t.BaglandiTabanCapiMm : null; }
+            set { var t = _model as TemelAltiParcaComponent; if (t != null && value.HasValue) { t.BaglandiTabanCapiMm = value.Value; OnPropertyChanged(); } }
         }
 
         // ── MiddleElement / Adjuster ──────────────────────────────────────────

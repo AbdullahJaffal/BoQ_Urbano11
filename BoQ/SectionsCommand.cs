@@ -14,7 +14,7 @@ using Exception = System.Exception;
 namespace UrbanoMetraj.BoQ
 {
     /// <summary>
-    /// AutoCAD command: URBANO_SECTIONS
+    /// AutoCAD command: UT_SECTIONS
     ///
     /// Draws 2-D cross-section profiles for the selected pipe network, placed
     /// side by side from a user-picked insertion point.  Respects the Kazı/Dolgu
@@ -28,7 +28,7 @@ namespace UrbanoMetraj.BoQ
         public static OverlapAssignment? OverrideBackfill;
         public static double             OverrideCrossSectionInterval = 5.0;
 
-        [CommandMethod("URBANO_SECTIONS", CommandFlags.Modal)]
+        [CommandMethod("UT_SECTIONS", CommandFlags.Modal)]
         public void DrawSections()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
@@ -37,7 +37,7 @@ namespace UrbanoMetraj.BoQ
             if (!DwgBoQStore.HasData(doc.Database))
             {
                 ed.WriteMessage(
-                    "\n[Sections] DWG'de BoQ verisi yok. Önce URBANO_BOQ komutunu çalıştırın.\n");
+                    "\n[Sections] DWG'de BoQ verisi yok. Önce UT_BOQ komutunu çalıştırın.\n");
                 return;
             }
 

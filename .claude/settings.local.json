@@ -172,7 +172,15 @@
       "PowerShell(cmd /c \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v59.bat\")",
       "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v60.bat\")",
       "Bash(git check-ignore *)",
-      "Bash(git ls-files *)"
+      "Bash(git ls-files *)",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v61.bat\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\amd64\\\\MSBuild.exe\" \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\UrbanoMetraj.csproj\" /p:Configuration=Debug /p:OutputPath=bin\\\\DebugV110\\\\ /p:Platform=x64 /t:Build /v:minimal 2>&1)",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v62.bat\")",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v63.bat\")",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v64.bat\")",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v65.bat\")",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build_v66.bat\")",
+      "PowerShell(& \"D:\\\\Abdullah-ElsaProje\\\\Software\\\\UrbanoMetraj\\\\build.bat\" ExcelImp)"
     ]
   }
 }

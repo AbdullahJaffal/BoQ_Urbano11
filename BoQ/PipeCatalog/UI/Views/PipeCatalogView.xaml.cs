@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 using UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels;
 
@@ -27,6 +29,17 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.Views
                 var dlg = new SinifYoneticisiDialog(vm.CatalogClasses, Window.GetWindow(this));
                 dlg.Show();
             };
+        }
+
+        // Right-click doesn't select a DataGrid row by default; select it first so the
+        // row-scoped context-menu commands (Çoğalt / Sil) act on the clicked row.
+        private void Grid_SelectRowOnRightClick(object sender, MouseButtonEventArgs e)
+        {
+            var dep = e.OriginalSource as DependencyObject;
+            while (dep != null && !(dep is DataGridRow))
+                dep = VisualTreeHelper.GetParent(dep);
+            if (dep is DataGridRow row)
+                row.IsSelected = true;
         }
 
         // Normalize the edited pipe after the row is committed.

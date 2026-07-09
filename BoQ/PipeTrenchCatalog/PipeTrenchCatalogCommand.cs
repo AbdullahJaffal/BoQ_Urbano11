@@ -12,12 +12,12 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog
     /// <summary>
     /// Commands
     /// ─────────────────────────────────────────────────────────────
-    ///  PIPE_TRENCH_CATALOG   Opens the shared Akıllı Montaj window on the
+    ///  UT_PIPE_TRENCH_CATALOG   Opens the shared Akıllı Montaj window on the
     ///                        "Hendek Kataloğu" tab (formerly a standalone window).
     /// </summary>
     public class PipeTrenchCatalogCommand
     {
-        [CommandMethod("PIPE_TRENCH_CATALOG")]
+        [CommandMethod("UT_PIPE_TRENCH_CATALOG")]
         public void OpenPipeTrenchCatalog()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
@@ -30,7 +30,7 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog
             }
             catch (Exception ex)
             {
-                ed.WriteMessage("\nPIPE_TRENCH_CATALOG hatası: " + ex.Message);
+                ed.WriteMessage("\nUT_PIPE_TRENCH_CATALOG hatası: " + ex.Message);
             }
         }
     }

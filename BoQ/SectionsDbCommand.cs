@@ -17,9 +17,9 @@ using Exception = System.Exception;
 namespace UrbanoMetraj.BoQ
 {
     /// <summary>
-    /// AutoCAD command: URBANO_SECTIONS_DB  (from-scratch diagnostic plotter)
+    /// AutoCAD command: UT_SECTIONS_DB  (from-scratch diagnostic plotter)
     ///
-    /// Unlike URBANO_SECTIONS, this command does NOT use DwgBoQStore.Load, the
+    /// Unlike UT_SECTIONS, this command does NOT use DwgBoQStore.Load, the
     /// cached BoQReport, the in-memory ScenarioProfile objects, or any of the
     /// resolve/aggregate pipeline. It walks the NOD dictionary tree DIRECTLY —
     /// exactly like the diagnostic LISP — pulling each station's stored polygon
@@ -83,7 +83,7 @@ namespace UrbanoMetraj.BoQ
         }
 
         // =====================================================================
-        [CommandMethod("URBANO_SECTIONS_DB", CommandFlags.Modal)]
+        [CommandMethod("UT_SECTIONS_DB", CommandFlags.Modal)]
         public void DrawSectionsFromDb()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
@@ -138,7 +138,7 @@ namespace UrbanoMetraj.BoQ
         // =====================================================================
         // Single station — same direct-DB logic, one named station only.
         // =====================================================================
-        [CommandMethod("URBANO_SECTION_ONE", CommandFlags.Modal)]
+        [CommandMethod("UT_SECTION_ONE", CommandFlags.Modal)]
         public void DrawOneSectionFromDb()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
@@ -192,9 +192,9 @@ namespace UrbanoMetraj.BoQ
         }
 
         // =====================================================================
-        // URBANO_SECTION_DUMP — inspect raw DB coordinates without drawing
+        // UT_SECTION_DUMP — inspect raw DB coordinates without drawing
         // =====================================================================
-        [CommandMethod("URBANO_SECTION_DUMP", CommandFlags.Modal)]
+        [CommandMethod("UT_SECTION_DUMP", CommandFlags.Modal)]
         public void DumpOneSectionCoords()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
@@ -258,7 +258,7 @@ namespace UrbanoMetraj.BoQ
                     db.NamedObjectsDictionaryId, OpenMode.ForRead);
                 if (!nod.Contains(NOD_KEY))
                 {
-                    ed.WriteMessage("\n[DB Kesit] URBANO_BOQ yok.");
+                    ed.WriteMessage("\n[DB Kesit] UT_BOQ verisi yok.");
                     tr.Commit();
                     return result;
                 }
@@ -503,7 +503,7 @@ namespace UrbanoMetraj.BoQ
         }
 
         // =====================================================================
-        // Drawing — same two-panel layout as URBANO_SECTIONS, raw DB regions
+        // Drawing — same two-panel layout as UT_SECTIONS, raw DB regions
         // =====================================================================
         private static int DrawPipes(
             Database db, List<DbPipe> pipes, Point3d insert, double interval, Editor ed)
@@ -725,7 +725,7 @@ namespace UrbanoMetraj.BoQ
             return total;
         }
 
-        /// <summary>Same sampling as URBANO_SECTIONS: step by interval, force boundaries.</summary>
+        /// <summary>Same sampling as UT_SECTIONS: step by interval, force boundaries.</summary>
         private static List<DbStation> SelectStations(List<DbStation> stations, double interval)
         {
             var sel = new List<DbStation>();
@@ -878,7 +878,7 @@ namespace UrbanoMetraj.BoQ
         private static string BuildDump(TypedValue[] rawInfo, DbStation st, string label)
         {
             var sb = new StringBuilder();
-            sb.AppendLine($"URBANO_SECTION_DUMP — {label}");
+            sb.AppendLine($"UT_SECTION_DUMP — {label}");
             sb.AppendLine($"Generated : {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             sb.AppendLine(new string('─', 60));
 

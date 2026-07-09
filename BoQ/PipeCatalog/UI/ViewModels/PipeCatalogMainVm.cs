@@ -1,5 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -8,6 +10,7 @@ using Microsoft.Win32;
 using UrbanoMetraj.BoQ.ExcelImport;
 using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 using UrbanoMetraj.BoQ.PipeCatalogs.Services;
+using UrbanoMetraj.BoQ.SmartAssembly;
 using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
 
 using Exception = System.Exception;
@@ -27,7 +30,11 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             get => _selectedFamily;
             set
             {
+                // Unsubscribe from old family's pipe changes before switching.
+                UnwirePipes(_selectedFamily);
                 Set(ref _selectedFamily, value);
+                // Subscribe to new family's pipe changes.
+                WirePipes(_selectedFamily);
                 OnPropertyChanged(nameof(IsFamilySelected));
                 OnPropertyChanged(nameof(PipesInFamily));
                 OnPropertyChanged(nameof(SelectedFamilyName));
@@ -89,6 +96,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
 
         public ICommand SaveCommand            { get; }
         public ICommand ExportCommand          { get; }
+        public ICommand ExportExcelCommand     { get; }
         public ICommand ImportCommand          { get; }
         public ICommand ImportExcelCommand     { get; }
         public ICommand ManageClassesCommand   { get; }
@@ -109,6 +117,11 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             // Work on a DEEP COPY — changes stay local until the user clicks Kaydet.
             _catalog = DeepClone(catalog ?? new PipeCatalog());
 
+            // Track family-level property changes (FamilyName / Material edited in the left grid).
+            _catalog.Families.CollectionChanged += OnFamiliesChanged;
+            foreach (var f in _catalog.Families)
+                f.PropertyChanged += OnModelChanged;
+
             AddFamilyCommand     = new RelayCommand(OnAddFamily);
             DeleteFamilyCommand  = new RelayCommand(OnDeleteFamily,   _ => IsFamilySelected);
             AddPipeCommand       = new RelayCommand(OnAddPipe,        _ => IsFamilySelected);
@@ -117,6 +130,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
 
             SaveCommand          = new RelayCommand(OnSave,          _ => _isDirty);
             ExportCommand        = new RelayCommand(OnExport,        _ => Families.Count > 0);
+            ExportExcelCommand   = new RelayCommand(OnExportExcel,   _ => Families.Count > 0);
             ImportCommand        = new RelayCommand(OnImport);
             ImportExcelCommand   = new RelayCommand(OnImportExcel,    _ => IsFamilySelected);
             ManageClassesCommand = new RelayCommand(OnManageClasses);
@@ -222,6 +236,20 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
                 StatusText = "Dışa aktarıldı: " + Path.GetFileName(path);
             }
             catch (Exception ex) { ShowError("Dışa aktarma hatası", ex); }
+        }
+
+        private void OnExportExcel(object _)
+        {
+            if (!ConfirmIfInconsistent()) return;
+            string path = SaveFile("Excel (*.xlsx)|*.xlsx",
+                                   "Kataloğu Excel'e Aktar", "BoruKatalogu.xlsx");
+            if (path == null) return;
+            try
+            {
+                PipeCatalogExcelExportService.Export(_catalog, path);
+                StatusText = "Excel'e aktarıldı: " + Path.GetFileName(path);
+            }
+            catch (Exception ex) { ShowError("Excel'e aktarma hatası", ex); }
         }
 
         // Returns true if it is safe to proceed (no inconsistencies, or user confirmed).
@@ -354,9 +382,55 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels
             StatusText = "● Kaydedilmemiş değişiklikler var — Kaydet tuşuna basın.";
         }
 
+        // ── Change-tracking subscriptions ────────────────────────────────────
+
+        // Fired when families are added/removed from the catalog.
+        private void OnFamiliesChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (e.NewItems != null)
+                foreach (PipeFamily f in e.NewItems) f.PropertyChanged += OnModelChanged;
+            if (e.OldItems != null)
+                foreach (PipeFamily f in e.OldItems) f.PropertyChanged -= OnModelChanged;
+        }
+
+        // Fired when pipes are added/removed from the selected family.
+        private void OnPipesChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (e.NewItems != null)
+                foreach (PipeDefinition p in e.NewItems) p.PropertyChanged += OnModelChanged;
+            if (e.OldItems != null)
+                foreach (PipeDefinition p in e.OldItems) p.PropertyChanged -= OnModelChanged;
+        }
+
+        // Fired when any tracked model property changes — enables Kaydet immediately.
+        private void OnModelChanged(object sender, PropertyChangedEventArgs e) => MarkDirty();
+
+        private void WirePipes(PipeFamily family)
+        {
+            if (family == null) return;
+            family.Pipes.CollectionChanged += OnPipesChanged;
+            foreach (var p in family.Pipes) p.PropertyChanged += OnModelChanged;
+        }
+
+        private void UnwirePipes(PipeFamily family)
+        {
+            if (family == null) return;
+            family.Pipes.CollectionChanged -= OnPipesChanged;
+            foreach (var p in family.Pipes) p.PropertyChanged -= OnModelChanged;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+
         private static string DefaultSavePath => PipeCatalogStore.DefaultSavePath;
 
-        private void UpdateStore() => PipeCatalogStore.Current = _catalog;
+        private void UpdateStore()
+        {
+            PipeCatalogStore.Current = _catalog;
+            // Refresh sibling tabs (rules, project setup) without touching PipeCatalogTab
+            // itself — passing the same object to ApplyExtractedCatalog would Clear() and
+            // re-iterate the same collection, wiping all families.
+            SmartAssemblyCommand.GetMainVm()?.RefreshPipeCatalog(_catalog, updatePipeCatalogTab: false);
+        }
 
         private static PipeCatalog DeepClone(PipeCatalog src)
         {

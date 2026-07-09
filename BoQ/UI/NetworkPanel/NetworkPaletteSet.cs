@@ -18,7 +18,7 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
     ///
     /// Only ever instantiated when UrbanoLock's own palette isn't available in the
     /// current AutoCAD session (see <see cref="UrbanoLockBridge"/>, checked by the
-    /// URBANO_NETWORK_PANEL command below). This guarantees a single network
+    /// UT_NET_PANEL command below). This guarantees a single network
     /// panel exists per session even when both plugins are netloaded together:
     /// whichever one is present takes ownership, and the other one's command
     /// just shows/refreshes that same palette instead of creating its own.
@@ -146,17 +146,17 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
             RefreshFromCurrentDocument();
         }
 
-        // ── URBANO_NETWORK_PANEL command ──────────────────────────────────────
+        // ── UT_NET_PANEL command ──────────────────────────────────────
 
         /// <summary>
-        /// AutoCAD command class that exposes URBANO_NETWORK_PANEL — UrbanoMetraj's
+        /// AutoCAD command class that exposes UT_NET_PANEL — UrbanoMetraj's
         /// entry point to the (shared) network-selection panel. Named differently
         /// from UrbanoLock's UT_NETWORK_PANEL because two loaded assemblies can't
         /// register the same AutoCAD command name; both point at the same panel.
         /// </summary>
         public class NetworkPanelCommand
         {
-            [CommandMethod("URBANO_NETWORK_PANEL", CommandFlags.Modal)]
+            [CommandMethod("UT_NET_PANEL", CommandFlags.Modal)]
             public void ShowNetworkPanel()
             {
                 var doc = AcApp.DocumentManager.MdiActiveDocument;
@@ -181,7 +181,7 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
                 catch (Exception ex)
                 {
                     doc.Editor.WriteMessage(
-                        $"\n[UrbanoMetraj] URBANO_NETWORK_PANEL — hata: {ex.Message}\n");
+                        $"\n[UrbanoMetraj] UT_NET_PANEL — hata: {ex.Message}\n");
                 }
             }
         }

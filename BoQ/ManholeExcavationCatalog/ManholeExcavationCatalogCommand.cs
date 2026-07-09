@@ -12,12 +12,12 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog
     /// <summary>
     /// Commands
     /// ─────────────────────────────────────────────────────────────
-    ///  MANHOLE_EXCAV_CATALOG   Opens the shared Akıllı Montaj window on the
+    ///  UT_MANHOLE_EXCAV_CATALOG   Opens the shared Akıllı Montaj window on the
     ///                          "Baca Kazı Kataloğu" tab (formerly a standalone window).
     /// </summary>
     public class ManholeExcavationCatalogCommand
     {
-        [CommandMethod("MANHOLE_EXCAV_CATALOG")]
+        [CommandMethod("UT_MANHOLE_EXCAV_CATALOG")]
         public void OpenExcavationCatalog()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
@@ -30,7 +30,7 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog
             }
             catch (Exception ex)
             {
-                ed.WriteMessage("\nMANHOLE_EXCAV_CATALOG hatası: " + ex.Message);
+                ed.WriteMessage("\nUT_MANHOLE_EXCAV_CATALOG hatası: " + ex.Message);
             }
         }
     }

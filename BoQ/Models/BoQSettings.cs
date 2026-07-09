@@ -163,6 +163,38 @@ namespace UrbanoMetraj.BoQ.Models
         /// </summary>
         public bool BacaKaziHesapla { get; set; } = false;
 
+        /// <summary>
+        /// When true, the excavation/backfill overlap between adjacent manhole
+        /// pits (Bacalar Arası Kazı Çakışması) is deducted from each manhole's
+        /// own displayed ExcavationVolume/BackfillVolume via the geometric
+        /// half-plane split already computed by
+        /// ManholeExcavOverlapService.ComputeManholeVsManhole. When false
+        /// (Yoksay), no deduction is applied (diagnostic only, as before).
+        /// </summary>
+        public bool BacaBacaKaziHesapla { get; set; } = false;
+
+        /// <summary>
+        /// When true (Eklesin), ManholeAIService.ResolveExcavation looks for a
+        /// TemelAltiParcaComponent in the resolved Taban's family whose
+        /// BaglandiTabanCapiMm matches the manhole's own diameter (circular),
+        /// side (square) or longer side (rectangular), and adds its
+        /// EffectiveHeight to both the excavation and backfill depth. When
+        /// false (Yok), or when no matching piece exists in the catalog,
+        /// nothing is added (0 contribution, as before).
+        /// </summary>
+        public bool BacaAltiParcaEklensin { get; set; } = false;
+
+        /// <summary>
+        /// When true (Dış Çap), the manhole excavation pit width includes the
+        /// precast wall thickness on both sides (inner/nominal footprint + 2×wall
+        /// + 2×working clearance). When false (İç Çap), the wall is omitted
+        /// (inner/nominal footprint + 2×working clearance only). Consumed by
+        /// ManholeAIService.ResolveExcavation; affects both the excavation and the
+        /// backfill (Dolgu-basis) pit, and therefore every manhole-overlap
+        /// deduction that reads ExcavBaseSideM. Default true (wall included).
+        /// </summary>
+        public bool BacaKaziDisCapKullan { get; set; } = true;
+
         /// <summary>Selected surface (Arazi1…Arazi10) used for the manhole "Kırmızı Kot".</summary>
         public string BacaKirmiziKotSurface { get; set; } = "Arazi1";
 
@@ -189,5 +221,15 @@ namespace UrbanoMetraj.BoQ.Models
 
         /// <summary>Which kot the manhole cover (Baca Kapak) level uses.</summary>
         public string BacaKapakSeviyesi { get; set; } = "Kırmızı Kot";
+
+        /// <summary>
+        /// Height-band width (m) used ONLY by the Metraj Keşif Tablosu to group
+        /// variable-height manhole pieces (değişken halka — Gövde/Boyun) into rows:
+        /// pieces whose height falls in the same [n·band, (n+1)·band) interval are summed
+        /// into one line, with that interval appended to the description. Purely a metraj
+        /// presentation setting — it never affects stacking/volume math. Default 0.5 m.
+        /// Persisted in the DWG (see DwgBoQStore META buffer).
+        /// </summary>
+        public double MetrajDegiskenParcaBandM { get; set; } = 0.5;
     }
 }

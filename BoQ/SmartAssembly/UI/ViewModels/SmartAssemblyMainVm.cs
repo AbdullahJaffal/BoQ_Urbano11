@@ -20,15 +20,17 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
     public class SmartAssemblyMainVm : ViewModelBase
     {
         // ── Tab indices (must match TabControl order in SmartAssemblyWindow.xaml) ──
-        public const int TAB_REPOSITORY    = 0;
-        public const int TAB_MASTER_RULES  = 1;
-        public const int TAB_PROJECT_SETUP = 2;
-        public const int TAB_MANHOLE_EXCAV = 3;
-        public const int TAB_PIPE_CATALOG  = 4;
-        public const int TAB_PIPE_TRENCH   = 5;
-        public const int TAB_SOIL_CATALOG  = 6;
-        public const int TAB_DOLGU_CATALOG = 7;
-        public const int TAB_TYPE_MAPPING  = 8;
+        // Order (2026-07-09): Prefabrik Baca / Boru / Kazı Tipi / Dolgu Katalogları,
+        // then Baca Seçim / Baca Kazı / Boru Hendek Kuralları. Proje Kurulumu and
+        // Tür Eşleştirme moved out to the separate Proje Ayarları window
+        // (ProjectSettingsWindow) and no longer have a tab index here.
+        public const int TAB_REPOSITORY    = 0;   // Prefabrik Baca Kataloğu
+        public const int TAB_PIPE_CATALOG  = 1;   // Boru Kataloğu
+        public const int TAB_SOIL_CATALOG  = 2;   // Kazı Tipi Kataloğu
+        public const int TAB_DOLGU_CATALOG = 3;   // Dolgu Kataloğu
+        public const int TAB_MASTER_RULES  = 4;   // Baca Seçim Kuralları
+        public const int TAB_MANHOLE_EXCAV = 5;   // Baca Kazı Kuralları
+        public const int TAB_PIPE_TRENCH   = 6;   // Boru Hendek Kuralları
 
         public SmartAssemblyMasterCatalog MasterCatalog { get; }
 
@@ -51,7 +53,8 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             {
                 Set(ref _selectedTabIndex, value);
                 if (value == TAB_MASTER_RULES) MasterRulesTab.RefreshBasesCombo();
-                if (value == TAB_PROJECT_SETUP) { ProjectSetupTab.RefreshBasesCombo(); ProjectSetupTab.RefreshMaterialFamilies(); }
+                // ProjectSetup's tab-select refresh now lives in the Proje Ayarları
+                // window's open path (SmartAssemblyCommand.ShowProjectSettings).
             }
         }
 
@@ -92,11 +95,16 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         /// Hot-swaps the pipe catalog after initial construction (called when the user
         /// imports or extracts a new catalog while the Smart Assembly window is open).
         /// </summary>
-        public void RefreshPipeCatalog(PipeCatalog pipeCatalog)
+        /// <param name="updatePipeCatalogTab">
+        /// Pass false when the call originates from inside PipeCatalogTab itself (e.g. Kaydet),
+        /// to avoid a self-referential Clear() that empties the catalog.
+        /// </param>
+        public void RefreshPipeCatalog(PipeCatalog pipeCatalog, bool updatePipeCatalogTab = true)
         {
             MasterRulesTab .SetPipeCatalog(pipeCatalog);
             ProjectSetupTab.SetPipeCatalog(pipeCatalog);
-            PipeCatalogTab .ApplyExtractedCatalog(pipeCatalog);
+            if (updatePipeCatalogTab)
+                PipeCatalogTab.ApplyExtractedCatalog(pipeCatalog);
         }
     }
 }

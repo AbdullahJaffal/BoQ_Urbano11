@@ -1,4 +1,7 @@
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
 
 namespace UrbanoMetraj.BoQ.SmartAssembly.UI.Views
@@ -11,7 +14,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.Views
     ///   // Keep a static reference so the window survives garbage collection.
     ///   private static SmartAssemblyWindow _win;
     ///
-    ///   [CommandMethod("SMART_ASSEMBLY")]
+    ///   [CommandMethod("UT_SMART_ASSEMBLY")]
     ///   public void OpenWindow()
     ///   {
     ///       if (_win == null || !_win.IsLoaded)
@@ -46,6 +49,17 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.Views
         {
             base.OnClosed(e);
             DataContext = null;
+        }
+
+        // Right-click doesn't select a DataGrid row by default; select it first so the
+        // row-scoped context-menu commands (Çoğalt / Sil) act on the clicked row.
+        private void Grid_SelectRowOnRightClick(object sender, MouseButtonEventArgs e)
+        {
+            var dep = e.OriginalSource as DependencyObject;
+            while (dep != null && !(dep is DataGridRow))
+                dep = VisualTreeHelper.GetParent(dep);
+            if (dep is DataGridRow row)
+                row.IsSelected = true;
         }
     }
 }

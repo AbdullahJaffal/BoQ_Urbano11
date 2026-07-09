@@ -278,8 +278,9 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                 el.Add(new XAttribute("WallThicknessMm",    bottom.WallThicknessMm.ToString("G", IC)));
                 el.Add(new XAttribute("TabanKalinligiMm",   bottom.TabanKalinligiMm.ToString("G", IC)));
                 el.Add(new XAttribute("TopOpeningDiamMm",   bottom.TopOpeningDiameterMm.ToString("G", IC)));
-                el.Add(new XAttribute("IsComposite",           bottom.IsComposite.ToString().ToLowerInvariant()));
-                el.Add(new XAttribute("TemelAltiParcaEnabled", bottom.TemelAltiParcaEnabled.ToString().ToLowerInvariant()));
+                el.Add(new XAttribute("FloorExternalVolume", bottom.FloorExternalVolume.ToString("G", IC)));
+                el.Add(new XAttribute("FloorMaterialVolume", bottom.FloorMaterialVolume.ToString("G", IC)));
+                el.Add(new XAttribute("IsComposite", bottom.IsComposite.ToString().ToLowerInvariant()));
                 el.Add(SerializeFootprint(bottom.Footprint ?? new Footprint()));
                 var spEl = new XElement("SubPieces");
                 foreach (var sp in bottom.SubPieces ?? new List<SubPiece>())
@@ -288,15 +289,6 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                         new XAttribute("HeightMm",    sp.HeightMm.ToString("G", IC)),
                         new XAttribute("Description", sp.Description ?? "")));
                 el.Add(spEl);
-                var tapEl = new XElement("TemelAltiParcalar");
-                foreach (var tap in bottom.TemelAltiParcalar ?? new List<TemelAltiParca>())
-                    tapEl.Add(new XElement("TAP",
-                        new XAttribute("Ad",      tap.Ad      ?? ""),
-                        new XAttribute("Boy",     tap.Boy.ToString("G", IC)),
-                        new XAttribute("En",      tap.En.ToString("G", IC)),
-                        new XAttribute("Kalinlik",tap.Kalinlik.ToString("G", IC)),
-                        new XAttribute("Malzeme", tap.Malzeme ?? "")));
-                el.Add(tapEl);
                 return el;
             }
 
@@ -328,8 +320,17 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
             var cover = c as CoverComponent;
             if (cover != null)
             {
-                el.Add(new XAttribute("LoadClass",       cover.LoadClass      ?? ""));
-                el.Add(new XAttribute("ClearOpeningMm",  cover.ClearOpeningMm.ToString("G", IC)));
+                el.Add(new XAttribute("LoadClass",      cover.LoadClass      ?? ""));
+                el.Add(new XAttribute("ClearOpeningMm", cover.ClearOpeningMm.ToString("G", IC)));
+                return el;
+            }
+
+            var tap = c as TemelAltiParcaComponent;
+            if (tap != null)
+            {
+                el.Add(new XAttribute("Boy",               tap.Boy.ToString("G", IC)));
+                el.Add(new XAttribute("En",                tap.En.ToString("G", IC)));
+                el.Add(new XAttribute("BaglandiTabanCapi", tap.BaglandiTabanCapiMm.ToString("G", IC)));
             }
 
             return el;
@@ -372,12 +373,13 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                 {
                     var b = new BottomElementComponent
                     {
-                        WallThicknessMm       = ParseDouble(el, "WallThicknessMm",       0),
-                        TabanKalinligiMm      = ParseDouble(el, "TabanKalinligiMm",      0),
-                        TopOpeningDiameterMm  = ParseDouble(el, "TopOpeningDiamMm",      0),
-                        IsComposite           = ParseBool  (el, "IsComposite",            false),
-                        TemelAltiParcaEnabled = ParseBool  (el, "TemelAltiParcaEnabled",  false),
-                        Footprint             = DeserializeFootprint(el.Element("Footprint"))
+                        WallThicknessMm      = ParseDouble(el, "WallThicknessMm",  0),
+                        TabanKalinligiMm     = ParseDouble(el, "TabanKalinligiMm", 0),
+                        TopOpeningDiameterMm = ParseDouble(el, "TopOpeningDiamMm", 0),
+                        FloorExternalVolume  = ParseDouble(el, "FloorExternalVolume", 0),
+                        FloorMaterialVolume  = ParseDouble(el, "FloorMaterialVolume", 0),
+                        IsComposite          = ParseBool  (el, "IsComposite",      false),
+                        Footprint            = DeserializeFootprint(el.Element("Footprint"))
                     };
                     var spEl = el.Element("SubPieces");
                     if (spEl != null)
@@ -387,17 +389,6 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                                 Name        = (string)sp.Attribute("Name")        ?? "",
                                 HeightMm    = ParseDouble(sp, "HeightMm",          0),
                                 Description = (string)sp.Attribute("Description") ?? ""
-                            });
-                    var tapListEl = el.Element("TemelAltiParcalar");
-                    if (tapListEl != null)
-                        foreach (var tap in tapListEl.Elements("TAP"))
-                            b.TemelAltiParcalar.Add(new TemelAltiParca
-                            {
-                                Ad       = (string)tap.Attribute("Ad")      ?? "",
-                                Boy      = ParseDouble(tap, "Boy",      0),
-                                En       = ParseDouble(tap, "En",       0),
-                                Kalinlik = ParseDouble(tap, "Kalinlik", 0),
-                                Malzeme  = (string)tap.Attribute("Malzeme") ?? ""
                             });
                     comp = b;
                     break;
@@ -429,6 +420,14 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                     {
                         LoadClass      = (string)el.Attribute("LoadClass") ?? "",
                         ClearOpeningMm = ParseDouble(el, "ClearOpeningMm", 0)
+                    };
+                    break;
+                case "TemelAltiParca":
+                    comp = new TemelAltiParcaComponent
+                    {
+                        Boy               = ParseDouble(el, "Boy",               0),
+                        En                = ParseDouble(el, "En",                0),
+                        BaglandiTabanCapiMm = ParseDouble(el, "BaglandiTabanCapi", 0)
                     };
                     break;
                 default: return null;

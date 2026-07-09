@@ -48,7 +48,13 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Services
                     foreach (var f in MasterCatalogXmlManager.ImportFamilies(path))
                         catalog.Families.Add(f);
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                // Corrupt/locked catalog → degrade to an empty family list, but leave a
+                // diagnostic trail rather than failing completely silently.
+                System.Diagnostics.Trace.WriteLine(
+                    $"[UrbanoMetraj] Akıllı Montaj parça kataloğu yüklenemedi: {ex.Message}");
+            }
 
             // Baca-Boru Bağlantı Kuralları (PipeRangeRule/SystemType) live in a SEPARATE
             // file from components (mirrors PipeCatalog's two-file pattern — see
@@ -68,7 +74,13 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Services
                         catalog.MasterPipeRules.Add(pr);
                 }
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                // A silent failure here leaves MasterPipeRules empty → every manhole
+                // fails Baca-Boru resolution with no clue why (see the note above).
+                System.Diagnostics.Trace.WriteLine(
+                    $"[UrbanoMetraj] Baca-Boru Bağlantı Kuralları yüklenemedi: {ex.Message}");
+            }
 
             return catalog;
         }

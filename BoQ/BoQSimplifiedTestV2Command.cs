@@ -10,6 +10,7 @@ using UrbanoMetraj.BoQ.Models;
 using UrbanoMetraj.BoQ.Services;
 using UrbanoMetraj.BoQ.TypeMapping.Services;
 using UrbanoMetraj.BoQ.UI;
+using UrbanoMetraj.BoQ.UI.NetworkPanel;
 
 using Exception = System.Exception;
 using MessageBox = System.Windows.Forms.MessageBox;
@@ -26,10 +27,10 @@ namespace UrbanoMetraj.BoQ
     /// Split (2026-07-04, user-directed) into two independent commands so
     /// engineering data linking (Tür Eşleştirme / Baca-Boru Bağlantı Kuralları)
     /// happens BEFORE the real calculation, not silently mid-run:
-    ///   • URBANO_BOQ         — pulls Urbano's export + parses it just enough
+    ///   • UT_BOQ         — pulls Urbano's export + parses it just enough
     ///                          to refresh the discovered-catalog-item list for
     ///                          linking. No geometry, no Manhole AI, no save.
-    ///   • URBANO_BOQ_HESAPLA — re-parses the last export and runs the full
+    ///   • UT_BOQ_HESAPLA — re-parses the last export and runs the full
     ///                          geometry + Manhole AI pipeline + save. No
     ///                          Urbano dialog automation needed here.
     /// Both surface any linking gaps (unlinked pipes, missing trench/Baca-Boru
@@ -47,11 +48,25 @@ namespace UrbanoMetraj.BoQ
         private static bool _reopenViewAfterSave;
         public static void RequestReopenView() => _reopenViewAfterSave = true;
 
+        // CAD Seçimi scope — set by UT_BOQ_CADSELECT, read by RunFullCalculation.
+        // Lifecycle is owned by BoQResultsDialog: it sets this to the picked scope for
+        // "CAD Seçimi" and back to null for "Tüm Aktif Ağlar" before each Hesapla, so a
+        // null here always means a whole-active-network calc.
+        public static SelectionScope PendingSelectionScope;
+        public static string         PendingSelectionSummary;
+
+        // "Son Seçilen": the last successful CAD pick this session, reused without
+        // re-picking. LastScopeMode lets the split button's main face repeat the last
+        // choice. All session-only (in-memory) by design.
+        public static SelectionScope LastCadScope;
+        public static string         LastCadSummary;
+        public static ScopeMode      LastScopeMode = ScopeMode.None;
+
         // =====================================================================
         // Command entry point
         // =====================================================================
 
-        [CommandMethod("URBANO_BOQ", CommandFlags.Modal)]
+        [CommandMethod("UT_BOQ", CommandFlags.Modal)]
         public void Run()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
@@ -128,12 +143,12 @@ namespace UrbanoMetraj.BoQ
         // =====================================================================
         // Data extraction only — AutoCAD main thread (Idle callback)
         //
-        // URBANO_BOQ's job is now limited to: pull Urbano's XML export, parse it
+        // UT_BOQ's job is now limited to: pull Urbano's XML export, parse it
         // (Phase 1 only — no geometry/clash/Manhole AI), and refresh the
         // discovered-catalog-item list so Tür Eşleştirme can link them. Running
         // the full geometry+Manhole AI pipeline before linking is complete
         // produces silently incomplete results (unresolved PozNo/Sınıf, manhole
-        // diameter/BOM) — see URBANO_BOQ_HESAPLA for the actual calculation,
+        // diameter/BOM) — see UT_BOQ_HESAPLA for the actual calculation,
         // meant to be run only after linking is done.
         // =====================================================================
 
@@ -147,11 +162,15 @@ namespace UrbanoMetraj.BoQ
 
             try
             {
-                var mappingDoc = Application.DocumentManager.MdiActiveDocument;
-                if (mappingDoc != null) TypeMappingStore.LoadFromDwg(mappingDoc.Database);
-
-                var parser = new BoQParserService(enableClashDetection: false);
-                BoQReport report = parser.Parse(xmlPath, ed);
+                // "Metraj Verisi Güncelle" only needs to refresh the Tür Eşleştirme
+                // discovered-item list, so we extract ONLY the export's catalog block
+                // — no full topology parse (nodes/sections/geometry/Manhole AI), whose
+                // BoQReport was discarded here anyway. This keeps the command fast no
+                // matter how many networks the drawing has. The real calc + save is
+                // UT_BOQ_HESAPLA. (Linking-completeness warnings are shown there,
+                // AFTER the user has had a chance to complete the mappings — showing
+                // them here, before linking, was premature noise.)
+                var items = BoQParserService.ExtractCatalogItems(xmlPath);
 
                 var activeDoc = Application.DocumentManager.MdiActiveDocument;
                 using (activeDoc.LockDocument())
@@ -159,12 +178,10 @@ namespace UrbanoMetraj.BoQ
                     // Discovered Urbano catalog items live inside the DWG (not the
                     // %TEMP% export file) so the Type Mapping tab works even after
                     // the DWG is moved to another machine — refreshed every run.
-                    TypeMappingNodManager.SaveDiscoveredItems(activeDoc.Database, report.CatalogItems);
+                    TypeMappingNodManager.SaveDiscoveredItems(activeDoc.Database, items);
                 }
 
-                PrintNotes(ed, report.DiscoveryNotes);
-
-                ed.WriteMessage("\n[BoQ] Veri çekme tamamlandı.\n");
+                ed.WriteMessage($"\n[BoQ] Veri çekme tamamlandı — {items.Count} katalog öğesi bulundu.\n");
             }
             catch (Exception ex)
             {
@@ -174,9 +191,9 @@ namespace UrbanoMetraj.BoQ
             {
                 InputBlocker.Hide();
                 // NOTE: the export XML is intentionally NOT deleted here — both
-                // URBANO_BOQ_HESAPLA and the Tür Eşleştirme tab read it after this
+                // UT_BOQ_HESAPLA and the Tür Eşleştirme tab read it after this
                 // command finishes. It's cleaned up at the START of the next
-                // URBANO_BOQ run (see the File.Delete a few lines above Run()'s
+                // UT_BOQ run (see the File.Delete a few lines above Run()'s
                 // beginning), so at most one stale file ever lingers, always
                 // representing "the last successful export".
 
@@ -188,7 +205,7 @@ namespace UrbanoMetraj.BoQ
 
                 if (reopen)
                     Application.DocumentManager.MdiActiveDocument?
-                        .SendStringToExecute("URBANO_BOQ_VIEW\n", true, false, true);
+                        .SendStringToExecute("UT_BOQ_VIEW\n", true, false, true);
             }
         }
 
@@ -204,17 +221,17 @@ namespace UrbanoMetraj.BoQ
         }
 
         // =====================================================================
-        // URBANO_BOQ_HESAPLA — full calculation command entry point
+        // UT_BOQ_HESAPLA — full calculation command entry point
         //
         // No Urbano dialog automation here: reuses the XML from the last
-        // successful URBANO_BOQ extraction. Meant to be run AFTER Tür
+        // successful UT_BOQ extraction. Meant to be run AFTER Tür
         // Eşleştirme / Baca-Boru Bağlantı Kuralları links are complete —
         // running it earlier still works (graceful degrade) but the linking
         // warnings below (and the BOM's own "(Catalog not found)" fallback
         // lines) will flag whatever is still missing.
         // =====================================================================
 
-        [CommandMethod("URBANO_BOQ_HESAPLA", CommandFlags.Modal)]
+        [CommandMethod("UT_BOQ_HESAPLA", CommandFlags.Modal)]
         public void RunCalculate()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
@@ -231,7 +248,7 @@ namespace UrbanoMetraj.BoQ
             {
                 MessageBox.Show(
                     "Henüz Urbano'dan veri çekilmemiş.\n\n" +
-                    "Önce \"Metraj Verisi Güncelle\" (URBANO_BOQ) ile Urbano ağ verisini çekin, " +
+                    "Önce \"Metraj Verisi Güncelle\" (UT_BOQ) ile Urbano ağ verisini çekin, " +
                     "gerekli eşleştirmeleri tamamlayın, sonra tekrar Hesapla'ya basın.",
                     "Veri Bulunamadı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
@@ -267,12 +284,54 @@ namespace UrbanoMetraj.BoQ
 
                 if (reopen)
                     Application.DocumentManager.MdiActiveDocument?
-                        .SendStringToExecute("URBANO_BOQ_VIEW\n", true, false, true);
+                        .SendStringToExecute("UT_BOQ_VIEW\n", true, false, true);
             }
         }
 
         // =====================================================================
-        // Full geometry + Manhole AI pipeline — shared body for URBANO_BOQ_HESAPLA
+        // UT_BOQ_CADSELECT — pick a drawing subset to calculate ("CAD Seçimi").
+        //
+        // The dialog closes itself and sends this command; it runs the layer-filtered
+        // selection, stores the picked scope in PendingSelectionScope, then reopens the
+        // Metraj window so the user can press Hesapla. Cancelling leaves the previous
+        // scope untouched and simply reopens the window.
+        // =====================================================================
+        [CommandMethod("UT_BOQ_CADSELECT", CommandFlags.Modal)]
+        public void RunCadSelect()
+        {
+            Document doc = Application.DocumentManager.MdiActiveDocument;
+            Editor   ed  = doc?.Editor;
+            if (doc == null) return;
+
+            try
+            {
+                var scope = CadSelectionScopeService.Prompt(doc, out string summary);
+                if (scope != null && !scope.IsEmpty)
+                {
+                    PendingSelectionScope   = scope;
+                    PendingSelectionSummary = summary;
+                    LastCadScope            = scope;          // enables "Son Seçilen"
+                    LastCadSummary          = summary;
+                    LastScopeMode           = ScopeMode.Cad;
+                    ed.WriteMessage($"\n[BoQ] CAD Seçimi: {summary}. 'Hesapla' ile hesaplayın.\n");
+                }
+                else
+                {
+                    ed.WriteMessage("\n[BoQ] CAD Seçimi iptal edildi / boş.\n");
+                }
+            }
+            catch (Exception ex)
+            {
+                ed?.WriteMessage($"\n[BoQ] CAD Seçimi hata: {ex.Message}\n");
+            }
+            finally
+            {
+                doc.SendStringToExecute("UT_BOQ_VIEW\n", true, false, true);
+            }
+        }
+
+        // =====================================================================
+        // Full geometry + Manhole AI pipeline — shared body for UT_BOQ_HESAPLA
         // =====================================================================
 
         private static void RunFullCalculation(Editor ed, string xmlPath, BoQSettings settings)
@@ -285,9 +344,49 @@ namespace UrbanoMetraj.BoQ
                 var mappingDoc = Application.DocumentManager.MdiActiveDocument;
                 if (mappingDoc != null) TypeMappingStore.LoadFromDwg(mappingDoc.Database);
 
-                // ── Phase 1: Parse ───────────────────────────────────────────────
+                // ── Phase 0: Active-network scope (URBANOLOCK — Ağ Seçimi) ───────
+                // Networks left unchecked in the panel are excluded from the
+                // calculation ENTIRELY — they are never parsed, so their sections/
+                // bacalar, their volumes AND their warnings/counts (DiscoveryNotes)
+                // are all scoped to the selected networks only. Only applies once the
+                // panel has scraped this drawing at least once (URBANO_NETWORKS NOD
+                // present); otherwise activeSystems stays null and the full drawing is
+                // calculated as before.
+                HashSet<string> activeSystems = null;
+                if (mappingDoc != null)
+                {
+                    NetworkSessionManager.InitializeFromDrawing(mappingDoc.Database);
+                    var knownNetworks = NetworkSessionManager.GetAllNetworks(mappingDoc.Database);
+                    if (knownNetworks.Count > 0)
+                    {
+                        activeSystems = new HashSet<string>(
+                            knownNetworks.Where(NetworkSessionManager.IsActive),
+                            StringComparer.OrdinalIgnoreCase);
+                        ed.WriteMessage(
+                            $"\n[BoQ] {activeSystems.Count}/{knownNetworks.Count} ağ aktif — " +
+                            "hesaplama yalnızca aktif ağlar için yapılıyor.\n");
+                    }
+                }
+
+                // ── Phase 0b: CAD Seçimi scope (narrows within the active networks) ──
+                // The picked subset was already restricted to active-network layers, so
+                // the active-network scope above still applies (keeps the parse cheap);
+                // the selection just narrows it further for clash + output. Only when
+                // nothing is marked active (empty set) do we drop to an unscoped parse,
+                // so the (empty) network filter can't wipe everything before the
+                // selection resolves.
+                var selectionScope = PendingSelectionScope;
+                if (selectionScope != null && !selectionScope.IsEmpty)
+                {
+                    if (activeSystems != null && activeSystems.Count == 0) activeSystems = null;
+                    ed.WriteMessage(
+                        $"\n[BoQ] CAD Seçimi kapsamında hesaplanıyor: {PendingSelectionSummary}.\n");
+                }
+
+                // ── Phase 1: Parse (scoped to active networks / CAD selection) ───
                 var parser = new BoQParserService(enableClashDetection: false);
-                BoQReport report = parser.Parse(xmlPath, ed, settings);
+                BoQReport report = parser.Parse(xmlPath, ed, settings, activeSystems, selectionScope);
+
                 var rows = report.SectionDebug;
 
                 if (rows.Count == 0)
@@ -426,8 +525,8 @@ namespace UrbanoMetraj.BoQ
                         string.Join("\n", report.DiscoveryNotes) +
                         "\n\nEksik eşleştirmeler nedeniyle Poz No/Sınıf, baca çapı veya " +
                         "Prefabrik Malzeme Listesi hatalı/eksik olabilir. Devam etmeden önce " +
-                        "Akıllı Montaj'dan (Tür Eşleştirme / Baca-Boru Bağlantı Kuralları) " +
-                        "eşleştirmeleri tamamlamanız önerilir.",
+                        "eşleştirmeleri Proje Ayarları'ndan (Tür Eşleştirme) ve " +
+                        "Akıllı Montaj'dan (Baca Seçim Kuralları) tamamlamanız önerilir.",
                         "Eksik Eşleştirme Uyarısı",
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }

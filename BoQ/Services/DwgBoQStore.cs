@@ -138,7 +138,11 @@ namespace UrbanoMetraj.BoQ.Services
                     Str(settings.DolguSeviyesi ?? "Kırmızı Kot"),
                     Str(settings.BacaKapakSeviyesi ?? "Kırmızı Kot"),
                     I16((short)settings.RingFillMode),
-                    I16((short)settings.NetLengthMode));
+                    I16((short)settings.NetLengthMode),
+                    I16((short)(settings.BacaBacaKaziHesapla ? 1 : 0)),
+                    I16((short)(settings.BacaAltiParcaEklensin ? 1 : 0)),
+                    I16((short)(settings.BacaKaziDisCapKullan ? 1 : 0)),
+                    Dbl(settings.MetrajDegiskenParcaBandM));
 
                 // Manhole lookup by system name (first wins on duplicate names).
                 var sysByName = new Dictionary<string, SystemBoQ>(StringComparer.Ordinal);
@@ -217,33 +221,93 @@ namespace UrbanoMetraj.BoQ.Services
                 // Update the ResultBuffer of the existing META XRecord in-place.
                 var rec = tr.GetObject(root.GetAt(K_META), OpenMode.ForWrite) as Xrecord;
                 if (rec != null)
-                {
-                    rec.Data = new ResultBuffer(
-                        Str(generatedAt.ToString("u")),
-                        I16((short)(settings.EnableClashDetection ? 1 : 0)),
-                        I16((short)settings.ExcavationOverlap),
-                        I16((short)settings.BackfillOverlap),
-                        I16((short)settings.ManholeType),
-                        I16((short)settings.Language),
-                        Str(settings.ManholeConfigPath ?? ""),
-                        Dbl(settings.SolidDisplayInterval),
-                        Dbl(settings.CrossSectionInterval),
-                        I16((short)(settings.BacaKaziHesapla ? 1 : 0)),
-                        Str(settings.BacaKirmiziKotSurface ?? "Arazi1"),
-                        Str(settings.BacaAraziKotuSurface ?? "Arazi1"),
-                        Str(settings.BacaTerrasmanKotuSurface ?? "Arazi1"),
-                        Str(settings.BacaKirmiziKotC3DSurface ?? ""),
-                        Str(settings.BacaAraziKotuC3DSurface ?? ""),
-                        Str(settings.BacaTerrasmanKotuC3DSurface ?? ""),
-                        Str(settings.KaziSeviyesi ?? "Kırmızı Kot"),
-                        Str(settings.DolguSeviyesi ?? "Kırmızı Kot"),
-                        Str(settings.BacaKapakSeviyesi ?? "Kırmızı Kot"),
-                        I16((short)settings.RingFillMode),
-                        I16((short)settings.NetLengthMode));
-                }
+                    rec.Data = new ResultBuffer(BuildMetaBuffer(generatedAt, settings));
 
                 tr.Commit();
             }
+        }
+
+        // =====================================================================
+        // SaveSettings — persists BoQSettings on their own, CREATING the
+        // URBANO_BOQ root + META record if the drawing has no BoQ store yet.
+        // Lets the "Genel Ayarlar" tab (Proje Ayarları window) edit + save the
+        // settings before any Metraj calculation has been run. When a report is
+        // already stored, the existing GeneratedAt timestamp is preserved and all
+        // pipe/station/network data is left untouched.
+        // =====================================================================
+
+        public static void SaveSettings(Database db, BoQSettings settings)
+        {
+            if (settings == null) return;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var nod = (DBDictionary)tr.GetObject(
+                    db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+                DBDictionary root;
+                if (nod.Contains(NOD_KEY))
+                {
+                    root = (DBDictionary)tr.GetObject(nod.GetAt(NOD_KEY), OpenMode.ForWrite);
+                }
+                else
+                {
+                    root = new DBDictionary { TreatElementsAsHard = true };
+                    nod.SetAt(NOD_KEY, root);
+                    tr.AddNewlyCreatedDBObject(root, true);
+                }
+
+                // Preserve an existing report's timestamp; otherwise stamp "now".
+                DateTime gen = DateTime.Now;
+                if (root.Contains(K_META))
+                {
+                    var existing = ReadXRecord(tr, root, K_META);
+                    if (existing != null && existing.Length > 0
+                        && existing[0].Value is string s
+                        && DateTime.TryParse(s, CultureInfo.InvariantCulture,
+                                             DateTimeStyles.None, out var g))
+                        gen = g;
+
+                    var old = tr.GetObject(root.GetAt(K_META), OpenMode.ForWrite);
+                    old.Erase();
+                }
+
+                MakeXRecord(tr, root, K_META, BuildMetaBuffer(gen, settings));
+                tr.Commit();
+            }
+        }
+
+        // Canonical META field order (append-only) — must stay in sync with the
+        // positional reader in Load(). Shared by UpdateSettings + SaveSettings.
+        private static TypedValue[] BuildMetaBuffer(DateTime generatedAt, BoQSettings s)
+        {
+            return new[]
+            {
+                Str(generatedAt.ToString("u")),
+                I16((short)(s.EnableClashDetection ? 1 : 0)),
+                I16((short)s.ExcavationOverlap),
+                I16((short)s.BackfillOverlap),
+                I16((short)s.ManholeType),
+                I16((short)s.Language),
+                Str(s.ManholeConfigPath ?? ""),
+                Dbl(s.SolidDisplayInterval),
+                Dbl(s.CrossSectionInterval),
+                I16((short)(s.BacaKaziHesapla ? 1 : 0)),
+                Str(s.BacaKirmiziKotSurface ?? "Arazi1"),
+                Str(s.BacaAraziKotuSurface ?? "Arazi1"),
+                Str(s.BacaTerrasmanKotuSurface ?? "Arazi1"),
+                Str(s.BacaKirmiziKotC3DSurface ?? ""),
+                Str(s.BacaAraziKotuC3DSurface ?? ""),
+                Str(s.BacaTerrasmanKotuC3DSurface ?? ""),
+                Str(s.KaziSeviyesi ?? "Kırmızı Kot"),
+                Str(s.DolguSeviyesi ?? "Kırmızı Kot"),
+                Str(s.BacaKapakSeviyesi ?? "Kırmızı Kot"),
+                I16((short)s.RingFillMode),
+                I16((short)s.NetLengthMode),
+                I16((short)(s.BacaBacaKaziHesapla ? 1 : 0)),
+                I16((short)(s.BacaAltiParcaEklensin ? 1 : 0)),
+                I16((short)(s.BacaKaziDisCapKullan ? 1 : 0)),
+                Dbl(s.MetrajDegiskenParcaBandM)
+            };
         }
 
         // =====================================================================
@@ -299,7 +363,13 @@ namespace UrbanoMetraj.BoQ.Services
                     DolguSeviyesi       = mi < meta.Length ? ReadStr(meta, ref mi) : "Kırmızı Kot",
                     BacaKapakSeviyesi   = mi < meta.Length ? ReadStr(meta, ref mi) : "Kırmızı Kot",
                     RingFillMode        = mi < meta.Length ? (RingFillMode)ReadI16(meta, ref mi) : RingFillMode.Greedy,
-                    NetLengthMode       = mi < meta.Length ? (NetLengthMode)ReadI16(meta, ref mi) : NetLengthMode.OuterDiameter
+                    NetLengthMode       = mi < meta.Length ? (NetLengthMode)ReadI16(meta, ref mi) : NetLengthMode.OuterDiameter,
+                    BacaBacaKaziHesapla = mi < meta.Length && ReadI16(meta, ref mi) != 0,
+                    BacaAltiParcaEklensin = mi < meta.Length && ReadI16(meta, ref mi) != 0,
+                    // Absent in older DWGs → default true (Dış Çap), matching BoQSettings.
+                    BacaKaziDisCapKullan = mi >= meta.Length || ReadI16(meta, ref mi) != 0,
+                    // Metraj variable-piece height band (m). Absent in older DWGs → 0.5.
+                    MetrajDegiskenParcaBandM = mi < meta.Length ? ReadDbl(meta, ref mi) : 0.5
                 };
 
                 var report = new BoQReport();
@@ -486,15 +556,15 @@ namespace UrbanoMetraj.BoQ.Services
             // re-runs ManholeAIService.Process()).
             foreach (var m in mhs)
             {
-                var parts = m.ResolvedSubBaseParts ?? new List<TemelAltiParca>();
+                var parts = m.ResolvedSubBaseParts ?? new List<TemelAltiParcaComponent>();
                 tvs.Add(I32(parts.Count));
                 foreach (var p in parts)
                 {
-                    tvs.Add(Str(p.Ad ?? ""));
+                    tvs.Add(Str(p.Name     ?? ""));
                     tvs.Add(Dbl(p.Boy));
                     tvs.Add(Dbl(p.En));
-                    tvs.Add(Dbl(p.Kalinlik));
-                    tvs.Add(Str(p.Malzeme ?? ""));
+                    tvs.Add(Dbl(p.EffectiveHeight));
+                    tvs.Add(Str(p.Aciklama ?? ""));
                 }
             }
 
@@ -615,16 +685,16 @@ namespace UrbanoMetraj.BoQ.Services
             foreach (var m in sys.Manholes)
             {
                 int partCount = ReadI32(tvs, ref i);
-                var parts = new List<TemelAltiParca>(partCount);
+                var parts = new List<TemelAltiParcaComponent>(partCount);
                 for (int p = 0; p < partCount && i < tvs.Length; p++)
                 {
-                    parts.Add(new TemelAltiParca
+                    parts.Add(new TemelAltiParcaComponent
                     {
-                        Ad       = ReadStr(tvs, ref i),
-                        Boy      = ReadDbl(tvs, ref i),
-                        En       = ReadDbl(tvs, ref i),
-                        Kalinlik = ReadDbl(tvs, ref i),
-                        Malzeme  = ReadStr(tvs, ref i)
+                        Name            = ReadStr(tvs, ref i),
+                        Boy             = ReadDbl(tvs, ref i),
+                        En              = ReadDbl(tvs, ref i),
+                        EffectiveHeight = ReadDbl(tvs, ref i),
+                        Aciklama        = ReadStr(tvs, ref i)
                     });
                 }
                 m.ResolvedSubBaseParts = parts;

@@ -9,8 +9,10 @@ obj/
 *.userosscache
 *.sln.docstates
 
-# Build logs (versioned per session to avoid DLL lock)
+# Build logs + any per-session versioned build scripts (avoid DLL-lock sprawl).
+# The canonical script is build.bat <suffix>; build_v*.bat are regenerated locals.
 build_v*.txt
+build_v*.bat
 
 # NuGet
 packages/

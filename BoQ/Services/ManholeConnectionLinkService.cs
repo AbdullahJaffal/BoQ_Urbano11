@@ -39,6 +39,7 @@ namespace UrbanoMetraj.BoQ.Services
                     lookup[m.NodeName] = m;
                     m.Inlets.Clear();
                     m.Outlets.Clear();
+                    m.TotalPipeExcavOverlap = 0;
                 }
             }
             if (lookup.Count == 0) return;
@@ -56,6 +57,7 @@ namespace UrbanoMetraj.BoQ.Services
                         NetLength        = s.NetLength,
                         SystemName       = s.SystemName
                     });
+                    inletMh.TotalPipeExcavOverlap += s.ManholeExcavDeducted;
                 }
 
                 if (lookup.TryGetValue(s.StartNodeName ?? "", out var outletMh))
@@ -69,6 +71,7 @@ namespace UrbanoMetraj.BoQ.Services
                         NetLength        = s.NetLength,
                         SystemName       = s.SystemName
                     });
+                    outletMh.TotalPipeExcavOverlap += s.ManholeExcavDeducted;
                 }
             }
         }

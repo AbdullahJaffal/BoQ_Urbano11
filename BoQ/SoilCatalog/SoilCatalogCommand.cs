@@ -7,12 +7,12 @@ using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
 namespace UrbanoMetraj.BoQ.SoilCatalog
 {
     /// <summary>
-    /// SOIL_CATALOG   Opens the shared Akıllı Montaj window on the
+    /// UT_SOIL_CATALOG   Opens the shared Akıllı Montaj window on the
     ///                "Zemin Kataloğu" tab (formerly a standalone window).
     /// </summary>
     public class SoilCatalogCommand
     {
-        [CommandMethod("SOIL_CATALOG")]
+        [CommandMethod("UT_SOIL_CATALOG")]
         public void ShowSoilCatalog()
         {
             SmartAssemblyCommand.ShowWindowOnTab(SmartAssemblyMainVm.TAB_SOIL_CATALOG);

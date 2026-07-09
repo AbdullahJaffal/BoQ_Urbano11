@@ -15,7 +15,7 @@ using Exception = System.Exception;
 namespace UrbanoMetraj.BoQ
 {
     /// <summary>
-    /// MANHOLE_ASSIGN — lets the user select manholes in the DWG, choose a
+    /// UT_MANHOLE_ASSIGN — lets the user select manholes in the DWG, choose a
     /// ManholeCatalog group, and saves the mapping AG_GUID → GroupId to NOD.
     ///
     /// Stored under: URBANO_BOQ → MANHOLE_ASSIGNMENTS
@@ -24,7 +24,7 @@ namespace UrbanoMetraj.BoQ
     /// </summary>
     public class ManholeAssignCommand
     {
-        [CommandMethod("MANHOLE_ASSIGN", CommandFlags.Modal)]
+        [CommandMethod("UT_MANHOLE_ASSIGN", CommandFlags.Modal)]
         public void AssignCatalogToManholes()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
@@ -142,7 +142,7 @@ namespace UrbanoMetraj.BoQ
             }
             catch (Exception ex)
             {
-                ed?.WriteMessage($"\nMANHOLE_ASSIGN hata: {ex.Message}");
+                ed?.WriteMessage($"\nUT_MANHOLE_ASSIGN hata: {ex.Message}");
             }
         }
 

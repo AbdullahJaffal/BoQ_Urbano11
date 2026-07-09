@@ -26,7 +26,11 @@ namespace UrbanoMetraj.BoQ.DolguCatalog.Services
                 foreach (var d in DolguCatalogXmlManager.LoadInternal())
                     list.Add(d);
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine(
+                    $"[UrbanoMetraj] Dolgu kataloğu yüklenemedi: {ex.Message}");
+            }
             return list;
         }
     }

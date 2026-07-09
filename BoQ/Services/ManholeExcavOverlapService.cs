@@ -422,6 +422,13 @@ namespace UrbanoMetraj.BoQ.Services
             var lines = new List<string>();
             if (report?.Systems == null || report.SectionDebug == null) return lines;
 
+            // Reset before accumulating (safe to call multiple times).
+            foreach (var mh0 in report.Systems.SelectMany(sys => sys.Manholes))
+            {
+                mh0.ManholeVsManholeExcavDeducted    = 0;
+                mh0.ManholeVsManholeBackfillDeducted = 0;
+            }
+
             var outlets = report.SectionDebug
                 .Where(s => s.StartNodeName != null)
                 .GroupBy(s => s.StartNodeName, StringComparer.OrdinalIgnoreCase)
@@ -500,13 +507,23 @@ namespace UrbanoMetraj.BoQ.Services
                     var halfPlane = BuildHalfPlane(mHigh, mLow, zTouch);
                     if (halfPlane == null) continue;
 
-                    // Build geo segments for both manholes
-                    BuildGeoSegments(mHigh, mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: true);
-                    BuildGeoSegments(mLow,  mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: false);
+                    // Build geo segments for both manholes (Kazı-basis; persisted onto
+                    // GeoLower/GeoUpper for the diagnostic print below, as before).
+                    var (loHigh, upHigh) = BuildGeoSegments(mHigh, mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: true);
+                    var (loLow,  upLow)  = BuildGeoSegments(mLow,  mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: false);
+                    mHigh.Mh.GeoLower = loHigh; mHigh.Mh.GeoUpper = upHigh;
+                    mLow.Mh.GeoLower  = loLow;  mLow.Mh.GeoUpper  = upLow;
 
                     // Volumes
-                    double volHigh = EffectiveVolume(mHigh.Mh);
-                    double volLow  = EffectiveVolume(mLow.Mh);
+                    double volHigh = EffectiveVolume(loHigh, upHigh);
+                    double volLow  = EffectiveVolume(loLow,  upLow);
+
+                    // Bacalar Arası Kazı Çakışması (user directive 2026-07-07): accumulate
+                    // this pair's contribution — additive across every neighbour a manhole
+                    // overlaps, since the delta is read right after each pair instead of
+                    // relying on the (single-pair-only) GeoLower/GeoUpper fields above.
+                    mHigh.Mh.ManholeVsManholeExcavDeducted += Math.Max(0, mHigh.Mh.ExcavationVolume - volHigh);
+                    mLow.Mh.ManholeVsManholeExcavDeducted  += Math.Max(0, mLow.Mh.ExcavationVolume  - volLow);
 
                     lines.Add(
                         $"\n  [{mHigh.Mh.NodeName}](HIGH) & [{mLow.Mh.NodeName}](LOW)" +
@@ -522,6 +539,89 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             }
 
+            // ── Bacalar Arası Kazı Çakışması — Dolgu-basis pass ──────────────────
+            // Same half-plane geometric split, run independently against each
+            // manhole's Dolgu Z-range (ZDolgu/DolguFinalDepth) rather than reusing
+            // the Kazı-basis zTouch/segments above — the two pits can differ in
+            // extent (independence convention used throughout this pipeline).
+            // GeoLower/GeoUpper are NOT overwritten here (those stay Kazı-only,
+            // per their doc comments) — only the deducted volume is accumulated.
+            var allDolgu = new List<MhInfo>();
+            foreach (var sys in report.Systems)
+            {
+                foreach (var mh in sys.Manholes)
+                {
+                    if (mh.DolguInvalid || mh.DolguFinalDepth <= 1e-6) continue;
+                    double zTopD    = mh.ZDolgu;
+                    double zBottomD = zTopD - mh.DolguFinalDepth;
+                    double rot      = ComputeRotationAngle(mh, outlets, inlets);
+                    double halfTop  = mh.ExcavBaseSideM / 2.0 + mh.DolguFinalDepth * mh.ExcavSlopeRatio;
+                    double extent   = halfTop * (Math.Abs(Math.Cos(rot)) + Math.Abs(Math.Sin(rot)));
+                    allDolgu.Add(new MhInfo
+                    {
+                        Mh         = mh,
+                        ZTop       = zTopD,
+                        ZBottom    = zBottomD,
+                        RotAngle   = rot,
+                        BaseSideM  = mh.ExcavBaseSideM,
+                        SlopeRatio = mh.ExcavSlopeRatio,
+                        AabbMinX   = mh.X - extent,
+                        AabbMaxX   = mh.X + extent,
+                        AabbMinY   = mh.Y - extent,
+                        AabbMaxY   = mh.Y + extent,
+                    });
+                }
+            }
+
+            for (int i = 0; i < allDolgu.Count - 1; i++)
+            {
+                for (int j = i + 1; j < allDolgu.Count; j++)
+                {
+                    var a = allDolgu[i];
+                    var b = allDolgu[j];
+
+                    if (a.AabbMaxX < b.AabbMinX || b.AabbMaxX < a.AabbMinX) continue;
+                    if (a.AabbMaxY < b.AabbMinY || b.AabbMaxY < a.AabbMinY) continue;
+
+                    double dist = Math.Sqrt(
+                        (a.Mh.X - b.Mh.X) * (a.Mh.X - b.Mh.X) +
+                        (a.Mh.Y - b.Mh.Y) * (a.Mh.Y - b.Mh.Y));
+                    if (dist < 1e-6) continue;
+
+                    double avgBaseSideM  = (a.BaseSideM  + b.BaseSideM)  / 2.0;
+                    double avgSlopeRatio = (a.SlopeRatio + b.SlopeRatio) / 2.0;
+                    double zTouchRaw = avgSlopeRatio > 1e-9
+                        ? (dist - avgBaseSideM) / (2.0 * avgSlopeRatio) + (a.ZBottom + b.ZBottom) / 2.0
+                        : Math.Max(a.ZBottom, b.ZBottom);
+                    double zTopEff   = Math.Min(a.ZTop, b.ZTop);
+                    double zTouch    = Math.Max(zTouchRaw, Math.Max(a.ZBottom, b.ZBottom));
+                    if (zTouch >= zTopEff) continue;
+
+                    var mHigh = a.ZBottom >= b.ZBottom ? a : b;
+                    var mLow  = a.ZBottom >= b.ZBottom ? b : a;
+
+                    var halfPlane = BuildHalfPlane(mHigh, mLow, zTouch);
+                    if (halfPlane == null) continue;
+
+                    var (loHigh, upHigh) = BuildGeoSegments(mHigh, mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: true);
+                    var (loLow,  upLow)  = BuildGeoSegments(mLow,  mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: false);
+
+                    double volHighD = EffectiveVolume(loHigh, upHigh);
+                    double volLowD  = EffectiveVolume(loLow,  upLow);
+
+                    double deductedHigh = Math.Max(0, mHigh.Mh.BackfillVolume - volHighD);
+                    double deductedLow  = Math.Max(0, mLow.Mh.BackfillVolume  - volLowD);
+                    mHigh.Mh.ManholeVsManholeBackfillDeducted += deductedHigh;
+                    mLow.Mh.ManholeVsManholeBackfillDeducted  += deductedLow;
+
+                    lines.Add(
+                        $"\n  [{mHigh.Mh.NodeName}](HIGH) & [{mLow.Mh.NodeName}](LOW)  (Dolgu)" +
+                        $"  dist={dist:F3}  zTouch={zTouch:F3}  zTopEff={zTopEff:F3}" +
+                        $"\n    BackfillOverlap  {mHigh.Mh.NodeName}={deductedHigh:F4} m3" +
+                        $"   {mLow.Mh.NodeName}={deductedLow:F4} m3");
+                }
+            }
+
             return lines;
         }
 
@@ -532,7 +632,7 @@ namespace UrbanoMetraj.BoQ.Services
         /// GeoLower spans ZBottom → zTouch (pure raw, no intersection).
         /// GeoUpper spans zTouch  → zTopEff (intersection zone, Inside/Outside split).
         /// </summary>
-        private static void BuildGeoSegments(
+        private static (ManholeGeoSegment Lower, ManholeGeoSegment Upper) BuildGeoSegments(
             MhInfo self,
             MhInfo mHigh, MhInfo mLow,
             double zTouch, double zTopEff,
@@ -540,36 +640,36 @@ namespace UrbanoMetraj.BoQ.Services
             bool isHigh)
         {
             var mh = self.Mh;
+            ManholeGeoSegment lower = null, upper = null;
 
             // ── Lower segment: ZBottom → zTouch ──────────────────────────────
             double hLower = zTouch - self.ZBottom;
             if (hLower > 1e-6)
             {
                 double zLowerMid = self.ZBottom + hLower * 0.5;
-                mh.GeoLower = new ManholeGeoSegment
+                lower = new ManholeGeoSegment
                 {
                     Bottom = MakeRawLevel(mh.X, mh.Y, self.ZBottom, self.ZBottom, self.RotAngle, self.BaseSideM, self.SlopeRatio),
                     Mid    = MakeRawLevel(mh.X, mh.Y, self.ZBottom, zLowerMid,   self.RotAngle, self.BaseSideM, self.SlopeRatio),
                     Top    = MakeRawLevel(mh.X, mh.Y, self.ZBottom, zTouch,      self.RotAngle, self.BaseSideM, self.SlopeRatio),
                 };
             }
-            else
-            {
-                mh.GeoLower = null;  // zTouch == ZBottom, no lower zone
-            }
+            // else: zTouch == ZBottom, no lower zone — leave lower == null
 
             // ── Upper segment: zTouch → zTopEff ──────────────────────────────
             double hUpper = zTopEff - zTouch;
             if (hUpper > 1e-6)
             {
                 double zUpperMid = zTouch + hUpper * 0.5;
-                mh.GeoUpper = new ManholeGeoSegment
+                upper = new ManholeGeoSegment
                 {
                     Bottom = MakeUpperLevel(mh, self, mHigh, mLow, zTouch,    halfPlane, isHigh),
                     Mid    = MakeUpperLevel(mh, self, mHigh, mLow, zUpperMid, halfPlane, isHigh),
                     Top    = MakeUpperLevel(mh, self, mHigh, mLow, zTopEff,   halfPlane, isHigh),
                 };
             }
+
+            return (lower, upper);
         }
 
         private static ManholeGeoLevel MakeRawLevel(
@@ -735,10 +835,10 @@ namespace UrbanoMetraj.BoQ.Services
         /// Effective excavation volume = lower segment (full raw) + upper segment
         /// (exclusive zone + this manhole's Inside share).
         /// </summary>
-        private static double EffectiveVolume(ManholeItem mh)
+        private static double EffectiveVolume(ManholeGeoSegment lower, ManholeGeoSegment upper)
         {
-            return SegmentVolume(mh.GeoLower, includeInside: false) +
-                   SegmentVolume(mh.GeoUpper, includeInside: true);
+            return SegmentVolume(lower, includeInside: false) +
+                   SegmentVolume(upper, includeInside: true);
         }
 
         private static double SegmentVolume(ManholeGeoSegment seg, bool includeInside)
