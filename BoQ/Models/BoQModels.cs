@@ -119,6 +119,12 @@ namespace UrbanoMetraj.BoQ.Models
         /// <summary>Urbano's own MANHOLE catalog item GUID (the "MH" node property) — used to resolve a Type Mapping link.</summary>
         public string MhGuid             { get; set; }
 
+        /// <summary>The topology node's AG_GUID (@g) — the key a per-network manhole exception matches on.</summary>
+        public string AgGuid             { get; set; }
+
+        /// <summary>Owning network name (SectionDebugRow.SystemName) — set at build; needed to look up per-network project rules.</summary>
+        public string SystemName         { get; set; }
+
         /// <summary>
         /// The ACTUAL footprint of the resolved precast Taban component (set by
         /// ManholeAIService.ResolveFamilyAndTaban, right after Diameter/DrawnLengthM/

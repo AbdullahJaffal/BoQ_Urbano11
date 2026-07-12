@@ -12,6 +12,7 @@ using UrbanoMetraj.BoQ.PipeTrenchCatalog.Models;
 using UrbanoMetraj.BoQ.PipeTrenchCatalog.Services;
 using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 using UrbanoMetraj.BoQ.PipeCatalogs.Services;
+using UrbanoMetraj.BoQ.ProjectRules.Services;
 using UrbanoMetraj.BoQ.TypeMapping.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
 
@@ -792,6 +793,52 @@ namespace UrbanoMetraj.BoQ.Services
         // Step 4 – Parse topology sections
         // =====================================================================
 
+        /// <summary>
+        /// Builds an AG_GUID → display-name map from an ARS_EXPORT_XML file, for the Proje Kuralları
+        /// exception UI (turns picked entity GUIDs into readable manhole / pipe names). Nodes map to
+        /// their AG_NAME; sections map to "startNode → endNode". Returns an empty (case-insensitive)
+        /// map if the file is missing or unreadable. Reuses the parser's own topo decoders so it
+        /// stays in sync with the real parse (no duplicated hex-float logic).
+        /// </summary>
+        public static Dictionary<string, string> BuildEntityNameMap(string xmlPath)
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrEmpty(xmlPath) || !File.Exists(xmlPath)) return map;
+
+            XDocument doc;
+            try   { doc = LoadXmlRobust(xmlPath); }
+            catch { return map; }
+
+            var tplMain = FindMainTpl(doc);
+            if (tplMain == null) return map;
+
+            // Nodes (manholes) — AG_NAME.
+            var nodeName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var nEl in tplMain.Descendants("ns").Elements("n"))
+            {
+                string guid = ((string)nEl.Attribute("g") ?? "").ToUpperInvariant();
+                if (string.IsNullOrEmpty(guid)) continue;
+                string name = DecodeStrProp(GetProp(ReadTopoProps(nEl), "AG_NAME"));
+                if (string.IsNullOrEmpty(name)) name = guid.Substring(0, Math.Min(8, guid.Length));
+                nodeName[guid] = name;
+                map[guid]      = name;
+            }
+
+            // Sections (pipes) — "startNode → endNode".
+            foreach (var sEl in tplMain.Descendants("ss").Elements("s"))
+            {
+                string guid = ((string)sEl.Attribute("g") ?? "").ToUpperInvariant();
+                if (string.IsNullOrEmpty(guid)) continue;
+                string sn = ((string)sEl.Attribute("sn") ?? "").ToUpperInvariant();
+                string en = ((string)sEl.Attribute("en") ?? "").ToUpperInvariant();
+                string snN = nodeName.TryGetValue(sn, out var a) ? a : (sn.Length >= 8 ? sn.Substring(0, 8) : sn);
+                string enN = nodeName.TryGetValue(en, out var b) ? b : (en.Length >= 8 ? en.Substring(0, 8) : en);
+                map[guid] = snN + " → " + enN;
+            }
+
+            return map;
+        }
+
         private static List<SectionInfo> ParseSections(
             XDocument doc,
             Dictionary<string, Dictionary<string, string>> catDict,
@@ -885,24 +932,63 @@ namespace UrbanoMetraj.BoQ.Services
                 // consistent in our catalog).
                 string linkedPozNo = "", linkedSinif = "", linkedAciklama = "";
                 Guid   linkedPipeFamilyId = Guid.Empty;
-                var pipeLink = TypeMappingStore.FindPipeLink(pprGuid);
-                if (pipeLink != null && pipeLink.LinkedPipeDefinitionId != Guid.Empty)
-                {
-                    var linkedPipe = FindPipeDefinitionById(pipeLink.LinkedPipeDefinitionId, out PipeFamily linkedFamily);
-                    if (linkedPipe != null)
-                    {
-                        linkedPozNo       = linkedPipe.PozNo    ?? "";
-                        linkedSinif       = linkedPipe.Sinif    ?? "";
-                        linkedAciklama    = linkedPipe.Aciklama ?? "";
-                        linkedPipeFamilyId = linkedFamily?.Id ?? Guid.Empty;
 
-                        if (linkedPipe.OuterDiameter > 0)
-                            odMm = linkedPipe.OuterDiameter;
+                if (ProjectRulesStore.IsRulesMode)
+                {
+                    // RULES mode: resolve from the pipe's network (family + class), overridden by a
+                    // per-pipe family exception (keyed by the section's AG_GUID = @g). The drawn
+                    // nominal (inner) diameter picks the PipeDefinition within that family/class.
+                    string sysName = sysNames.ContainsKey(sysId) ? sysNames[sysId] : $"System_{sysId}";
+                    var netRule = ProjectRulesStore.FindNetwork(sysName);
+
+                    Guid   famId = Guid.Empty;
+                    string sinif = "";
+                    var pipeEx = netRule?.Exceptions?.FindPipe(guid);
+                    if (pipeEx != null && pipeEx.PipeFamilyId != Guid.Empty)
+                    {
+                        famId = pipeEx.PipeFamilyId; sinif = pipeEx.PipeSinif ?? "";
+                    }
+                    else if (netRule != null && netRule.PipeFamilyId != Guid.Empty)
+                    {
+                        famId = netRule.PipeFamilyId; sinif = netRule.PipeSinif ?? "";
+                    }
+
+                    PipeDefinition rp = famId != Guid.Empty
+                        ? FindPipeInFamily(famId, sinif, nomMm) : null;
+                    if (rp != null)
+                    {
+                        linkedPozNo        = rp.PozNo    ?? "";
+                        linkedSinif        = rp.Sinif    ?? "";
+                        linkedAciklama     = rp.Aciklama ?? "";
+                        linkedPipeFamilyId = famId;
+                        if (rp.OuterDiameter > 0) odMm = rp.OuterDiameter;
+                    }
+                    else
+                    {
+                        unlinkedPipeCount++;   // no family/class chosen, or no DN match in the catalog
                     }
                 }
-                else if (!string.IsNullOrEmpty(pprGuid))
+                else
                 {
-                    unlinkedPipeCount++;
+                    var pipeLink = TypeMappingStore.FindPipeLink(pprGuid);
+                    if (pipeLink != null && pipeLink.LinkedPipeDefinitionId != Guid.Empty)
+                    {
+                        var linkedPipe = FindPipeDefinitionById(pipeLink.LinkedPipeDefinitionId, out PipeFamily linkedFamily);
+                        if (linkedPipe != null)
+                        {
+                            linkedPozNo       = linkedPipe.PozNo    ?? "";
+                            linkedSinif       = linkedPipe.Sinif    ?? "";
+                            linkedAciklama    = linkedPipe.Aciklama ?? "";
+                            linkedPipeFamilyId = linkedFamily?.Id ?? Guid.Empty;
+
+                            if (linkedPipe.OuterDiameter > 0)
+                                odMm = linkedPipe.OuterDiameter;
+                        }
+                    }
+                    else if (!string.IsNullOrEmpty(pprGuid))
+                    {
+                        unlinkedPipeCount++;
+                    }
                 }
 
                 double odM = odMm / 1000.0;
@@ -1303,6 +1389,21 @@ namespace UrbanoMetraj.BoQ.Services
             return null;
         }
 
+        // RULES mode: finds the PipeDefinition in family <familyId> whose class matches <sinif>
+        // (any class when sinif is empty) and whose NominalDiameter equals the drawn inner Ø <nomMm>.
+        // Exact diameter match (same convention as Tür Eşleştirme's auto-fill) — a miss surfaces a
+        // catalog gap (unresolved Poz/Sınıf) instead of silently substituting a wrong pipe.
+        private static PipeDefinition FindPipeInFamily(Guid familyId, string sinif, int nomMm)
+        {
+            var catalog = PipeCatalogStore.Current;
+            var fam = catalog?.Families?.FirstOrDefault(f => f.Id == familyId);
+            if (fam?.Pipes == null) return null;
+            bool anySinif = string.IsNullOrEmpty(sinif);
+            return fam.Pipes.FirstOrDefault(p =>
+                (anySinif || string.Equals(p.Sinif ?? "", sinif, StringComparison.OrdinalIgnoreCase)) &&
+                Math.Abs(p.NominalDiameter - nomMm) < 1e-6);
+        }
+
         private static double SumLayerThickness(IEnumerable<TrenchLayer> layers)
         {
             double sum = 0;
@@ -1623,6 +1724,8 @@ namespace UrbanoMetraj.BoQ.Services
                     boq.Manholes.Add(new ManholeItem
                     {
                         NodeName          = nd.Name,
+                        SystemName        = sysName,
+                        AgGuid            = nd.Guid,
                         X                 = nd.X,
                         Y                 = nd.Y,
                         TerrainElevation  = nd.TerrainZ,

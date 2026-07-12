@@ -7,6 +7,8 @@ using OfficeOpenXml;
 using UrbanoMetraj.BoQ.Models;
 using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models;
 using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Services;
+using UrbanoMetraj.BoQ.ProjectRules.Models;
+using UrbanoMetraj.BoQ.ProjectRules.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
 using UrbanoMetraj.BoQ.SmartAssembly.Services;
 using UrbanoMetraj.BoQ.TypeMapping.Services;
@@ -144,11 +146,18 @@ namespace UrbanoMetraj.BoQ.Services
         /// resolved per manhole via its Type Mapping link — the old Manhole_Catalog.xlsx
         /// dictionary is no longer consulted (single unified manhole catalog).
         /// </summary>
+        // RULES-mode per-manhole resolution failures, grouped and surfaced by Process (reset each run).
+        private static readonly List<(string Node, string Reason)> _rulesResolveFails =
+            new List<(string, string)>();
+        private static void RulesFail(ManholeItem mh, string reason)
+            => _rulesResolveFails.Add((mh.NodeName, reason));
+
         public static void Process(
             BoQReport   report,
             BoQSettings settings)
         {
             if (report == null) return;
+            _rulesResolveFails.Clear();
 
             int unresolvedCount     = 0;
             int excavUnresolvedCount = 0;
@@ -200,6 +209,13 @@ namespace UrbanoMetraj.BoQ.Services
             foreach (var kv in constraintViolationsByReason)
                 report.DiscoveryNotes.Add(
                     $"[WARN] Parça Kısıtları (Min/Maks) — {kv.Key}: {string.Join(", ", kv.Value)} — Prefabrik Malzeme Listesi eksik/hatalı olabilir.");
+
+            // RULES mode: replace the generic "no match" note above with the actual per-cause reasons,
+            // so the user can tell an unconfigured network from a Baca Çapı ↔ Taban mismatch.
+            if (_rulesResolveFails.Count > 0)
+                foreach (var g in _rulesResolveFails.GroupBy(x => x.Reason))
+                    report.DiscoveryNotes.Add(
+                        $"[WARN] Kurallar modu — {g.Key}: {string.Join(", ", g.Select(x => x.Node))}");
         }
 
         // =====================================================================
@@ -299,8 +315,15 @@ namespace UrbanoMetraj.BoQ.Services
                 $"Baca {diamTag} - ({mh.ValidInletCount} Giris / {mh.ValidOutletCount} Cikis){dropNote}";
 
             // ── Stacking — both scenarios cached simultaneously ───────────────
+            // RULES mode: restrict the shaft pieces to the heights the user left enabled in
+            // "Kullanımdan Parça Çıkar" for this (family, diameter). TypeMapping mode is unchanged.
+            var stackFamily = family;
+            if (ProjectRulesStore.IsRulesMode && family != null && taban != null)
+                stackFamily = RulesStackFamily(family, taban.TopOpeningDiameterMm,
+                                               ProjectRulesStore.FindNetwork(mh.SystemName));
+
             mh.StackPreCast = (family != null && taban != null)
-                ? ComputeFamilyStack(mh.Depth, mh.Diameter, family, taban, matchedTier, ringFillMode)
+                ? ComputeFamilyStack(mh.Depth, mh.Diameter, stackFamily, taban, matchedTier, ringFillMode)
                 : null;
 
             // Baca Altı Beton Parçası (user directive 2026-07-07): appended to the
@@ -364,6 +387,14 @@ namespace UrbanoMetraj.BoQ.Services
             family = null;
             taban  = null;
             tier   = null;
+
+            // RULES mode: resolve from the per-network project rules instead of Tür Eşleştirme +
+            // MasterPipeRules. Separate path so the TypeMapping code below stays byte-for-byte intact.
+            if (ProjectRulesStore.IsRulesMode)
+            {
+                ResolveFamilyAndTabanRules(mh, inlets, outlets, out family, out taban, out tier);
+                return;
+            }
 
             var governingPipe = inlets.Concat(outlets)
                 .Where(s => s.LinkedPipeFamilyId != Guid.Empty)
@@ -462,6 +493,133 @@ namespace UrbanoMetraj.BoQ.Services
             // by PipeNetLengthService, which must reduce by the manhole's actual
             // outer shell, not by how it happened to be drawn in the DWG.
             mh.ResolvedFootprint = taban.Footprint;
+        }
+
+        /// <summary>
+        /// RULES-mode resolution: manhole family = the pipe's network default (or a per-network
+        /// manhole exception keyed by the node's AG_GUID); the diameter comes from the network's
+        /// connection rules (governing pipe Ø + manhole depth → ManholeDiameterMm), and the Taban is
+        /// the family's base at that top-opening Ø. A synthetic <see cref="DepthTierRule"/> carries the
+        /// tier's min/max ComponentConstraints so <c>ComputeFamilyStack</c> runs unchanged. The rule's
+        /// diameter is authoritative — the manhole's own dimensions are backfilled from the Taban.
+        /// </summary>
+        private static void ResolveFamilyAndTabanRules(
+            ManholeItem mh, List<SectionDebugRow> inlets, List<SectionDebugRow> outlets,
+            out ComponentFamily family, out BottomElementComponent taban, out DepthTierRule tier)
+        {
+            family = null; taban = null; tier = null;
+
+            var netRule = ProjectRulesStore.FindNetwork(mh.SystemName);
+            if (netRule == null) { RulesFail(mh, "bu ağ için kural tanımlı değil"); return; }
+
+            // Family (+ diameter) from a manhole exception (by node AG_GUID) override the network
+            // default. A manhole's diameter comes from the rules, not Urbano — so the exception must
+            // pin its own diameter (the connection-rule diameter is for the default family).
+            Guid famId = netRule.ManholeFamilyId;
+            double exDia = 0;
+            var mhEx = netRule.Exceptions?.FindManhole(mh.AgGuid);
+            if (mhEx != null && mhEx.ManholeFamilyId != Guid.Empty)
+            {
+                famId = mhEx.ManholeFamilyId;
+                exDia = mhEx.ManholeDiameterMm;
+            }
+            if (famId == Guid.Empty) { RulesFail(mh, "Baca ailesi seçilmemiş"); return; }
+
+            var catalog = SmartAssemblyCatalogStore.Current;
+            var fam = catalog?.Families?.FirstOrDefault(f => f.Id == famId);
+            if (fam == null) { RulesFail(mh, "seçilen Baca ailesi katalogda bulunamadı"); return; }
+
+            // Governing connected pipe = largest diameter.
+            var governingPipe = inlets.Concat(outlets).OrderByDescending(s => s.DiameterMm).FirstOrDefault();
+            if (governingPipe == null) { RulesFail(mh, "bağlı boru yok"); return; }
+            double govDia = governingPipe.DiameterMm;
+
+            // Pick a (connection rule, tier): closest pipe range, then closest depth range.
+            var pairs = (netRule.ConnectionRules ?? new List<ConnectionRule>())
+                .SelectMany(r => (r.Tiers ?? new List<ConnDepthTier>()).Select(t => new { Rule = r, Tier = t }))
+                .ToList();
+            if (pairs.Count == 0) { RulesFail(mh, "Bağlantı Kuralı tanımlı değil"); return; }
+            var best = pairs
+                .Select(p => new
+                {
+                    p.Tier,
+                    PipeDist  = DistanceToRange(govDia,   p.Rule.MinPipeMm, p.Rule.MaxPipeMm),
+                    DepthDist = DistanceToRange(mh.Depth, p.Tier.MinDepthM, p.Tier.MaxDepthM)
+                })
+                .OrderBy(x => x.PipeDist).ThenBy(x => x.DepthDist)
+                .First();
+            var connTier = best.Tier;
+
+            // A precast exception diameter forces precast even on a cast-in-situ tier; otherwise a
+            // cast-in-situ tier → no precast Taban (leave nulls so the cast-in-place path is used).
+            if (exDia <= 0 && connTier.IsCastInSitu) return;
+
+            // Exception pins the diameter; otherwise it comes from the connection-rule tier.
+            double targetDia = exDia > 0 ? exDia : connTier.ManholeDiameterMm;
+            if (targetDia <= 0) { RulesFail(mh, "eşleşen katmanda Baca Çapı seçilmemiş"); return; }
+
+            // Taban in the family at that top-opening Ø (prefer the drawn shape when several match).
+            var bases = fam.Components.OfType<BottomElementComponent>()
+                .Where(b => Math.Abs(b.TopOpeningDiameterMm - targetDia) < 1e-6)
+                .ToList();
+            if (bases.Count == 0)
+            {
+                RulesFail(mh, $"ailede Ø{targetDia:0} Taban yok (kuraldaki Baca Çapı aileyle uyuşmuyor)");
+                return;
+            }
+            var baseComp = bases.FirstOrDefault(b => b.Footprint?.Shape == mh.DrawnShape) ?? bases[0];
+
+            family = fam;
+            taban  = baseComp;
+            tier   = new DepthTierRule
+            {
+                MinDepthM      = connTier.MinDepthM,
+                MaxDepthM      = connTier.MaxDepthM,
+                SelectedBaseId = baseComp.Id,
+                IsCastInSitu   = false
+            };
+            foreach (var cc in connTier.ComponentConstraints ?? new List<ComponentTypeConstraint>())
+                tier.ComponentConstraints.Add(new ComponentTypeConstraint
+                { Role = cc.Role, MinCount = cc.MinCount, MaxCount = cc.MaxCount });
+
+            // The rule's diameter wins — backfill the manhole's own dimensions from the resolved Taban.
+            var fp = baseComp.Footprint;
+            if (fp != null)
+            {
+                if (fp.Shape == FootprintShape.Circular && fp.DiameterMm > 0)
+                    mh.Diameter = (int)Math.Round(fp.DiameterMm);
+                else if (fp.Shape == FootprintShape.Square)
+                    mh.DrawnLengthM = mh.DrawnWidthM = fp.SideMm / 1000.0;
+                else if (fp.Shape == FootprintShape.Rectangular)
+                {
+                    mh.DrawnLengthM = fp.LengthMm / 1000.0;
+                    mh.DrawnWidthM  = fp.WidthMm  / 1000.0;
+                }
+            }
+            mh.ResolvedFootprint = fp;
+        }
+
+        /// <summary>
+        /// RULES mode: returns a copy of <paramref name="family"/> whose Gövde/Koni/Boyun/Kapak pieces
+        /// are restricted to the heights allowed by the "Kullanımdan Parça Çıkar" row for this
+        /// (family, diameter). No matching row (or no restriction) → the family is returned unchanged.
+        /// Only the shaft pieces are filtered; the Taban is passed to the stacker separately.
+        /// </summary>
+        private static ComponentFamily RulesStackFamily(ComponentFamily family, double diameterMm, NetworkRule netRule)
+        {
+            var row = netRule?.PieceExclusionRows?.FirstOrDefault(
+                r => r.ManholeFamilyId == family.Id && Math.Abs(r.ManholeDiameterMm - diameterMm) < 1e-6);
+            if (row == null || row.Roles == null || row.Roles.Count == 0) return family;
+
+            var filtered = new ComponentFamily { Id = family.Id, Name = family.Name, Malzeme = family.Malzeme };
+            foreach (var c in family.Components)
+            {
+                var pe = row.Roles.FirstOrDefault(x => x.Role == c.Role);
+                if (pe != null && !pe.AllowedHeightsMm.Any(h => Math.Abs(h - c.EffectiveHeight) < 1e-6))
+                    continue;   // this role is restricted and this height isn't allowed
+                filtered.Components.Add(c);
+            }
+            return filtered;
         }
 
         /// <summary>

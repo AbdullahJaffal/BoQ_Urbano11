@@ -91,7 +91,10 @@ namespace UrbanoMetraj.BoQ.Services
                     // Keys owned by OTHER stores — never touch these.
                     var preserve = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                     {
-                        "KATALOGLAR", "MANHOLES_CATALOG", "MANHOLE_ASSIGNMENTS", "TYPE_MAPPING"
+                        "KATALOGLAR", "MANHOLES_CATALOG", "MANHOLE_ASSIGNMENTS", "TYPE_MAPPING",
+                        // Project rule set (per-network calc rules). Owned by ProjectRulesNodManager;
+                        // must survive a Hesapla/Save like the other cross-store branches.
+                        "PROJE_KURALLARI"
                     };
 
                     // Collect every direct child that is NOT preserved: META + AGLAR

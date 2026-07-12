@@ -5,6 +5,7 @@ using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 using UrbanoMetraj.BoQ.PipeCatalogs.Services;
 using UrbanoMetraj.BoQ.PipeCatalogs.UI.ViewModels;
 using UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels;
+using UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
 using UrbanoMetraj.BoQ.SoilCatalog.UI.ViewModels;
 using UrbanoMetraj.BoQ.TypeMapping.UI.ViewModels;
@@ -37,6 +38,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public RepositoryTabVm   RepositoryTab   { get; }
         public MasterRulesTabVm  MasterRulesTab  { get; }
         public ProjectSetupTabVm ProjectSetupTab { get; }
+        public ProjectRulesTabVm ProjectRulesTab { get; }
 
         public ManholeExcavationMainVm ManholeExcavTab { get; }
         public PipeCatalogMainVm       PipeCatalogTab  { get; }
@@ -78,6 +80,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
             MasterRulesTab  = new MasterRulesTabVm (MasterCatalog, pipeCatalog);
             ProjectSetupTab = new ProjectSetupTabVm(MasterCatalog, pipeCatalog);
+            ProjectRulesTab = new ProjectRulesTabVm(pipeCatalog ?? PipeCatalogStore.Current, MasterCatalog);
 
             // Diğer kataloglar — her biri kendi XML deposundan otomatik yüklenir.
             ManholeExcavTab = new ManholeExcavationMainVm();

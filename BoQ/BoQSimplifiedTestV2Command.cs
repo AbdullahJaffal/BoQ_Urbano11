@@ -7,6 +7,7 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using UrbanoMetraj.BoQ.Models;
+using UrbanoMetraj.BoQ.ProjectRules.Services;
 using UrbanoMetraj.BoQ.Services;
 using UrbanoMetraj.BoQ.TypeMapping.Services;
 using UrbanoMetraj.BoQ.UI;
@@ -342,7 +343,13 @@ namespace UrbanoMetraj.BoQ
                 // (don't rely on Akıllı Montaj having been opened this session) so
                 // ParseSections can resolve PozNo/Sınıf for linked pipes below.
                 var mappingDoc = Application.DocumentManager.MdiActiveDocument;
-                if (mappingDoc != null) TypeMappingStore.LoadFromDwg(mappingDoc.Database);
+                if (mappingDoc != null)
+                {
+                    TypeMappingStore.LoadFromDwg(mappingDoc.Database);
+                    // Per-network project rules (RULES mode). When its mode is RULES, the parser +
+                    // ManholeAIService resolve types from these instead of Tür Eşleştirme.
+                    ProjectRulesStore.LoadFromDwg(mappingDoc.Database);
+                }
 
                 // ── Phase 0: Active-network scope (URBANOLOCK — Ağ Seçimi) ───────
                 // Networks left unchecked in the panel are excluded from the
@@ -520,13 +527,17 @@ namespace UrbanoMetraj.BoQ
 
                 if (report.DiscoveryNotes.Count > 0)
                 {
+                    string footer = ProjectRulesStore.IsRulesMode
+                        ? "\n\nKurallar modu etkin. Eksikler için Proje Ayarları → Proje Kurulumu (DWG) → " +
+                          "Kurallar'da her aktif ağ için: Boru ailesi/sınıfı, Baca ailesi ve Bağlantı " +
+                          "Kuralları'nı (özellikle her katmanın Baca Çapı'nı — o ailenin Taban çaplarından " +
+                          "biri olmalı) tamamlayın."
+                        : "\n\nEksik eşleştirmeler nedeniyle Poz No/Sınıf, baca çapı veya Prefabrik Malzeme " +
+                          "Listesi hatalı/eksik olabilir. Devam etmeden önce eşleştirmeleri Proje Ayarları'ndan " +
+                          "(Tür Eşleştirme) ve Akıllı Montaj'dan (Baca Seçim Kuralları) tamamlamanız önerilir.";
                     MessageBox.Show(
                         "Hesaplama tamamlandı, ancak bazı veriler eksik veya bağlı değil:\n\n" +
-                        string.Join("\n", report.DiscoveryNotes) +
-                        "\n\nEksik eşleştirmeler nedeniyle Poz No/Sınıf, baca çapı veya " +
-                        "Prefabrik Malzeme Listesi hatalı/eksik olabilir. Devam etmeden önce " +
-                        "eşleştirmeleri Proje Ayarları'ndan (Tür Eşleştirme) ve " +
-                        "Akıllı Montaj'dan (Baca Seçim Kuralları) tamamlamanız önerilir.",
+                        string.Join("\n", report.DiscoveryNotes) + footer,
                         "Eksik Eşleştirme Uyarısı",
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }

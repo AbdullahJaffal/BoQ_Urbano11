@@ -180,6 +180,28 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
             return LoadNetworksFromNod(db);
         }
 
+        /// <summary>
+        /// Resolves the Active set straight from the shared URBANOLOCK_UI_STATE NOD entry — WITHOUT
+        /// touching in-memory state, the layer cache or visibility (no side effects). Use this from
+        /// readers (e.g. the Proje Kurulumu tab) that must reflect the panel's active checkboxes even
+        /// when the live palette belongs to UrbanoLock and this plugin's in-memory <c>_active</c> set
+        /// was never populated. Mirrors <see cref="InitializeFromDrawing"/>'s default rule: a network
+        /// not present in the saved Known set (or no saved state at all) counts as Active.
+        /// </summary>
+        public static HashSet<string> ResolveActiveFromNod(Database db, IEnumerable<string> allNetworks)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var all    = allNetworks?.ToList() ?? new List<string>();
+            var saved  = LoadUiStateFromNod(db);
+            foreach (var n in all)
+            {
+                bool wasKnown = saved != null && saved.Known.Contains(n);
+                bool isActive = !wasKnown || saved.Active.Contains(n);
+                if (isActive) result.Add(n);
+            }
+            return result;
+        }
+
         // ── Layer cache ───────────────────────────────────────────────────────
 
         /// <summary>

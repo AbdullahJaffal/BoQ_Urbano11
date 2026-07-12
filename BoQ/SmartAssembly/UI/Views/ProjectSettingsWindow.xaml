@@ -49,33 +49,6 @@
             <Setter Property="Padding"    Value="4,2"/>
             <Setter Property="Background" Value="#F0F0F0"/>
         </Style>
-
-        <!-- Invalid pipe range row — red background -->
-        <Style x:Key="BoruAralikSatiri" TargetType="DataGridRow">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsPipeRangeValid}" Value="False">
-                    <Setter Property="Background" Value="#FFCCCC"/>
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-
-        <!-- Invalid depth tier row — red background -->
-        <Style x:Key="DerinlikKatmanSatiri" TargetType="DataGridRow">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsDepthRangeValid}" Value="False">
-                    <Setter Property="Background" Value="#FFCCCC"/>
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-
-        <!-- Local-override rule row — italic yellow -->
-        <Style x:Key="YerelPipeRangeSatiri" TargetType="DataGridRow">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsPipeRangeValid}" Value="False">
-                    <Setter Property="Background" Value="#FFCCCC"/>
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
     </Window.Resources>
 
     <DockPanel LastChildFill="True">
@@ -89,285 +62,417 @@
 
         <TabControl Margin="4">
 
+            <!-- ═══════════════════════════════════════════════════════════════
+                 Proje Kurulumu (DWG) — per-network project rule source.
+                 Bound to SmartAssemblyMainVm.ProjectRulesTab (ProjectRulesTabVm).
+                 See PROJECT_RULES_REDESIGN.md.
+                 ═══════════════════════════════════════════════════════════════ -->
             <TabItem Header="Proje Kurulumu (DWG)">
-                <Grid Margin="6">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="200"/>
-                        <ColumnDefinition Width="5"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
+                <DockPanel Margin="6" DataContext="{Binding ProjectRulesTab}">
 
-                    <!-- Sol: şablon listesi -->
-                    <DockPanel Grid.Column="0">
-                        <TextBlock DockPanel.Dock="Top" Text="Proje Şablonları"
-                                   FontWeight="Bold" Margin="0,0,0,4"/>
-                        <!-- Unified toolbar: [+ Yeni] | [DWG'ye Kaydet] [DWG'den Yükle]
-                             Çoğalt / Sil → şablonda sağ tık (aşağıdaki liste bağlam menüsü). -->
-                        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                            <Button Content="+ Yeni"
-                                    Command="{Binding ProjectSetupTab.NewTemplateCommand}"
-                                    Padding="8,3" Margin="0,0,6,4" ToolTip="Yeni şablon oluştur"/>
-                            <Separator Width="1" Height="18" Margin="0,0,6,4" Background="#BBBBBB"/>
-                            <Button Content="DWG'ye Kaydet"
-                                    Command="{Binding ProjectSetupTab.SaveToNodCommand}"
-                                    Style="{StaticResource KaydetButton}" Margin="0,0,6,4"
-                                    ToolTip="Seçili şablonu aktif DWG NOD'una kaydet"/>
-                            <Button Content="DWG'den Yükle"
-                                    Command="{Binding ProjectSetupTab.LoadFromNodCommand}"
-                                    Padding="8,3" Margin="0,0,0,4"/>
-                        </WrapPanel>
-                        <TextBlock DockPanel.Dock="Top" Foreground="Gray" FontSize="11"
-                                   Margin="0,0,0,4" Text="(şablonda sağ tık: Çoğalt / Sil)"/>
-                        <ListBox ItemsSource="{Binding ProjectSetupTab.Templates}"
-                                 SelectedItem="{Binding ProjectSetupTab.SelectedTemplate}"
-                                 DisplayMemberPath="TemplateName"
-                                 PreviewMouseRightButtonDown="List_SelectItemOnRightClick">
-                            <ListBox.ContextMenu>
-                                <ContextMenu>
-                                    <MenuItem Header="Çoğalt"
-                                              Command="{Binding Data.ProjectSetupTab.DuplicateTemplateCommand,
-                                                        Source={StaticResource VmProxy}}"/>
-                                    <MenuItem Header="Sil"
-                                              Command="{Binding Data.ProjectSetupTab.DeleteTemplateCommand,
-                                                        Source={StaticResource VmProxy}}"/>
-                                </ContextMenu>
-                            </ListBox.ContextMenu>
-                        </ListBox>
-                    </DockPanel>
+                    <!-- Üst: hesap modu anahtarı + eylemler -->
+                    <Border DockPanel.Dock="Top" BorderBrush="#CCC" BorderThickness="0,0,0,1"
+                            Padding="0,0,0,8" Margin="0,0,0,8">
+                        <StackPanel>
+                            <WrapPanel>
+                                <TextBlock Text="Hesap Modu:" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <RadioButton Content="Kurallar (bu sayfa)" GroupName="CalcMode"
+                                             VerticalAlignment="Center" Margin="0,0,12,0"
+                                             IsChecked="{Binding IsRulesMode, Mode=TwoWay}"/>
+                                <RadioButton Content="Tür Eşleştirme" GroupName="CalcMode"
+                                             VerticalAlignment="Center" Margin="0,0,16,0"
+                                             IsChecked="{Binding IsTypeMappingMode, Mode=TwoWay}"/>
+                                <Separator Width="1" Height="18" Margin="0,0,12,0" Background="#BBBBBB"/>
+                                <Button Content="Kaydet" Command="{Binding SaveCommand}"
+                                        Style="{StaticResource KaydetButton}" Margin="0,0,6,0"
+                                        ToolTip="Kuralları aktif DWG'ye kaydet"/>
+                                <Button Content="↻ Yenile" Command="{Binding RefreshCommand}"
+                                        Padding="8,3" Margin="0,0,6,0"
+                                        ToolTip="Ağ listesini ve aktif durumları çizimden yeniden oku"/>
+                                <Button Content="Dışa Aktar (XML)" Command="{Binding ExportXmlCommand}"
+                                        Padding="8,3" Margin="0,0,6,0"
+                                        ToolTip="Kuralları taşınabilir XML olarak dışa aktar (istisnalar hariç)"/>
+                                <Button Content="İçe Aktar (XML)" Command="{Binding ImportXmlCommand}"
+                                        Padding="8,3"/>
+                            </WrapPanel>
+                            <TextBlock Text="{Binding ModeSummary}" Foreground="#00467F"
+                                       FontStyle="Italic" Margin="0,6,0,0"/>
+                        </StackPanel>
+                    </Border>
 
-                    <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+                    <!-- Alt: durum satırı -->
+                    <TextBlock DockPanel.Dock="Bottom" Text="{Binding StatusText}"
+                               Foreground="Gray" FontSize="11" Margin="0,6,0,0"/>
 
-                    <!-- Sağ: şablon editörü -->
-                    <DockPanel Grid.Column="2"
-                               Visibility="{Binding ProjectSetupTab.IsTemplateSelected,
-                                            Converter={StaticResource BoolToVis}}">
-
-                        <!-- Başlık alanları -->
-                        <Border DockPanel.Dock="Top"
-                                BorderBrush="#CCC" BorderThickness="0,0,0,1"
-                                Padding="0,0,0,8" Margin="0,0,0,8">
+                    <!-- İstisnalar (CAD seçimi ile) — seçili ağa özel; pick o ağın "<ağ>_*" katmanlarına süzülür -->
+                    <Expander DockPanel.Dock="Bottom" Header="İstisnalar (CAD seçimi ile — seçili ağa özel)"
+                              IsExpanded="False" Margin="0,6,0,0" IsEnabled="{Binding IsRulesMode}">
+                        <Border BorderBrush="#DDD" BorderThickness="1" Padding="8" Margin="0,4,0,0">
                             <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="140"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="170"/>
                                 </Grid.RowDefinitions>
 
-                                <Label Grid.Row="0" Grid.Column="0" Content="Şablon Adı:"/>
-                                <TextBox Grid.Row="0" Grid.Column="1" Margin="0,2,0,4"
-                                         Text="{Binding ProjectSetupTab.TemplateName,
-                                                UpdateSourceTrigger=PropertyChanged}"/>
+                                <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+                                    <Button Content="XML Güncelle"
+                                            Command="{Binding ExtractXmlCommand}" Padding="8,3" Margin="0,0,6,0"
+                                            ToolTip="Urbano'dan güncel ağ verisini çeker (UT_BOQ) ve export XML'ini yeniler."/>
+                                    <Button Content="↻ İsimleri Güncelle (XML)"
+                                            Command="{Binding RefreshExceptionNamesCommand}" Padding="8,3"
+                                            ToolTip="Metraj Verisi (XML) çıkarıldıktan sonra: AG_GUID'leri baca/boru adlarına çevirir, XML'de olmayanları siler."/>
+                                    <TextBlock Text="Yalnızca seçili ağın katmanları seçilebilir. Boru = çizgi/polyline, Baca = blok/daire. Metinler yok sayılır."
+                                               Foreground="Gray" FontSize="10.5" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                </WrapPanel>
 
-                                <Label Grid.Row="1" Grid.Column="0" Content="Kazı Profili:"
-                                       ToolTip="Harici hendek kataloğundaki kazı profili anahtar adı"/>
-                                <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,2,0,4"
-                                          IsEditable="True"
-                                          ItemsSource="{Binding ProjectSetupTab.AvailableExcavationProfiles}"
-                                          Text="{Binding ProjectSetupTab.AssociatedExcavationProfile,
-                                                 UpdateSourceTrigger=PropertyChanged}"/>
+                                <WrapPanel Grid.Row="1" Margin="0,0,0,4">
+                                    <TextBlock Text="Boru İstisnası:" FontWeight="SemiBold"
+                                               VerticalAlignment="Center" Width="95"/>
+                                    <TextBlock Text="Aile" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <ComboBox Width="150" Margin="0,0,8,0"
+                                              ItemsSource="{Binding AvailableExcPipeFamilies}"
+                                              DisplayMemberPath="FamilyName"
+                                              SelectedItem="{Binding ExcPipeFamily, Mode=TwoWay}"/>
+                                    <TextBlock Text="Sınıf" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <ComboBox Width="110" Margin="0,0,8,0"
+                                              ItemsSource="{Binding ExcPipeSinifs}"
+                                              SelectedItem="{Binding ExcPipeSinif, Mode=TwoWay}"/>
+                                    <Button Content="Seç ve Ekle" Command="{Binding AddPipeExceptionCommand}"
+                                            Padding="8,3" ToolTip="Çizimden boru seç ve bu türü istisna olarak ata"/>
+                                </WrapPanel>
 
-                                <Label Grid.Row="2" Grid.Column="0" Content="Malzeme Filtresi:"
-                                       ToolTip="Sadece bu FamilyTag değerine sahip parçalar seçilir."/>
-                                <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,2,0,0"
-                                          IsEditable="True"
-                                          ItemsSource="{Binding ProjectSetupTab.AvailableMaterialFamilies}"
-                                          Text="{Binding ProjectSetupTab.MaterialFamilyOverride,
-                                                 UpdateSourceTrigger=PropertyChanged}"/>
+                                <WrapPanel Grid.Row="2" Margin="0,0,0,6">
+                                    <TextBlock Text="Baca İstisnası:" FontWeight="SemiBold"
+                                               VerticalAlignment="Center" Width="95"/>
+                                    <TextBlock Text="Aile" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <ComboBox Width="150" Margin="0,0,8,0"
+                                              ItemsSource="{Binding AvailableExcManholeFamilies}"
+                                              DisplayMemberPath="Name"
+                                              SelectedItem="{Binding ExcManholeFamily, Mode=TwoWay}"/>
+                                    <TextBlock Text="Çap" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <ComboBox Width="90" Margin="0,0,8,0" ItemStringFormat="{}Ø{0:0}"
+                                              ItemsSource="{Binding AvailableExcManholeDiameters}"
+                                              SelectedItem="{Binding ExcManholeDiameter, Mode=TwoWay}"
+                                              ToolTip="Seçilen ailenin Taban çapı — istisna bacaların çapı buradan sabitlenir"/>
+                                    <Button Content="Seç ve Ekle" Command="{Binding AddManholeExceptionCommand}"
+                                            Padding="8,3" ToolTip="Çizimden baca seç, bu aile + çapı istisna olarak ata"/>
+                                </WrapPanel>
+
+                                <DataGrid Grid.Row="3" ItemsSource="{Binding Exceptions}"
+                                          AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                                          HeadersVisibility="Column"
+                                          ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Tür" Binding="{Binding Dimension}" Width="70"/>
+                                        <DataGridTextColumn Header="Öğe" Binding="{Binding Display}" Width="180"/>
+                                        <DataGridTextColumn Header="Atanan Tür" Binding="{Binding OverrideLabel}" Width="*"/>
+                                        <DataGridTemplateColumn Header="" Width="60">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Content="Sil" Padding="6,1"
+                                                            Command="{Binding DataContext.DeleteExceptionCommand,
+                                                                      RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
                             </Grid>
                         </Border>
+                    </Expander>
 
-                        <!-- Yerel kurallar araç çubuğu -->
-                        <ToolBarTray DockPanel.Dock="Top">
-                            <ToolBar>
-                                <TextBlock Text="Boru Aralığı:" VerticalAlignment="Center"
-                                           FontWeight="SemiBold" Margin="0,0,6,0"/>
-                                <Button Content="Ana Katlogdan İçe Aktar"
-                                        Command="{Binding ProjectSetupTab.ImportFromMasterCommand}"
-                                        ToolTip="Ana kuralları bu şablona klonla"/>
-                                <Separator/>
-                                <Button Content="+ Ekle"
-                                        Command="{Binding ProjectSetupTab.AddLocalPipeRangeCommand}"/>
-                                <Button Content="Çoğalt"
-                                        Command="{Binding ProjectSetupTab.DuplicateLocalPipeRangeCommand}"
-                                        Margin="2,0,0,0" ToolTip="Seçili boru aralığını kopyala"/>
-                                <Button Content="Sil"
-                                        Command="{Binding ProjectSetupTab.DeleteLocalPipeRangeCommand}"
-                                        Margin="2,0,0,0"/>
-                                <Separator/>
-                                <TextBlock Text="Katman:" VerticalAlignment="Center"
-                                           FontWeight="SemiBold" Margin="0,0,6,0"/>
-                                <Button Content="+ Ekle"
-                                        Command="{Binding ProjectSetupTab.AddLocalTierCommand}"/>
-                                <Button Content="Sil"
-                                        Command="{Binding ProjectSetupTab.DeleteLocalTierCommand}"
-                                        Margin="2,0,0,0"/>
-                            </ToolBar>
-                        </ToolBarTray>
+                    <!-- Ağ listesi (sol) + ağ editörü (sağ) — sadece Kurallar modunda etkin -->
+                    <Grid IsEnabled="{Binding IsRulesMode}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="240"/>
+                            <ColumnDefinition Width="5"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
 
-                        <!-- Yerel kurallar Master-Detail -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="200"/>
-                                <ColumnDefinition Width="5"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
+                        <DockPanel Grid.Column="0">
+                            <TextBlock DockPanel.Dock="Top" Text="Ağlar" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <ListBox ItemsSource="{Binding Networks}"
+                                     SelectedItem="{Binding SelectedNetwork}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,2">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding SystemName}" FontWeight="SemiBold"/>
+                                                <TextBlock Text="  ● Aktif" Foreground="#2E7D32" FontSize="10"
+                                                           VerticalAlignment="Center"
+                                                           Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}"/>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding RuleSummary}" Foreground="Gray" FontSize="10.5"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
 
-                            <!-- Sol: Yerel boru aralıkları -->
-                            <DockPanel Grid.Column="0">
-                                <TextBlock DockPanel.Dock="Top" Text="Yerel Boru Aralıkları"
-                                           FontWeight="SemiBold" FontSize="11" Margin="0,0,0,4"/>
-                                <DataGrid x:Name="LocalPipeRangesGrid"
-                                          ItemsSource="{Binding ProjectSetupTab.LocalPipeRanges}"
-                                          SelectedItem="{Binding ProjectSetupTab.SelectedLocalPipeRange}"
-                                          AutoGenerateColumns="False" CanUserAddRows="False"
-                                          SelectionMode="Single"
-                                          RowStyle="{StaticResource BoruAralikSatiri}"
-                                          ColumnHeaderStyle="{StaticResource SutunBasligi}">
-                                    <DataGrid.Columns>
+                        <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
 
-                                        <!-- 1 — Pipe Family -->
-                                        <DataGridTemplateColumn Header="Aile" Width="110">
-                                            <DataGridTemplateColumn.CellTemplate>
+                        <!-- Seçili ağın editörü -->
+                        <Border Grid.Column="2"
+                                Visibility="{Binding IsNetworkSelected, Converter={StaticResource BoolToVis}}">
+                          <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel DataContext="{Binding SelectedNetwork}" Margin="6,0,0,0">
+                                <TextBlock Text="{Binding SystemName}" FontWeight="Bold"
+                                           FontSize="14" Margin="0,0,0,8"/>
+
+                                <GroupBox Header="Boru" Padding="8" Margin="0,0,0,10">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="90"/>
+                                            <ColumnDefinition Width="240"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Label Grid.Row="0" Grid.Column="0" Content="Aile:"/>
+                                        <ComboBox Grid.Row="0" Grid.Column="1" Margin="0,2"
+                                                  ItemsSource="{Binding AvailablePipeFamilies}"
+                                                  DisplayMemberPath="FamilyName"
+                                                  SelectedItem="{Binding SelectedPipeFamily, Mode=TwoWay}"/>
+                                        <Label Grid.Row="1" Grid.Column="0" Content="Sınıf:"/>
+                                        <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,2"
+                                                  ItemsSource="{Binding AvailableSinifs}"
+                                                  SelectedItem="{Binding SelectedSinif, Mode=TwoWay}"/>
+                                    </Grid>
+                                </GroupBox>
+
+                                <GroupBox Header="Baca" Padding="8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="90"/>
+                                            <ColumnDefinition Width="240"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Label Grid.Column="0" Content="Aile:"/>
+                                        <ComboBox Grid.Column="1" Margin="0,2"
+                                                  ItemsSource="{Binding AvailableManholeFamilies}"
+                                                  DisplayMemberPath="Name"
+                                                  SelectedItem="{Binding SelectedManholeFamily, Mode=TwoWay}"/>
+                                    </Grid>
+                                </GroupBox>
+
+                                <!-- Bağlantı Kuralları (baca seçim) — pipe-range → depth tier → manhole Ø + parça sayısı -->
+                                <GroupBox Header="Bağlantı Kuralları (baca seçim)" Padding="6" Margin="0,10,0,0">
+                                    <StackPanel>
+                                        <ToolBarTray DockPanel.Dock="Top">
+                                            <ToolBar>
+                                                <Button Content="Katalogdan İçe Aktar"
+                                                        Command="{Binding ImportConnRulesCommand}"
+                                                        ToolTip="Ana katalog kurallarını (baca çapı = Taban üst açıklığı) bu ağa kopyala"/>
+                                                <Separator/>
+                                                <TextBlock Text="Boru Aralığı:" VerticalAlignment="Center"
+                                                           FontWeight="SemiBold" Margin="4,0,4,0"/>
+                                                <Button Content="+ Ekle" Command="{Binding AddConnRuleCommand}"/>
+                                                <Button Content="Sil"    Command="{Binding DeleteConnRuleCommand}" Margin="2,0,0,0"/>
+                                                <Separator/>
+                                                <TextBlock Text="Katman:" VerticalAlignment="Center"
+                                                           FontWeight="SemiBold" Margin="4,0,4,0"/>
+                                                <Button Content="+ Ekle" Command="{Binding AddTierCommand}"/>
+                                                <Button Content="Sil"    Command="{Binding DeleteTierCommand}" Margin="2,0,0,0"/>
+                                            </ToolBar>
+                                        </ToolBarTray>
+                                        <Grid Height="210">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="210"/>
+                                                <ColumnDefinition Width="5"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <DataGrid Grid.Column="0" ItemsSource="{Binding ConnectionRules}"
+                                                      SelectedItem="{Binding SelectedConnRule}"
+                                                      AutoGenerateColumns="False" CanUserAddRows="False"
+                                                      SelectionMode="Single" HeadersVisibility="Column"
+                                                      ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Min Boru (mm)" Width="*"
+                                                        Binding="{Binding MinPipeMm, UpdateSourceTrigger=PropertyChanged, StringFormat=0}"/>
+                                                    <DataGridTextColumn Header="Max Boru (mm)" Width="*"
+                                                        Binding="{Binding MaxPipeMm, UpdateSourceTrigger=PropertyChanged, StringFormat=0}"/>
+                                                    <DataGridTextColumn Header="Kat." Width="38" IsReadOnly="True"
+                                                        Binding="{Binding TierCount}"/>
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+
+                                            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+
+                                            <DataGrid Grid.Column="2" ItemsSource="{Binding SelectedConnRule.Tiers}"
+                                                      SelectedItem="{Binding SelectedTier}"
+                                                      AutoGenerateColumns="False" CanUserAddRows="False"
+                                                      SelectionMode="Single" HeadersVisibility="Column"
+                                                      ColumnHeaderStyle="{StaticResource SutunBasligi}"
+                                                      Visibility="{Binding IsConnRuleSelected, Converter={StaticResource BoolToVis}}">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Min Der. (m)" Width="78"
+                                                        Binding="{Binding MinDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.0}"/>
+                                                    <DataGridTextColumn Header="Max Der. (m)" Width="78"
+                                                        Binding="{Binding MaxDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.0}"/>
+                                                    <DataGridTemplateColumn Header="Baca Çapı (mm)" Width="110">
+                                                        <DataGridTemplateColumn.CellTemplate>
+                                                            <DataTemplate>
+                                                                <TextBlock Text="{Binding ManholeDiameterMm, StringFormat=0}"
+                                                                           VerticalAlignment="Center" Padding="4,0"/>
+                                                            </DataTemplate>
+                                                        </DataGridTemplateColumn.CellTemplate>
+                                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                                            <DataTemplate>
+                                                                <ComboBox ItemStringFormat="{}{0:0}"
+                                                                          ItemsSource="{Binding DataContext.AvailableManholeDiameters,
+                                                                                        RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                          SelectedItem="{Binding ManholeDiameterMm, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"/>
+                                                            </DataTemplate>
+                                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                                    </DataGridTemplateColumn>
+                                                    <DataGridCheckBoxColumn Header="Yer. Döküm" Width="75"
+                                                        Binding="{Binding IsCastInSitu, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <DataGridTextColumn Header="Not" Width="*"
+                                                        Binding="{Binding Notes, UpdateSourceTrigger=PropertyChanged}"/>
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </Grid>
+
+                                        <!-- Seçili katmanın parça sayısı (min / maks) -->
+                                        <StackPanel Margin="0,6,0,0"
+                                                    Visibility="{Binding SelectedTier, Converter={StaticResource NullToVis}}">
+                                            <TextBlock FontSize="11" Foreground="Gray" Margin="0,0,0,4"
+                                                       Text="Seçili katmanın parça sayısı (Min / Maks — ∞ = sınırsız, 0 = kullanma):"/>
+                                            <DataGrid ItemsSource="{Binding TierConstraints}" MaxHeight="150"
+                                                      AutoGenerateColumns="False" CanUserAddRows="False"
+                                                      SelectionMode="Single" HeadersVisibility="Column"
+                                                      ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                                                <DataGrid.RowStyle>
+                                                    <Style TargetType="DataGridRow">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsReadOnly}" Value="True">
+                                                                <Setter Property="Foreground" Value="Gray"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </DataGrid.RowStyle>
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Parça Tipi" Width="140" IsReadOnly="True"
+                                                        Binding="{Binding RoleDisplay}"/>
+                                                    <DataGridTemplateColumn Header="Min" Width="70">
+                                                        <DataGridTemplateColumn.CellTemplate>
+                                                            <DataTemplate>
+                                                                <Grid>
+                                                                    <TextBlock Text="{Binding MinCount}" HorizontalAlignment="Center"
+                                                                               VerticalAlignment="Center"
+                                                                               Visibility="{Binding IsReadOnly, Converter={StaticResource BoolToVis}}"/>
+                                                                    <ComboBox ItemsSource="{Binding ZeroOneOptions}"
+                                                                              SelectedItem="{Binding MinCount, UpdateSourceTrigger=PropertyChanged}"
+                                                                              Visibility="{Binding IsEditableZeroOrOne, Converter={StaticResource BoolToVis}}"/>
+                                                                    <TextBox Text="{Binding MinCount, UpdateSourceTrigger=PropertyChanged}"
+                                                                             Visibility="{Binding IsEditableFree, Converter={StaticResource BoolToVis}}"/>
+                                                                </Grid>
+                                                            </DataTemplate>
+                                                        </DataGridTemplateColumn.CellTemplate>
+                                                    </DataGridTemplateColumn>
+                                                    <DataGridTemplateColumn Header="Maks" Width="*">
+                                                        <DataGridTemplateColumn.CellTemplate>
+                                                            <DataTemplate>
+                                                                <Grid>
+                                                                    <TextBlock Text="{Binding MaxDisplay}" HorizontalAlignment="Center"
+                                                                               VerticalAlignment="Center"
+                                                                               Visibility="{Binding IsReadOnly, Converter={StaticResource BoolToVis}}"/>
+                                                                    <ComboBox ItemsSource="{Binding ZeroOneOptions}"
+                                                                              SelectedItem="{Binding MaxCount, UpdateSourceTrigger=PropertyChanged}"
+                                                                              Visibility="{Binding IsEditableZeroOrOne, Converter={StaticResource BoolToVis}}"/>
+                                                                    <TextBox Text="{Binding MaxCountText, UpdateSourceTrigger=PropertyChanged}"
+                                                                             ToolTip="Bir sayı ya da sınırsız için ∞ yazın"
+                                                                             Visibility="{Binding IsEditableFree, Converter={StaticResource BoolToVis}}"/>
+                                                                </Grid>
+                                                            </DataTemplate>
+                                                        </DataGridTemplateColumn.CellTemplate>
+                                                    </DataGridTemplateColumn>
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <!-- Kullanımdan Parça Çıkar — user-added rows per (family, Ø); decoupled from connection rules -->
+                                <GroupBox Header="Kullanımdan Parça Çıkar" Padding="6" Margin="0,10,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="İsteğe bağlı: bir Taban (aile — Ø) ekleyin, o Taban'a bağlı parçalardan kullanmayacaklarınızın işaretini kaldırın. Gövde/Koni o çapa göre süzülür; Boyun/Kapak tümü. Aile listesi = ağın ana ailesi + bu ağın baca istisna aileleri. Aynı (aile, çap) bir kez eklenebilir."
+                                                   Foreground="Gray" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,6"/>
+                                        <WrapPanel Margin="0,0,0,6">
+                                            <TextBlock Text="Taban ekle:" FontWeight="SemiBold"
+                                                       VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                            <ComboBox Width="240" Margin="0,0,6,0"
+                                                      ItemsSource="{Binding AvailablePieceOptions}"
+                                                      DisplayMemberPath="Display"
+                                                      SelectedItem="{Binding SelectedPieceOption, Mode=TwoWay}"/>
+                                            <Button Content="+ Ekle" Command="{Binding AddPieceRowCommand}" Padding="8,3"/>
+                                        </WrapPanel>
+                                        <ItemsControl ItemsSource="{Binding PieceRows}">
+                                            <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <TextBlock Text="{Binding SelectedPipeFamily.FamilyName, FallbackValue='—'}"
-                                                               VerticalAlignment="Center" Padding="3,0"/>
+                                                    <Border BorderBrush="#E0E0E0" BorderThickness="1"
+                                                            Padding="6" Margin="0,0,0,6">
+                                                        <StackPanel>
+                                                            <DockPanel Margin="0,0,0,4">
+                                                                <Button DockPanel.Dock="Right" Content="Sil" Padding="6,1"
+                                                                        Command="{Binding DataContext.DeletePieceRowCommand,
+                                                                                  RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                        CommandParameter="{Binding}"/>
+                                                                <TextBlock Text="{Binding Header}" FontWeight="Bold"
+                                                                           VerticalAlignment="Center"/>
+                                                            </DockPanel>
+                                                            <ItemsControl ItemsSource="{Binding Roles}">
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate>
+                                                                        <Grid Margin="0,2">
+                                                                            <Grid.ColumnDefinitions>
+                                                                                <ColumnDefinition Width="70"/>
+                                                                                <ColumnDefinition Width="*"/>
+                                                                            </Grid.ColumnDefinitions>
+                                                                            <TextBlock Grid.Column="0" Text="{Binding RoleName}"
+                                                                                       FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                                            <ItemsControl Grid.Column="1" ItemsSource="{Binding Heights}">
+                                                                                <ItemsControl.ItemsPanel>
+                                                                                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                                                                </ItemsControl.ItemsPanel>
+                                                                                <ItemsControl.ItemTemplate>
+                                                                                    <DataTemplate>
+                                                                                        <CheckBox Content="{Binding Label}"
+                                                                                                  IsChecked="{Binding IsAllowed, Mode=TwoWay}"
+                                                                                                  Margin="0,0,12,2" VerticalAlignment="Center"/>
+                                                                                    </DataTemplate>
+                                                                                </ItemsControl.ItemTemplate>
+                                                                            </ItemsControl>
+                                                                        </Grid>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </StackPanel>
+                                                    </Border>
                                                 </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                            <DataGridTemplateColumn.CellEditingTemplate>
-                                                <DataTemplate>
-                                                    <ComboBox ItemsSource="{Binding AvailableFamilies}"
-                                                              SelectedItem="{Binding SelectedPipeFamily,
-                                                                             UpdateSourceTrigger=PropertyChanged}"
-                                                              DisplayMemberPath="FamilyName"
-                                                              IsEditable="False"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellEditingTemplate>
-                                        </DataGridTemplateColumn>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </GroupBox>
 
-                                        <!-- 2 — Min Pipe -->
-                                        <DataGridTemplateColumn Header="Min Boru" Width="130">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Text="{Binding SelectedMinPipe.Display, FallbackValue='—'}"
-                                                               VerticalAlignment="Center" Padding="3,0"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                            <DataGridTemplateColumn.CellEditingTemplate>
-                                                <DataTemplate>
-                                                    <ComboBox ItemsSource="{Binding PipesInFamily}"
-                                                              SelectedItem="{Binding SelectedMinPipe,
-                                                                             UpdateSourceTrigger=PropertyChanged}"
-                                                              DisplayMemberPath="Display"
-                                                              IsEditable="False"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellEditingTemplate>
-                                        </DataGridTemplateColumn>
+                                <TextBlock Text="Kazı kuralları sonraki aşamada eklenecek. Baca çapı = seçilen ailenin o çaptaki Taban'ından çözülür."
+                                           Foreground="Gray" FontStyle="Italic" FontSize="11"
+                                           Margin="0,10,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                          </ScrollViewer>
+                        </Border>
 
-                                        <!-- 3 — Max Pipe -->
-                                        <DataGridTemplateColumn Header="Max Boru" Width="130">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Text="{Binding SelectedMaxPipe.Display, FallbackValue='—'}"
-                                                               VerticalAlignment="Center" Padding="3,0"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                            <DataGridTemplateColumn.CellEditingTemplate>
-                                                <DataTemplate>
-                                                    <ComboBox ItemsSource="{Binding PipesInFamily}"
-                                                              SelectedItem="{Binding SelectedMaxPipe,
-                                                                             UpdateSourceTrigger=PropertyChanged}"
-                                                              DisplayMemberPath="Display"
-                                                              IsEditable="False"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellEditingTemplate>
-                                        </DataGridTemplateColumn>
-
-                                        <DataGridTextColumn Header="Kat."
-                                            Binding="{Binding TierCount}" IsReadOnly="True" Width="*"/>
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </DockPanel>
-
-                            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
-
-                            <!-- Sağ: Derinlik katmanları -->
-                            <DockPanel Grid.Column="2"
-                                       Visibility="{Binding ProjectSetupTab.IsLocalPipeRangeSelected,
-                                                    Converter={StaticResource BoolToVis}}">
-                                <TextBlock DockPanel.Dock="Top" FontWeight="SemiBold" FontSize="11" Margin="0,0,0,4">
-                                    <TextBlock.Text>
-                                        <Binding Path="ProjectSetupTab.SelectedLocalPipeRange.PipeRangeDisplay"
-                                                 StringFormat="Derinlik Katmanları — {0}"/>
-                                    </TextBlock.Text>
-                                </TextBlock>
-                                <DataGrid x:Name="LocalTiersGrid"
-                                          ItemsSource="{Binding ProjectSetupTab.SelectedLocalPipeRange.DepthTiers}"
-                                          SelectedItem="{Binding ProjectSetupTab.SelectedLocalTier}"
-                                          AutoGenerateColumns="False" CanUserAddRows="False"
-                                          SelectionMode="Single"
-                                          RowStyle="{StaticResource DerinlikKatmanSatiri}"
-                                          ColumnHeaderStyle="{StaticResource SutunBasligi}">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Min Der. (m)"
-                                            Binding="{Binding MinDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.0}"
-                                            Width="85"/>
-                                        <DataGridTextColumn Header="Max Der. (m)"
-                                            Binding="{Binding MaxDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.0}"
-                                            Width="85"/>
-                                        <DataGridCheckBoxColumn Header="Yd. Döküm"
-                                            Binding="{Binding IsCastInSitu, UpdateSourceTrigger=PropertyChanged}"
-                                            Width="75"/>
-                                        <DataGridTemplateColumn Header="Seçilen Taban" Width="*">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Text="{Binding ResultDisplay}"
-                                                               VerticalAlignment="Center" Padding="2,0"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                            <DataGridTemplateColumn.CellEditingTemplate>
-                                                <DataTemplate>
-                                                    <ComboBox
-                                                        ItemsSource="{Binding DataContext.ProjectSetupTab.AvailableBases,
-                                                                      ElementName=LocalTiersGrid}"
-                                                        SelectedValue="{Binding SelectedBaseId,
-                                                                        UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
-                                                        SelectedValuePath="Id"
-                                                        DisplayMemberPath="Display"
-                                                        IsEnabled="{Binding IsBaseSelectable}"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellEditingTemplate>
-                                        </DataGridTemplateColumn>
-                                        <DataGridTextColumn Header="Not"
-                                            Binding="{Binding Notes, UpdateSourceTrigger=PropertyChanged}"
-                                            Width="100"/>
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </DockPanel>
-
-                            <!-- Yer tutucu: boru aralığı seçilmemiş -->
-                            <TextBlock Grid.Column="2"
-                                       VerticalAlignment="Center" HorizontalAlignment="Center"
-                                       Text="Bir boru aralığı seçin veya '+ Ekle' ile yeni oluşturun."
-                                       Foreground="Gray" FontStyle="Italic"
-                                       Visibility="{Binding ProjectSetupTab.IsLocalPipeRangeSelected,
-                                                    Converter={StaticResource BoolToVis},
-                                                    ConverterParameter=invert}"/>
-                        </Grid>
-                    </DockPanel>
-
-                    <!-- Şablon seçilmediğinde yer tutucu -->
-                    <TextBlock Grid.Column="2"
-                               VerticalAlignment="Center" HorizontalAlignment="Center"
-                               Text="Soldaki listeden bir şablon seçin veya '+' ile yeni oluşturun."
-                               Foreground="Gray" FontStyle="Italic"
-                               Visibility="{Binding ProjectSetupTab.IsTemplateSelected,
-                                            Converter={StaticResource BoolToVis},
-                                            ConverterParameter=invert}"/>
-                </Grid>
+                        <TextBlock Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                   Text="Soldaki listeden bir ağ seçin." Foreground="Gray" FontStyle="Italic"
+                                   Visibility="{Binding IsNetworkSelected, Converter={StaticResource BoolToVis},
+                                                ConverterParameter=invert}"/>
+                    </Grid>
+                </DockPanel>
             </TabItem>
 
 

@@ -5,11 +5,15 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Runtime;
 using UrbanoMetraj.BoQ.Models;
 using UrbanoMetraj.BoQ.PipeCatalogs.Services;
+using UrbanoMetraj.BoQ.Services;
+using UrbanoMetraj.BoQ.ProjectRules.Services;
+using UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
 using UrbanoMetraj.BoQ.SmartAssembly.Serialization;
 using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
 using UrbanoMetraj.BoQ.SmartAssembly.UI.Views;
 using UrbanoMetraj.BoQ.TypeMapping.Services;
+using UrbanoMetraj.BoQ.UI.NetworkPanel;
 
 using Exception = System.Exception;
 
@@ -105,6 +109,42 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
                             foreach (var l in manholeLinks) TypeMappingStore.SaveManholeLink(activeDoc.Database, l);
                         }
                     });
+
+                // Project Rules tab (new per-network calc rule source). Networks come from the
+                // shared UT_NET_PANEL scrape (URBANO_NETWORKS NOD) and the Active flags from the
+                // shared URBANOLOCK_UI_STATE NOD (read directly, so the badge is correct even when
+                // the live palette is UrbanoLock's, whose in-memory active set this plugin can't see).
+                // The rule set + save callback are bound to this document's DWG.
+                Func<List<NetworkSeed>> reloadSeeds = () =>
+                {
+                    var d = Application.DocumentManager.MdiActiveDocument?.Database;
+                    if (d == null) return new List<NetworkSeed>();
+                    var nets   = NetworkSessionManager.GetAllNetworks(d);
+                    var active = NetworkSessionManager.ResolveActiveFromNod(d, nets);
+                    return nets.Select(n => new NetworkSeed { Name = n, IsActive = active.Contains(n) }).ToList();
+                };
+                _mainVm.ProjectRulesTab.Initialize(
+                    reloadSeeds(),
+                    ProjectRulesNodManager.Load(doc.Database),
+                    ruleSet =>
+                    {
+                        var activeDoc = Application.DocumentManager.MdiActiveDocument;
+                        if (activeDoc == null) return;
+                        using (activeDoc.LockDocument())
+                            ProjectRulesNodManager.Save(activeDoc.Database, ruleSet);
+                    },
+                    reloadSeeds,
+                    // Interactive exception pick: queued as a modal command so GetSelection runs in a
+                    // proper document context (layer-filtered to the network), then the AG_GUIDs come
+                    // back to the VM (main thread).
+                    (prompt, kind, layerNet, onPicked) => ProjectRuleExceptionPicker.RequestPick(prompt, kind, layerNet, onPicked),
+                    // AG_GUID → name map from the last ARS_EXPORT_XML (for the exception name display).
+                    () => BoQParserService.BuildEntityNameMap(
+                        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "urbano_boq_export.xml")),
+                    // "XML Güncelle" — same action as the Metraj window's "Metraj Verisi Güncelle": run
+                    // the extract-only command that (re)writes the export XML from Urbano.
+                    () => Application.DocumentManager.MdiActiveDocument?
+                            .SendStringToExecute("UT_BOQ\n", true, false, true));
             }
 
             return _mainVm;

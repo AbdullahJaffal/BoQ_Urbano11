@@ -175,6 +175,13 @@
     <Compile Include="BoQ\Services\ManholeAssignStore.cs" />
     <Compile Include="BoQ\UI\ManholeAssignDialog.cs" />
     <Compile Include="BoQ\ManholeAssignCommand.cs" />
+    <!-- ═══ Project Rules (per-network calc rule source) ═══════════════════════ -->
+    <Compile Include="BoQ\ProjectRules\Models\ProjectRuleModels.cs" />
+    <Compile Include="BoQ\ProjectRules\Services\ProjectRulesNodManager.cs" />
+    <Compile Include="BoQ\ProjectRules\Services\ProjectRulesXmlManager.cs" />
+    <Compile Include="BoQ\ProjectRules\Services\ProjectRulesStore.cs" />
+    <Compile Include="BoQ\ProjectRules\Services\ProjectRuleExceptionPicker.cs" />
+    <Compile Include="BoQ\ProjectRules\UI\ViewModels\ProjectRulesTabVm.cs" />
     <Compile Include="BoQ\MhProbeCommand.cs" />
     <!-- ═══ Excel Import (shared column-mapping infrastructure) ════════════════ -->
     <Compile Include="BoQ\ExcelImport\ExcelSheetReader.cs" />
