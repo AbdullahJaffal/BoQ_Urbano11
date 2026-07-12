@@ -7,6 +7,9 @@ using OfficeOpenXml.Style;
 using UrbanoMetraj.BoQ.Models;
 using UrbanoMetraj.BoQ.DolguCatalog.Services;
 using UrbanoMetraj.BoQ.SoilCatalog.Services;
+using UrbanoMetraj.BoQ.SmartAssembly.Services;
+using UrbanoMetraj.BoQ.PipeCatalogs.Services;
+using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 
 namespace UrbanoMetraj.BoQ.Services
 {
@@ -154,19 +157,79 @@ namespace UrbanoMetraj.BoQ.Services
             public double   Vol;
         }
 
+        // LIVE catalog Açıklama lookups, built once per export. The stored
+        // StackedPart.Aciklama / SectionDebugRow.Aciklama only carry what the catalog held
+        // at the last HESAPLA (stale if the description was edited afterward). Like the
+        // KAZI/DOLGU rows (resolved live from Soil/Dolgu stores), pieces & pipes resolve
+        // their İMALAT AÇIKLAMASI live from the Baca Parça / Boru catalogs here, falling
+        // back to the stored value, then a composed name.
+        private sealed class CatalogAck
+        {
+            private readonly Dictionary<string, string> _piece   = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, string> _pipeDnMat = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<int, string>    _pipeDn    = new Dictionary<int, string>();
+
+            /// <summary>Live piece Açıklama by component Name (= StackedPart.PartName).</summary>
+            public string ForPiece(string partName)
+                => partName != null && _piece.TryGetValue(partName, out var a) ? a : null;
+
+            /// <summary>Live pipe Açıklama by diameter (+ material when it disambiguates).</summary>
+            public string ForPipe(int dn, string material)
+            {
+                if (!string.IsNullOrEmpty(material) && _pipeDnMat.TryGetValue(dn + "|" + material, out var a))
+                    return a;
+                return _pipeDn.TryGetValue(dn, out var b) ? b : null;
+            }
+
+            public static CatalogAck Build()
+            {
+                var r = new CatalogAck();
+                try
+                {
+                    var mc = SmartAssemblyCatalogStore.Current;
+                    if (mc?.Components != null)
+                        foreach (var c in mc.Components)
+                            if (!string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Aciklama)
+                                && !r._piece.ContainsKey(c.Name))
+                                r._piece[c.Name] = c.Aciklama;
+                }
+                catch { }
+                try
+                {
+                    var pc = PipeCatalogStore.Current;
+                    if (pc?.Families != null)
+                        foreach (var fam in pc.Families)
+                            foreach (var p in fam.Pipes ?? Enumerable.Empty<PipeDefinition>())
+                            {
+                                if (string.IsNullOrWhiteSpace(p.Aciklama)) continue;
+                                int dn = (int)Math.Round(p.NominalDiameter);
+                                string k = dn + "|" + (fam.Material ?? "");
+                                if (!r._pipeDnMat.ContainsKey(k)) r._pipeDnMat[k] = p.Aciklama;
+                                if (!r._pipeDn.ContainsKey(dn))    r._pipeDn[dn]   = p.Aciklama;
+                            }
+                }
+                catch { }
+                return r;
+            }
+        }
+
         // =====================================================================
         // Entry point
         // =====================================================================
 
         public static void Export(BoQReport report, BoQSettings settings, string path)
         {
-            ExportLanguage lang = settings.Language;
+            // The Metraj Keşif Tablosu is an inherently Turkish form (section titles are
+            // always Turkish, catalog descriptions are Turkish) — so the column headers,
+            // units and sheet names are forced to Turkish regardless of settings.Language.
+            ExportLanguage lang = ExportLanguage.Turkish;
+            var ack = CatalogAck.Build();
             using (var pkg = new ExcelPackage())
             {
                 WriteProjectInfoSheet(pkg, lang);
                 foreach (var sys in report.Systems ?? new List<SystemBoQ>())
                 {
-                    Row root = BuildNetwork(report, sys, settings);
+                    Row root = BuildNetwork(report, sys, settings, ack);
                     if (root.HasContent) WriteNetworkSheet(pkg, sys, root, lang);
                 }
                 ExcelExportService.SavePackage(pkg, path);
@@ -177,7 +240,7 @@ namespace UrbanoMetraj.BoQ.Services
         // Tree builder
         // =====================================================================
 
-        private static Row BuildNetwork(BoQReport report, SystemBoQ sys, BoQSettings settings)
+        private static Row BuildNetwork(BoQReport report, SystemBoQ sys, BoQSettings settings, CatalogAck ack)
         {
             var sections = (report.SectionDebug ?? new List<SectionDebugRow>())
                 .Where(r => string.Equals(r.SystemName, sys.SystemName, StringComparison.Ordinal))
@@ -195,12 +258,12 @@ namespace UrbanoMetraj.BoQ.Services
 
             // ── MUAYENE BACALARI İŞLERİ (pieces, grouped by manhole diameter) ─
             var bacalar = Row.Band("MUAYENE BACALARI İŞLERİ");
-            BuildManholes(bacalar, sys, settings.MetrajDegiskenParcaBandM);
+            BuildManholes(bacalar, sys, settings.MetrajDegiskenParcaBandM, ack);
             if (bacalar.HasContent) root.Add(bacalar);
 
             // ── BORU İŞLERİ (lengths, grouped by pipe type) ───────────────────
             var borular = Row.Band("BORU İŞLERİ");
-            BuildPipes(borular, sections);
+            BuildPipes(borular, sections, ack);
             if (borular.HasContent) root.Add(borular);
 
             return root;
@@ -316,7 +379,7 @@ namespace UrbanoMetraj.BoQ.Services
         // (a DWG-saved setting, default 0.5 m): every ring whose height falls in the
         // same [n·band, (n+1)·band) interval is one line, with that interval appended to
         // the catalog Açıklama (the piece's own description, per user request).
-        private static void BuildManholes(Row parent, SystemBoQ sys, double bandM)
+        private static void BuildManholes(Row parent, SystemBoQ sys, double bandM, CatalogAck ack)
         {
             var withStack = sys.Manholes.Where(m => m.StackPreCast != null
                                                  && m.StackPreCast.Parts != null
@@ -333,27 +396,30 @@ namespace UrbanoMetraj.BoQ.Services
                     foreach (var p in m.StackPreCast.Parts)
                     {
                         bool isVar = p.IsVariableRing && bandM > 1e-6;
-                        string baseAck = !string.IsNullOrWhiteSpace(p.Aciklama)
-                            ? p.Aciklama
+                        // Live catalog Açıklama first, then the stored value, then a composed name.
+                        string catAck = ack.ForPiece(p.PartName)
+                                     ?? (!string.IsNullOrWhiteSpace(p.Aciklama) ? p.Aciklama : null);
+                        string baseAck = !string.IsNullOrWhiteSpace(catAck)
+                            ? catAck
                             : (isVar ? p.PartName : $"{p.PartName} {p.HeightM:0.00}m");
 
-                        string ack, hkey;
+                        string desc, hkey;
                         if (isVar)
                         {
                             double lo = Math.Floor(p.HeightM / bandM) * bandM;
                             double hi = lo + bandM;
-                            ack  = $"{baseAck} ({lo:0.00}-{hi:0.00} m)";
+                            desc = $"{baseAck} ({lo:0.00}-{hi:0.00} m)";
                             hkey = "V" + lo.ToString("0.000");
                         }
                         else
                         {
-                            ack  = baseAck;
+                            desc = baseAck;
                             hkey = "F" + p.HeightM.ToString("0.000");
                         }
 
                         string key = p.PartName + "|" + (p.PozNo ?? "") + "|" + hkey;
                         int i = agg.FindIndex(x => x.key == key);
-                        if (i < 0) agg.Add((key, p.PozNo ?? "", ack, p.Count));
+                        if (i < 0) agg.Add((key, p.PozNo ?? "", desc, p.Count));
                         else       agg[i] = (agg[i].key, agg[i].poz, agg[i].ack, agg[i].count + p.Count);
                     }
 
@@ -364,7 +430,7 @@ namespace UrbanoMetraj.BoQ.Services
         }
 
         // ── BORU: lengths grouped by pipe type, then by diameter ──────────────
-        private static void BuildPipes(Row parent, List<SectionDebugRow> sections)
+        private static void BuildPipes(Row parent, List<SectionDebugRow> sections, CatalogAck ack)
         {
             if (sections.Count == 0) return;
 
@@ -379,9 +445,12 @@ namespace UrbanoMetraj.BoQ.Services
                 foreach (var diaGrp in typeGrp.GroupBy(s => s.DiameterMm).OrderBy(g => g.Key))
                 {
                     var withPoz = diaGrp.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.PozNo)) ?? diaGrp.First();
-                    string ack = !string.IsNullOrWhiteSpace(withPoz.Aciklama)
-                        ? withPoz.Aciklama : $"Ø{diaGrp.Key} {withPoz.Material} boru";
-                    band.Add(Row.Content(withPoz.PozNo ?? "", ack, diaGrp.Sum(r => r.Length2D), "m", FmtLength));
+                    // Live catalog Açıklama first, then the stored value, then a composed name.
+                    string catAck = ack.ForPipe(diaGrp.Key, withPoz.Material)
+                                 ?? (!string.IsNullOrWhiteSpace(withPoz.Aciklama) ? withPoz.Aciklama : null);
+                    string desc = !string.IsNullOrWhiteSpace(catAck)
+                        ? catAck : $"Ø{diaGrp.Key} {withPoz.Material} boru";
+                    band.Add(Row.Content(withPoz.PozNo ?? "", desc, diaGrp.Sum(r => r.Length2D), "m", FmtLength));
                 }
                 if (band.HasContent) parent.Add(band);
             }
