@@ -168,6 +168,10 @@ namespace UrbanoMetraj.BoQ.SoilCatalog.UI.ViewModels
             try
             {
                 SoilCatalogXmlManager.SaveInternal(GetModels());
+                // Refresh the session-scoped store so the calc engine, Metraj Keşif
+                // pricing and the shared Zemin-Tipi filters see edits immediately —
+                // otherwise they keep the cached copy until AutoCAD restarts.
+                SoilCatalogStore.Items = new ObservableCollection<SoilClassification>(GetModels());
                 StatusText = $"Kaydedildi → {SoilCatalogXmlManager.InternalPath}";
             }
             catch (Exception ex) { ShowError("Kayıt hatası", ex); }
