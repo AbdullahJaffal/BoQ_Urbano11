@@ -1716,8 +1716,8 @@ namespace UrbanoMetraj.BoQ.Services
                 sections[i].OverlapBackfillDeducted = sdrs[i].OverlapBackfillDeducted;
             }
 
-            // ── Step 3b: Print diagnostic coordinate table to command line ────
-            PrintStationDebug(ed, sdrs);
+            // ── Step 3b: (diagnostic coordinate dump silenced for release) ────
+            // PrintStationDebug(ed, sdrs);
 
             // ── Step 4: Aggregate Systems (PipeItems + Manholes) ─────────────
             var allIds = new SortedSet<int>(
@@ -2319,7 +2319,10 @@ namespace UrbanoMetraj.BoQ.Services
         private static int RoundToNearest(double value, int nearest)
             => (int)(Math.Round(value / nearest) * nearest);
 
-        private static void Dbg(Editor ed, string msg) => ed?.WriteMessage(msg);
+        // Diagnostic tracing silenced for release: the parser no longer prints its
+        // per-phase progress / [BoQ-DBG] dumps to the AutoCAD command line. Restore by
+        // reverting this body to `ed?.WriteMessage(msg);`.
+        private static void Dbg(Editor ed, string msg) { }
 
         // ── C99 hex-float decoder ─────────────────────────────────────────────
         //   "0x1.52CAEp+15" → 42633.xxx

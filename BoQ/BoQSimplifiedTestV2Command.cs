@@ -186,7 +186,7 @@ namespace UrbanoMetraj.BoQ
             }
             catch (Exception ex)
             {
-                ed.WriteMessage($"\n[BoQ ERROR] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+                ed.WriteMessage($"\n[BoQ ERROR] {ex.GetType().Name}: {ex.Message}\n");
             }
             finally
             {
@@ -215,10 +215,13 @@ namespace UrbanoMetraj.BoQ
         // but never surfaced anywhere, so incomplete linking failed silently.
         private static void PrintNotes(Editor ed, List<string> notes)
         {
-            if (notes == null || notes.Count == 0) return;
-            ed.WriteMessage("\n[BoQ] ── Uyarılar ───────────────────────────────────────────");
-            foreach (var n in notes) ed.WriteMessage("\n  " + n);
-            ed.WriteMessage("\n[BoQ] ──────────────────────────────────────────────────────────");
+            // Command-line warning dump silenced for release — the same DiscoveryNotes are
+            // surfaced to the user in the "Eksik Eşleştirme Uyarısı" MessageBox instead.
+            // Restore the block below to bring the command-line listing back.
+            // if (notes == null || notes.Count == 0) return;
+            // ed.WriteMessage("\n[BoQ] ── Uyarılar ───────────────────────────────────────────");
+            // foreach (var n in notes) ed.WriteMessage("\n  " + n);
+            // ed.WriteMessage("\n[BoQ] ──────────────────────────────────────────────────────────");
         }
 
         // =====================================================================
@@ -369,9 +372,6 @@ namespace UrbanoMetraj.BoQ
                         activeSystems = new HashSet<string>(
                             knownNetworks.Where(NetworkSessionManager.IsActive),
                             StringComparer.OrdinalIgnoreCase);
-                        ed.WriteMessage(
-                            $"\n[BoQ] {activeSystems.Count}/{knownNetworks.Count} ağ aktif — " +
-                            "hesaplama yalnızca aktif ağlar için yapılıyor.\n");
                     }
                 }
 
@@ -386,8 +386,6 @@ namespace UrbanoMetraj.BoQ
                 if (selectionScope != null && !selectionScope.IsEmpty)
                 {
                     if (activeSystems != null && activeSystems.Count == 0) activeSystems = null;
-                    ed.WriteMessage(
-                        $"\n[BoQ] CAD Seçimi kapsamında hesaplanıyor: {PendingSelectionSummary}.\n");
                 }
 
                 // ── Phase 1: Parse (scoped to active networks / CAD selection) ───
@@ -544,7 +542,7 @@ namespace UrbanoMetraj.BoQ
             }
             catch (Exception ex)
             {
-                ed.WriteMessage($"\n[BoQ ERROR] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+                ed.WriteMessage($"\n[BoQ ERROR] {ex.GetType().Name}: {ex.Message}\n");
             }
         }
 

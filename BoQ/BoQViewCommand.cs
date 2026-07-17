@@ -46,7 +46,6 @@ namespace UrbanoMetraj.BoQ
             }
             else
             {
-                ed.WriteMessage("\n[BoQ] Loading stored results from DWG...");
                 try
                 {
                     (report, settings) = DwgBoQStore.Load(doc.Database);
@@ -67,10 +66,6 @@ namespace UrbanoMetraj.BoQ
                 }
                 else
                 {
-                    ed.WriteMessage(
-                        $"\n[BoQ] Loaded: {report.Systems?.Count ?? 0} system(s), " +
-                        $"{report.SectionDebug?.Count ?? 0} section(s).\n");
-
                     // NetLength is runtime-only (not persisted) — recompute it now
                     // from the just-loaded data (Length2D, inverts, manhole
                     // diameter/stack/WallThicknessMm all round-trip through the DWG).
