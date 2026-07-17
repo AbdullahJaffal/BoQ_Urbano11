@@ -37,7 +37,6 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
         public RepositoryTabVm   RepositoryTab   { get; }
         public MasterRulesTabVm  MasterRulesTab  { get; }
-        public ProjectSetupTabVm ProjectSetupTab { get; }
         public ProjectRulesTabVm ProjectRulesTab { get; }
 
         public ManholeExcavationMainVm ManholeExcavTab { get; }
@@ -69,17 +68,14 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             MasterCatalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
 
             // RepositoryTab first: its constructor auto-loads Components from XML,
-            // so _catalog.Components is populated before MasterRulesTab/ProjectSetupTab
-            // call RefreshBasesCombo() in their constructors.
+            // so _catalog.Components is populated before MasterRulesTab
+            // calls RefreshBasesCombo() in its constructor.
             RepositoryTab = new RepositoryTabVm(MasterCatalog, onComponentsChanged: () =>
             {
-                MasterRulesTab ?.RefreshBasesCombo();
-                ProjectSetupTab?.RefreshBasesCombo();
-                ProjectSetupTab?.RefreshMaterialFamilies();
+                MasterRulesTab?.RefreshBasesCombo();
             });
 
             MasterRulesTab  = new MasterRulesTabVm (MasterCatalog, pipeCatalog);
-            ProjectSetupTab = new ProjectSetupTabVm(MasterCatalog, pipeCatalog);
             ProjectRulesTab = new ProjectRulesTabVm(pipeCatalog ?? PipeCatalogStore.Current, MasterCatalog);
 
             // Diğer kataloglar — her biri kendi XML deposundan otomatik yüklenir.
@@ -104,8 +100,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         /// </param>
         public void RefreshPipeCatalog(PipeCatalog pipeCatalog, bool updatePipeCatalogTab = true)
         {
-            MasterRulesTab .SetPipeCatalog(pipeCatalog);
-            ProjectSetupTab.SetPipeCatalog(pipeCatalog);
+            MasterRulesTab.SetPipeCatalog(pipeCatalog);
             if (updatePipeCatalogTab)
                 PipeCatalogTab.ApplyExtractedCatalog(pipeCatalog);
         }

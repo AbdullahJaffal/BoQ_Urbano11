@@ -70,10 +70,6 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc != null)
             {
-                var existingTemplates = ProjectTemplateNodManager.LoadAllTemplates(doc.Database);
-                foreach (var t in existingTemplates)
-                    _mainVm.ProjectSetupTab.Templates.Add(t);
-
                 // Type Mapping data (both the discovered Urbano catalog items AND the
                 // user's links) lives in THIS document's DWG NOD (not a shared
                 // %APPDATA% file like every other tab, and not the ephemeral %TEMP%
@@ -190,10 +186,6 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
             if (_projSettingsWindow == null || !_projSettingsWindow.IsLoaded)
             {
                 _projSettingsWindow = new ProjectSettingsWindow(vm);
-                // Same refresh the tab-select side-effect used to do inside the
-                // Akıllı Montaj window when Proje Kurulumu became active.
-                vm.ProjectSetupTab.RefreshBasesCombo();
-                vm.ProjectSetupTab.RefreshMaterialFamilies();
                 Application.ShowModelessWindow(_projSettingsWindow);
             }
             else

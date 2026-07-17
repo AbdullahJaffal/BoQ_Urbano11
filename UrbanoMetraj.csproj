@@ -214,11 +214,9 @@
     <Compile Include="BoQ\SmartAssembly\Models\PipeRangeRule.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\SystemType.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\ComponentTypeConstraint.cs" />
-    <Compile Include="BoQ\SmartAssembly\Models\ProjectTemplate.cs" />
     <Compile Include="BoQ\SmartAssembly\Models\SmartAssemblyMasterCatalog.cs" />
     <!-- Serialization -->
     <Compile Include="BoQ\SmartAssembly\Serialization\MasterCatalogXmlManager.cs" />
-    <Compile Include="BoQ\SmartAssembly\Serialization\ProjectTemplateNodManager.cs" />
     <!-- UI – ViewModels -->
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\RelayCommand.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ViewModelBase.cs" />
@@ -232,7 +230,6 @@
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\MasterRulesTabVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ComponentConstraintVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SystemTypeManagerVm.cs" />
-    <Compile Include="BoQ\SmartAssembly\UI\ViewModels\ProjectSetupTabVm.cs" />
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SmartAssemblyMainVm.cs" />
     <!-- UI – Converters -->
     <Compile Include="BoQ\SmartAssembly\UI\Converters\NullToVisibilityConverter.cs" />
