@@ -892,6 +892,11 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
         {
             _seeds           = seeds ?? new List<NetworkSeed>();
             _ruleSet         = ruleSet ?? new ProjectRuleSet();
+            // HOLD (2026-07): Tür Eşleştirme mode is hidden from the UI while incomplete, so the
+            // calc is forced to Rules (see ProjectRulesStore.HoldForceRules). Coerce the loaded
+            // mode to Rules here too, so the single visible mode radio, the ModeSummary text and
+            // the next Save all stay consistent with the forced path. Remove when TypeMapping returns.
+            _ruleSet.CalcMode = CalcMode.Rules;
             _saveToDwg       = saveToDwg;
             _reloadSeeds     = reloadSeeds;
             _pickEntities    = pickEntities;

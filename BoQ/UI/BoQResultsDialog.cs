@@ -264,36 +264,42 @@ namespace UrbanoMetraj.BoQ.UI
                 Close();
             };
 
-            var btnSolids = new Button
-            {
-                Text = "3B Katı", Left = MARGIN + 176, Top = row1 - 1, Width = 86, Height = 28,
-                FlatStyle = FlatStyle.Flat
-            };
-            btnSolids.Click += (s, e) =>
-            {
-                SolidsCommand.OverrideExcavation      = SelectedExcavationOverlap;
-                SolidsCommand.OverrideBackfill        = SelectedBackfillOverlap;
-                SolidsCommand.OverrideDisplayInterval = _savedSettings?.SolidDisplayInterval ?? 5.0;
-                _doc.SendStringToExecute("UT_SOLIDS\nUT_BOQ_VIEW\n", true, false, true);
-                Close();
-            };
+            // HOLD (2026-07): "3B Katı" (UT_SOLIDS) hidden from the UI — feature not
+            // fully validated yet. Command still works from the command line.
+            // Restore by un-commenting this block and re-adding btnSolids to Controls.AddRange.
+            // var btnSolids = new Button
+            // {
+            //     Text = "3B Katı", Left = MARGIN + 176, Top = row1 - 1, Width = 86, Height = 28,
+            //     FlatStyle = FlatStyle.Flat
+            // };
+            // btnSolids.Click += (s, e) =>
+            // {
+            //     SolidsCommand.OverrideExcavation      = SelectedExcavationOverlap;
+            //     SolidsCommand.OverrideBackfill        = SelectedBackfillOverlap;
+            //     SolidsCommand.OverrideDisplayInterval = _savedSettings?.SolidDisplayInterval ?? 5.0;
+            //     _doc.SendStringToExecute("UT_SOLIDS\nUT_BOQ_VIEW\n", true, false, true);
+            //     Close();
+            // };
 
             // ⚙ Ayarlar taşındı → Proje Ayarları penceresi ("Genel Ayarlar" sekmesi,
             // UT_PROJE_AYARLARI). Ayarlar orada düzenlenip DWG'ye kaydedilir; bu pencere
             // onları açılışta DWG'den okur ve Hesapla ile uygular.
 
-            var btnSections = new Button
-            {
-                Text = "Kesit Çiz", Left = MARGIN + 270, Top = row1 - 1, Width = 90, Height = 28,
-                FlatStyle = FlatStyle.Flat
-            };
-            btnSections.Click += (s, e) =>
-            {
-                SectionsCommand.OverrideExcavation           = SelectedExcavationOverlap;
-                SectionsCommand.OverrideBackfill             = SelectedBackfillOverlap;
-                SectionsCommand.OverrideCrossSectionInterval = _savedSettings?.CrossSectionInterval ?? 5.0;
-                _doc.SendStringToExecute("UT_SECTIONS\n", true, false, true);
-            };
+            // HOLD (2026-07): "Kesit Çiz" (UT_SECTIONS) hidden from the UI — feature not
+            // fully validated yet. Command still works from the command line.
+            // Restore by un-commenting this block and re-adding btnSections to Controls.AddRange.
+            // var btnSections = new Button
+            // {
+            //     Text = "Kesit Çiz", Left = MARGIN + 270, Top = row1 - 1, Width = 90, Height = 28,
+            //     FlatStyle = FlatStyle.Flat
+            // };
+            // btnSections.Click += (s, e) =>
+            // {
+            //     SectionsCommand.OverrideExcavation           = SelectedExcavationOverlap;
+            //     SectionsCommand.OverrideBackfill             = SelectedBackfillOverlap;
+            //     SectionsCommand.OverrideCrossSectionInterval = _savedSettings?.CrossSectionInterval ?? 5.0;
+            //     _doc.SendStringToExecute("UT_SECTIONS\n", true, false, true);
+            // };
 
             // The real calculation (geometry + Manhole AI + save), meant to be run
             // after Tür Eşleştirme / Baca-Boru Bağlantı Kuralları links are set up.
@@ -301,7 +307,7 @@ namespace UrbanoMetraj.BoQ.UI
             // this is the action that actually deserves it now.
             _btnHesapla = new Button
             {
-                Text = "Hesapla", Left = MARGIN + 370, Top = row1 - 1, Width = 90, Height = 28,
+                Text = "Hesapla", Left = MARGIN + 176, Top = row1 - 1, Width = 90, Height = 28,
                 BackColor = Color.FromArgb(0, 70, 127), ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f, FontStyle.Bold),
                 Enabled = false     // enabled only once a Kapsam (scope) is active
@@ -323,13 +329,13 @@ namespace UrbanoMetraj.BoQ.UI
 
             _btnScopeMain = new Button
             {
-                Left = MARGIN + 466, Top = row1 - 1, Width = 30, Height = 28,
+                Left = MARGIN + 272, Top = row1 - 1, Width = 30, Height = 28,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Symbol", 10f),
                 Text = ScopeGlyph(_scopeMode)
             };
             _btnScopeArrow = new Button
             {
-                Left = MARGIN + 496, Top = row1 - 1, Width = 18, Height = 28,
+                Left = MARGIN + 302, Top = row1 - 1, Width = 18, Height = 28,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 7f), Text = "▼"
             };
 
@@ -352,7 +358,7 @@ namespace UrbanoMetraj.BoQ.UI
 
             Controls.AddRange(new Control[]
             {
-                btnRefresh, btnSolids, btnSections, _btnHesapla,
+                btnRefresh, _btnHesapla,          // HOLD: btnSolids (3B Katı) + btnSections (Kesit Çiz) removed
                 _btnScopeMain, _btnScopeArrow
             });
 

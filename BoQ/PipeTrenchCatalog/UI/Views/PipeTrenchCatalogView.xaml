@@ -365,11 +365,13 @@
                                               UpdateSourceTrigger=PropertyChanged,
                                               StringFormat=0.0\#}"
                                     Width="72"/>
-                                <DataGridCheckBoxColumn Header="İksa"
+                                <!-- HOLD (2026-07): İksa + Basamaklı not yet supported in the
+                                     calc — columns shown but read-only so they can't be selected. -->
+                                <DataGridCheckBoxColumn Header="İksa" IsReadOnly="True"
                                     Binding="{Binding RequiresShoring,
                                               UpdateSourceTrigger=PropertyChanged}"
                                     Width="46"/>
-                                <DataGridCheckBoxColumn Header="Basamaklı"
+                                <DataGridCheckBoxColumn Header="Basamaklı" IsReadOnly="True"
                                     Binding="{Binding IsSteppedExcavation,
                                               UpdateSourceTrigger=PropertyChanged}"
                                     Width="76"/>
@@ -404,7 +406,8 @@
                                 Background="#F5F5F5" Padding="10,6"
                                 Margin="0,0,0,8">
                             <WrapPanel>
-                                <CheckBox Content="Basamaklı Kazı (Kademeli)"
+                                <!-- HOLD (2026-07): Basamaklı Kazı not yet supported — disabled. -->
+                                <CheckBox Content="Basamaklı Kazı (Kademeli)" IsEnabled="False"
                                           IsChecked="{Binding SelectedRule.SelectedTier.IsSteppedExcavation,
                                                       UpdateSourceTrigger=PropertyChanged}"
                                           VerticalAlignment="Center" Margin="0,0,20,0"/>

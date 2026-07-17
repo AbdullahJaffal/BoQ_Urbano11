@@ -80,7 +80,11 @@
                                 <RadioButton Content="Kurallar (bu sayfa)" GroupName="CalcMode"
                                              VerticalAlignment="Center" Margin="0,0,12,0"
                                              IsChecked="{Binding IsRulesMode, Mode=TwoWay}"/>
+                                <!-- HOLD (2026-07): Tür Eşleştirme mode hidden — calc forced to
+                                     Kurallar (Rules) while the Type Mapping path is incomplete.
+                                     Restore by removing Visibility + the ProjectRulesStore HOLD flag. -->
                                 <RadioButton Content="Tür Eşleştirme" GroupName="CalcMode"
+                                             Visibility="Collapsed"
                                              VerticalAlignment="Center" Margin="0,0,16,0"
                                              IsChecked="{Binding IsTypeMappingMode, Mode=TwoWay}"/>
                                 <Separator Width="1" Height="18" Margin="0,0,12,0" Background="#BBBBBB"/>
@@ -552,7 +556,9 @@
             </TabItem>
 
 
-            <TabItem Header="Tür Eşleştirme">
+            <!-- HOLD (2026-07): Tür Eşleştirme editor tab hidden — path incomplete.
+                 Restore by removing Visibility="Collapsed". -->
+            <TabItem Header="Tür Eşleştirme" Visibility="Collapsed">
                 <typeMap:TypeMappingTabView DataContext="{Binding TypeMappingTab}"/>
             </TabItem>
 

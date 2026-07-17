@@ -344,6 +344,15 @@ namespace UrbanoMetraj.BoQ.UI
             _cmbTerrasmanKotu    = MakeAraziCombo(130, 110, terrasmanKotuSurface);
             _cmbTerrasmanKotuC3D = MakeSurfaceCombo(230, 110, c3dSurfaceNames, terrasmanKotuC3DSurface);
 
+            // HOLD (2026-07): "Genel" column (Civil 3D surface pickers) hidden — this
+            // surface-based kot source is not validated yet. The combos are still created
+            // (their public values feed the calc) but not shown, so users can't set them.
+            // Restore by removing these four Visible = false lines.
+            lblColGenel.Visible          = false;
+            _cmbKirmiziKotC3D.Visible    = false;
+            _cmbAraziKotuC3D.Visible     = false;
+            _cmbTerrasmanKotuC3D.Visible = false;
+
             grp4.Controls.AddRange(new Control[]
             {
                 lblColBaca, lblColGenel,
