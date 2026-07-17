@@ -12,6 +12,7 @@ using UrbanoMetraj.BoQ.PipeTrenchCatalog.Models;
 using UrbanoMetraj.BoQ.PipeTrenchCatalog.Services;
 using UrbanoMetraj.BoQ.PipeCatalogs.Models;
 using UrbanoMetraj.BoQ.PipeCatalogs.Services;
+using UrbanoMetraj.BoQ.ProjectRules.Models;
 using UrbanoMetraj.BoQ.ProjectRules.Services;
 using UrbanoMetraj.BoQ.TypeMapping.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
@@ -867,6 +868,13 @@ namespace UrbanoMetraj.BoQ.Services
                 if (activeSystems != null &&
                     !activeSystems.Contains(sysNames.ContainsKey(sysId) ? sysNames[sysId] : $"System_{sysId}"))
                     continue;
+
+                // Per-network project rule (RULES mode) — reused by pipe type resolution AND the
+                // trench-rule (Boru Hendek) soil/name filter below.
+                string sysNameSec = sysNames.ContainsKey(sysId) ? sysNames[sysId] : $"System_{sysId}";
+                NetworkRule netRuleSec = ProjectRulesStore.IsRulesMode
+                    ? ProjectRulesStore.FindNetwork(sysNameSec) : null;
+
                 double ll10  = DecodeFloatProp(GetProp(props, "LL10"));
                 double ll11  = DecodeFloatProp(GetProp(props, "LL11"));
                 // LLPOS tells us which pipe cross-section point LL10/LL11 measures:
@@ -938,8 +946,7 @@ namespace UrbanoMetraj.BoQ.Services
                     // RULES mode: resolve from the pipe's network (family + class), overridden by a
                     // per-pipe family exception (keyed by the section's AG_GUID = @g). The drawn
                     // nominal (inner) diameter picks the PipeDefinition within that family/class.
-                    string sysName = sysNames.ContainsKey(sysId) ? sysNames[sysId] : $"System_{sysId}";
-                    var netRule = ProjectRulesStore.FindNetwork(sysName);
+                    var netRule = netRuleSec;
 
                     Guid   famId = Guid.Empty;
                     string sinif = "";
@@ -1033,7 +1040,16 @@ namespace UrbanoMetraj.BoQ.Services
                 // The rule's own Min/Max Boru Ø bounds are resolved the same way (via
                 // PipeCatalogStore) before comparing — see ResolveTrenchTier.
                 double selectionDepth = Math.Max(depthToInvS, depthToInvE);
-                var trenchTier = ResolveTrenchTier(nomMm, selectionDepth);
+                // Effective excavation soil + rule-name filter: a per-pipe excav exception (by section
+                // AG_GUID) overrides the network default; TypeMapping mode applies no filter.
+                string trenchSoil = null; List<string> trenchNames = null;
+                if (netRuleSec != null)
+                {
+                    var pex = netRuleSec.Exceptions?.FindPipeExcav(guid);
+                    trenchSoil  = pex != null ? pex.SoilName  : netRuleSec.SoilName;
+                    trenchNames = pex != null ? pex.RuleNames : netRuleSec.PipeTrenchRuleNames;
+                }
+                var trenchTier = ResolveTrenchTier(nomMm, selectionDepth, netRuleSec != null, trenchSoil, trenchNames);
                 if (trenchTier != null)
                 {
                     trWidth        = odM + 2.0 * trenchTier.TrenchWidthClearanceM;
@@ -1323,9 +1339,24 @@ namespace UrbanoMetraj.BoQ.Services
         // Finds the depth tier for a pipe INNER diameter (mm) + selection depth (m):
         // first rule whose diameter band contains pipeIdMm, then first tier whose
         // depth band contains depthM. MaxPipeDiameterMm/MaxDepthM == 0 means unlimited.
-        private static PipeTrenchDepthTier ResolveTrenchTier(double pipeIdMm, double depthM)
+        private static PipeTrenchDepthTier ResolveTrenchTier(
+            double pipeIdMm, double depthM, bool applyFilter, string soil, List<string> ruleNames)
         {
-            foreach (var rule in PipeTrenchCatalogStore.Current)
+            IEnumerable<PipeTrenchRule> rules = PipeTrenchCatalogStore.Current;
+
+            // RULES mode: keep only rules this network's (or the pipe excav exception's) Zemin Tipi +
+            // Kural Adı filter allow.
+            if (applyFilter)
+            {
+                soil = soil ?? "";
+                var names = ruleNames;
+                rules = rules.Where(r =>
+                    (r.SelectedSoilNames == null || r.SelectedSoilNames.Count == 0 ||
+                     string.IsNullOrEmpty(soil) || r.SelectedSoilNames.Contains(soil)) &&
+                    (names == null || names.Count == 0 || names.Contains(r.RuleName)));
+            }
+
+            foreach (var rule in rules)
             {
                 double minBoundId = ResolveInnerDiameterBound(rule.MinPipeDiameterMm, rule.SelectedFamilyNames);
                 double maxBoundId = rule.MaxPipeDiameterMm <= 0 ? 0

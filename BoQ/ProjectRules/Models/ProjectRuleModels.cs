@@ -62,6 +62,19 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Models
         /// <summary>The pressure/stiffness class (Sınıf, e.g. "SN8") within the chosen family.</summary>
         public string PipeSinif { get; set; } = "";
 
+        // ── Excavation ────────────────────────────────────────────────────────
+        /// <summary>Zemin Tipi (soil classification) NAME for this network, from the Soil catalog.
+        /// Drives excavation pricing (poz/bulking) and filters which trench/manhole-excavation rules
+        /// apply (a rule's SelectedSoilNames must be empty or contain this). Empty = not chosen.</summary>
+        public string SoilName { get; set; } = "";
+
+        /// <summary>Filter: only these pipe-trench (boru hendek) rule NAMES apply. Empty = every rule that
+        /// also passes the soil filter. Instead of editing rule values we just narrow the global catalog.</summary>
+        public List<string> PipeTrenchRuleNames   { get; set; } = new List<string>();
+
+        /// <summary>Filter: only these manhole-excavation (baca kazı) rule NAMES apply. Empty = all (soil-filtered).</summary>
+        public List<string> ManholeExcavRuleNames { get; set; } = new List<string>();
+
         // ── Manholes (network default) ────────────────────────────────────────
         /// <summary>References SmartAssembly.Models.ComponentFamily.Id (Guid.Empty = not chosen).</summary>
         public Guid ManholeFamilyId { get; set; }
@@ -164,8 +177,14 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Models
         public List<PipeFamilyException>    PipeFamily    { get; set; } = new List<PipeFamilyException>();
         public List<ManholeFamilyException> ManholeFamily { get; set; } = new List<ManholeFamilyException>();
 
+        /// <summary>Excavation overrides (Zemin Tipi + Kural Adı) for specific pipes / manholes.</summary>
+        public List<ExcavException> PipeExcav    { get; set; } = new List<ExcavException>();
+        public List<ExcavException> ManholeExcav { get; set; } = new List<ExcavException>();
+
         public PipeFamilyException    FindPipe(string agGuid)    => Find(PipeFamily, agGuid);
         public ManholeFamilyException FindManhole(string agGuid) => Find(ManholeFamily, agGuid);
+        public ExcavException FindPipeExcav(string agGuid)       => Find(PipeExcav, agGuid);
+        public ExcavException FindManholeExcav(string agGuid)    => Find(ManholeExcav, agGuid);
 
         private static T Find<T>(List<T> list, string agGuid) where T : ExceptionBase
         {
@@ -220,5 +239,18 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Models
         public double ManholeDiameterMm { get; set; }
 
         public string OverrideLabel     { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Overrides the excavation resolution (Zemin Tipi + Kural Adı) for one drawing entity — used for
+    /// both pipe-trench and manhole-excavation exceptions. When present, that entity's excavation is
+    /// filtered by <see cref="SoilName"/> and (if non-empty) <see cref="RuleNames"/> instead of the
+    /// network's. Empty RuleNames = every rule that passes the soil filter.
+    /// </summary>
+    public sealed class ExcavException : ExceptionBase
+    {
+        public string       SoilName      { get; set; } = "";
+        public List<string> RuleNames     { get; set; } = new List<string>();
+        public string       OverrideLabel { get; set; } = "";
     }
 }

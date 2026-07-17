@@ -77,6 +77,10 @@ namespace UrbanoMetraj.BoQ
 
             try
             {
+                // Load the per-network project rules so RULES-mode soil pricing (Zemin Tipi) is
+                // available even when the export runs cold (without a Hesapla this session).
+                UrbanoMetraj.BoQ.ProjectRules.Services.ProjectRulesStore.LoadFromDwg(doc.Database);
+
                 MetrajKesifExportService.Export(report, settings, path);
                 ed.WriteMessage("\n[Metraj Kesif] Tablo kaydedildi: " + path + "\n");
 

@@ -40,7 +40,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                     new XAttribute("SystemName",      net.SystemName      ?? ""),
                     new XAttribute("PipeFamilyId",    net.PipeFamilyId),
                     new XAttribute("PipeSinif",       net.PipeSinif       ?? ""),
-                    new XAttribute("ManholeFamilyId", net.ManholeFamilyId));
+                    new XAttribute("ManholeFamilyId", net.ManholeFamilyId),
+                    new XAttribute("SoilName",        net.SoilName        ?? ""));
 
                 foreach (var r in net.ConnectionRules ?? new List<ConnectionRule>())
                 {
@@ -64,6 +65,11 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                     }
                     netEl.Add(rEl);
                 }
+
+                foreach (var n in net.PipeTrenchRuleNames ?? new List<string>())
+                    netEl.Add(new XElement("TrenchFilter", new XAttribute("Name", n ?? "")));
+                foreach (var n in net.ManholeExcavRuleNames ?? new List<string>())
+                    netEl.Add(new XElement("ManholeExcavFilter", new XAttribute("Name", n ?? "")));
 
                 foreach (var row in net.PieceExclusionRows ?? new List<PieceExclusionRow>())
                 {
@@ -112,8 +118,20 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                     SystemName      = (string)el.Attribute("SystemName") ?? "",
                     PipeFamilyId    = pf,
                     PipeSinif       = (string)el.Attribute("PipeSinif") ?? "",
-                    ManholeFamilyId = mf
+                    ManholeFamilyId = mf,
+                    SoilName        = (string)el.Attribute("SoilName") ?? ""
                 };
+
+                foreach (var fEl in el.Elements("TrenchFilter"))
+                {
+                    var n = (string)fEl.Attribute("Name");
+                    if (!string.IsNullOrEmpty(n)) net.PipeTrenchRuleNames.Add(n);
+                }
+                foreach (var fEl in el.Elements("ManholeExcavFilter"))
+                {
+                    var n = (string)fEl.Attribute("Name");
+                    if (!string.IsNullOrEmpty(n)) net.ManholeExcavRuleNames.Add(n);
+                }
 
                 foreach (var rEl in el.Elements("ConnRule"))
                 {

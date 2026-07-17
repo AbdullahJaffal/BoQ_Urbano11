@@ -696,6 +696,28 @@ namespace UrbanoMetraj.BoQ.Services
         /// BoQParserService.ComputeManholeDepths (TerrainZ − lowestInvert + MHB,
         /// catalog-independent) and mh.ExcavationVolume stays 0 — never guessed.
         /// </summary>
+        /// <summary>RULES mode: narrows the global manhole-excavation rules to those whose soil scope
+        /// includes the network's Zemin Tipi AND (when the network selected specific Kural Adı) whose
+        /// name is selected. Non-RULES mode or unknown network → the full list, unchanged.</summary>
+        private static List<ManholeExcavationRule> FilterManholeExcavRulesByNetwork(
+            List<ManholeExcavationRule> rules, ManholeItem mh)
+        {
+            if (!ProjectRulesStore.IsRulesMode) return rules;
+            var net = ProjectRulesStore.FindNetwork(mh.SystemName);
+            if (net == null) return rules;
+            string soil = net.SoilName ?? "";
+            var names = net.ManholeExcavRuleNames;
+
+            // Per-manhole excavation exception (by node AG_GUID) overrides soil + rule names.
+            var mex = net.Exceptions?.FindManholeExcav(mh.AgGuid);
+            if (mex != null) { soil = mex.SoilName ?? ""; names = mex.RuleNames; }
+
+            return rules.Where(r =>
+                (r.SelectedSoilNames == null || r.SelectedSoilNames.Count == 0 ||
+                 string.IsNullOrEmpty(soil) || r.SelectedSoilNames.Contains(soil)) &&
+                (names == null || names.Count == 0 || names.Contains(r.RuleName))).ToList();
+        }
+
         private static void ResolveExcavation(
             ManholeItem mh, ComponentFamily family, BottomElementComponent taban,
             bool ekleTemelAltiParca, bool pitWidthUsesOuter,
@@ -705,6 +727,11 @@ namespace UrbanoMetraj.BoQ.Services
 
             var rules = ManholeExcavationCatalogStore.Current;
             if (rules == null || rules.Count == 0) { excavUnresolvedCount++; return; }
+
+            // RULES mode: keep only the rules this network's (or the manhole excav exception's) Zemin
+            // Tipi + Kural Adı filter allow.
+            rules = FilterManholeExcavRulesByNetwork(rules, mh);
+            if (rules.Count == 0) { excavUnresolvedCount++; return; }
 
             // Min/Max Taban Ø in the catalog is a shape-agnostic "size" scalar —
             // ManholeExcavationMainVm.RebuildDiameterList already builds its size

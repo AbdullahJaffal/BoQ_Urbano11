@@ -4,7 +4,9 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows.Input;
 using Microsoft.Win32;
+using UrbanoMetraj.BoQ.ManholeExcavationCatalog.Services;
 using UrbanoMetraj.BoQ.PipeCatalogs.Models;
+using UrbanoMetraj.BoQ.PipeTrenchCatalog.Services;
 using UrbanoMetraj.BoQ.ProjectRules.Models;
 using UrbanoMetraj.BoQ.ProjectRules.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.Models;
@@ -77,6 +79,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
 
             _selectedManholeFamily = _manholeFamilies?.FirstOrDefault(f => f.Id == model.ManholeFamilyId);
             RebuildManholeDiameters();
+            RebuildKaziFilters();
 
             // Connection rules (baca seçim).
             foreach (var r in Model.ConnectionRules)
@@ -159,6 +162,72 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
                 RebuildPieceRows();
                 OnPropertyChanged(nameof(RuleSummary));
             }
+        }
+
+        // ── Zemin Tipi (soil) ─────────────────────────────────────────────────
+        private ObservableCollection<string> _availableSoils;
+        public ObservableCollection<string> AvailableSoils
+        {
+            get
+            {
+                if (_availableSoils == null)
+                    _availableSoils = new ObservableCollection<string>(
+                        SoilCatalog.Services.SoilCatalogStore.Items
+                            .Select(s => s.SoilName).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct());
+                return _availableSoils;
+            }
+        }
+
+        public string SelectedSoilName
+        {
+            get => Model.SoilName;
+            set
+            {
+                if (Model.SoilName == value) return;
+                Model.SoilName = value ?? "";
+                OnPropertyChanged();
+                RebuildKaziFilters();   // soil narrows the available excavation-rule names
+            }
+        }
+
+        // ── Kazı kuralı filtreleri (rule-name multi-select, soil-narrowed) ────
+        public ObservableCollection<RuleNameFilterVm> PipeTrenchFilters   { get; } = new ObservableCollection<RuleNameFilterVm>();
+        public ObservableCollection<RuleNameFilterVm> ManholeExcavFilters { get; } = new ObservableCollection<RuleNameFilterVm>();
+
+        private void RebuildKaziFilters()
+        {
+            string soil = Model.SoilName ?? "";
+
+            PipeTrenchFilters.Clear();
+            foreach (var name in PipeTrenchCatalogStore.Current
+                         .Where(r => SoilMatches(r.SelectedSoilNames, soil))
+                         .Select(r => r.RuleName).Where(n => !string.IsNullOrWhiteSpace(n))
+                         .Distinct().OrderBy(n => n))
+                PipeTrenchFilters.Add(new RuleNameFilterVm(
+                    name, Model.PipeTrenchRuleNames.Contains(name), SyncTrenchFilter));
+
+            ManholeExcavFilters.Clear();
+            foreach (var name in ManholeExcavationCatalogStore.Current
+                         .Where(r => SoilMatches(r.SelectedSoilNames, soil))
+                         .Select(r => r.RuleName).Where(n => !string.IsNullOrWhiteSpace(n))
+                         .Distinct().OrderBy(n => n))
+                ManholeExcavFilters.Add(new RuleNameFilterVm(
+                    name, Model.ManholeExcavRuleNames.Contains(name), SyncMhExcavFilter));
+        }
+
+        private static bool SoilMatches(List<string> ruleSoils, string netSoil)
+            => ruleSoils == null || ruleSoils.Count == 0 || string.IsNullOrEmpty(netSoil) || ruleSoils.Contains(netSoil);
+
+        private void SyncTrenchFilter(RuleNameFilterVm f)
+        {
+            Model.PipeTrenchRuleNames.Remove(f.Name);
+            if (f.IsSelected) Model.PipeTrenchRuleNames.Add(f.Name);
+        }
+
+        private void SyncMhExcavFilter(RuleNameFilterVm f)
+        {
+            Model.ManholeExcavRuleNames.Remove(f.Name);
+            if (f.IsSelected) Model.ManholeExcavRuleNames.Add(f.Name);
         }
 
         /// <summary>
@@ -543,6 +612,28 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
         public ObservableCollection<HeightOptVm> Heights { get; } = new ObservableCollection<HeightOptVm>();
     }
 
+    /// <summary>One selectable excavation-rule name (a checkbox) used as a per-network filter.</summary>
+    public sealed class RuleNameFilterVm : ViewModelBase
+    {
+        private readonly Action<RuleNameFilterVm> _onChanged;
+
+        public RuleNameFilterVm(string name, bool isSelected, Action<RuleNameFilterVm> onChanged)
+        {
+            Name       = name ?? "";
+            _isSelected = isSelected;
+            _onChanged = onChanged;
+        }
+
+        public string Name { get; }
+
+        private bool _isSelected;
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set { if (Set(ref _isSelected, value)) _onChanged?.Invoke(this); }
+        }
+    }
+
     /// <summary>One selectable height (a checkbox) inside a <see cref="RolePieceVm"/>.</summary>
     public sealed class HeightOptVm : ViewModelBase
     {
@@ -698,8 +789,72 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
         private double _excManholeDiameter;
         public double ExcManholeDiameter { get => _excManholeDiameter; set => Set(ref _excManholeDiameter, value); }
 
+        // ── Excavation exceptions (Zemin Tipi + Kural Adı override) ───────────
+        private const string AllRulesSentinel = "(Tümü)";
+
+        private ObservableCollection<string> _availableExcSoils;
+        public ObservableCollection<string> AvailableExcSoils
+        {
+            get
+            {
+                if (_availableExcSoils == null)
+                    _availableExcSoils = new ObservableCollection<string>(
+                        SoilCatalog.Services.SoilCatalogStore.Items
+                            .Select(s => s.SoilName).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct());
+                return _availableExcSoils;
+            }
+        }
+
+        public ObservableCollection<string> ExcavPipeRuleOptions { get; } = new ObservableCollection<string>();
+        public ObservableCollection<string> ExcavMhRuleOptions   { get; } = new ObservableCollection<string>();
+
+        private string _excExcavPipeSoil;
+        public string ExcExcavPipeSoil
+        {
+            get => _excExcavPipeSoil;
+            set { if (Set(ref _excExcavPipeSoil, value)) RebuildExcavPipeRuleOptions(); }
+        }
+        private string _excExcavPipeRule = AllRulesSentinel;
+        public string ExcExcavPipeRule { get => _excExcavPipeRule; set => Set(ref _excExcavPipeRule, value); }
+
+        private string _excExcavMhSoil;
+        public string ExcExcavMhSoil
+        {
+            get => _excExcavMhSoil;
+            set { if (Set(ref _excExcavMhSoil, value)) RebuildExcavMhRuleOptions(); }
+        }
+        private string _excExcavMhRule = AllRulesSentinel;
+        public string ExcExcavMhRule { get => _excExcavMhRule; set => Set(ref _excExcavMhRule, value); }
+
+        private void RebuildExcavPipeRuleOptions()
+        {
+            ExcavPipeRuleOptions.Clear();
+            ExcavPipeRuleOptions.Add(AllRulesSentinel);
+            foreach (var n in PipeTrenchCatalogStore.Current
+                         .Where(r => SoilMatchesFilter(r.SelectedSoilNames, _excExcavPipeSoil))
+                         .Select(r => r.RuleName).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().OrderBy(n => n))
+                ExcavPipeRuleOptions.Add(n);
+            ExcExcavPipeRule = AllRulesSentinel;
+        }
+
+        private void RebuildExcavMhRuleOptions()
+        {
+            ExcavMhRuleOptions.Clear();
+            ExcavMhRuleOptions.Add(AllRulesSentinel);
+            foreach (var n in ManholeExcavationCatalogStore.Current
+                         .Where(r => SoilMatchesFilter(r.SelectedSoilNames, _excExcavMhSoil))
+                         .Select(r => r.RuleName).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().OrderBy(n => n))
+                ExcavMhRuleOptions.Add(n);
+            ExcExcavMhRule = AllRulesSentinel;
+        }
+
+        private static bool SoilMatchesFilter(List<string> ruleSoils, string soil)
+            => ruleSoils == null || ruleSoils.Count == 0 || string.IsNullOrEmpty(soil) || ruleSoils.Contains(soil);
+
         public ICommand AddPipeExceptionCommand    { get; }
         public ICommand AddManholeExceptionCommand { get; }
+        public ICommand AddPipeExcavExceptionCommand    { get; }
+        public ICommand AddManholeExcavExceptionCommand { get; }
         public ICommand DeleteExceptionCommand     { get; }
         public ICommand RefreshExceptionNamesCommand { get; }
         public ICommand ExtractXmlCommand            { get; }
@@ -717,6 +872,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
 
             AddPipeExceptionCommand    = new RelayCommand(_ => AddPipeException(),    _ => _pickEntities != null && _excPipeFamily != null && _selectedNetwork != null);
             AddManholeExceptionCommand = new RelayCommand(_ => AddManholeException(), _ => _pickEntities != null && _excManholeFamily != null && _excManholeDiameter > 0 && _selectedNetwork != null);
+            AddPipeExcavExceptionCommand    = new RelayCommand(_ => AddPipeExcavException(),    _ => _pickEntities != null && !string.IsNullOrEmpty(_excExcavPipeSoil) && _selectedNetwork != null);
+            AddManholeExcavExceptionCommand = new RelayCommand(_ => AddManholeExcavException(), _ => _pickEntities != null && !string.IsNullOrEmpty(_excExcavMhSoil)   && _selectedNetwork != null);
             DeleteExceptionCommand     = new RelayCommand(DeleteException, r => r is ExceptionRowVm);
             RefreshExceptionNamesCommand = new RelayCommand(_ => RefreshExceptionNames(), _ => _loadEntityNames != null && _selectedNetwork != null);
             ExtractXmlCommand            = new RelayCommand(_ => _runExtractXml?.Invoke(), _ => _runExtractXml != null);
@@ -891,6 +1048,61 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
                 added, updated, skipped);
         }
 
+        // ── Excavation exceptions (soil + rule-name) ──────────────────────────
+
+        private void AddPipeExcavException()
+        {
+            if (_pickEntities == null || string.IsNullOrEmpty(_excExcavPipeSoil) || _selectedNetwork == null) return;
+            string soil  = _excExcavPipeSoil;
+            var    names = (string.IsNullOrEmpty(_excExcavPipeRule) || _excExcavPipeRule == AllRulesSentinel)
+                ? new List<string>() : new List<string> { _excExcavPipeRule };
+            string label = soil + " / " + (names.Count > 0 ? names[0] : AllRulesSentinel);
+            _pickEntities("\nBoru kazı istisnası uygulanacak boruları seçin (yalnızca çizgi/polyline): ",
+                          ExceptionEntityKind.Pipe, _selectedNetwork.SystemName,
+                          guids => ApplyExcavException(guids, CurExc?.PipeExcav, g => CurExc?.FindPipeExcav(g), soil, names, label, "BORU KAZI"));
+        }
+
+        private void AddManholeExcavException()
+        {
+            if (_pickEntities == null || string.IsNullOrEmpty(_excExcavMhSoil) || _selectedNetwork == null) return;
+            string soil  = _excExcavMhSoil;
+            var    names = (string.IsNullOrEmpty(_excExcavMhRule) || _excExcavMhRule == AllRulesSentinel)
+                ? new List<string>() : new List<string> { _excExcavMhRule };
+            string label = soil + " / " + (names.Count > 0 ? names[0] : AllRulesSentinel);
+            _pickEntities("\nBaca kazı istisnası uygulanacak bacaları seçin (yalnızca blok/daire): ",
+                          ExceptionEntityKind.Manhole, _selectedNetwork.SystemName,
+                          guids => ApplyExcavException(guids, CurExc?.ManholeExcav, g => CurExc?.FindManholeExcav(g), soil, names, label, "BACA KAZI"));
+        }
+
+        private void ApplyExcavException(List<string> guids, List<ExcavException> list,
+            Func<string, ExcavException> find, string soil, List<string> names, string label, string dimTr)
+        {
+            if (list == null) return;
+            if (guids == null || guids.Count == 0) { StatusText = "İstisna: hiç öğe seçilmedi."; return; }
+
+            bool replaceConflicts = ResolveConflicts(guids, g => find(g) != null, dimTr);
+            int added = 0, updated = 0, skipped = 0;
+            foreach (var g in guids)
+            {
+                var existing = find(g);
+                if (existing != null)
+                {
+                    if (!replaceConflicts) { skipped++; continue; }
+                    existing.SoilName = soil; existing.RuleNames = new List<string>(names); existing.OverrideLabel = label;
+                    updated++;
+                }
+                else
+                {
+                    list.Add(new ExcavException
+                    { AgGuid = g, SoilName = soil, RuleNames = new List<string>(names), OverrideLabel = label, EntityName = LookupName(g) });
+                    added++;
+                }
+            }
+            RebuildExceptions();
+            StatusText = string.Format("{0} istisnası: {1} eklendi, {2} güncellendi, {3} atlandı. (Kaydet ile DWG'ye yazın)",
+                dimTr, added, updated, skipped);
+        }
+
         /// <summary>
         /// Per-dimension conflict prompt (decision 3): if any picked entity already has an exception
         /// in THIS dimension, ask once whether to replace them all or keep the old ones. Returns true
@@ -916,6 +1128,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             if (exc == null) return;
             if (row.Model is PipeFamilyException pe)    exc.PipeFamily.Remove(pe);
             if (row.Model is ManholeFamilyException me) exc.ManholeFamily.Remove(me);
+            if (row.Model is ExcavException ee) { exc.PipeExcav.Remove(ee); exc.ManholeExcav.Remove(ee); }
             RebuildExceptions();
             _selectedNetwork?.RebuildPieceRows();
             StatusText = "İstisna silindi. (Kaydet ile DWG'ye yazın)";
@@ -960,10 +1173,25 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             }
             exc.ManholeFamily = mhKeep;
 
+            exc.PipeExcav    = PruneExcav(exc.PipeExcav,    map, ref resolved, ref removed);
+            exc.ManholeExcav = PruneExcav(exc.ManholeExcav, map, ref resolved, ref removed);
+
             RebuildExceptions();
             _selectedNetwork?.RebuildPieceRows();
             StatusText = string.Format("İsimler güncellendi: {0} çözüldü, {1} silindi (XML'de yok). (Kaydet ile DWG'ye yazın)",
                 resolved, removed);
+        }
+
+        private static List<ExcavException> PruneExcav(
+            List<ExcavException> list, Dictionary<string, string> map, ref int resolved, ref int removed)
+        {
+            var keep = new List<ExcavException>();
+            foreach (var e in list)
+            {
+                if (map.TryGetValue(e.AgGuid ?? "", out var name)) { e.EntityName = name; keep.Add(e); resolved++; }
+                else removed++;
+            }
+            return keep;
         }
 
         private void RebuildExceptions()
@@ -975,6 +1203,10 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
                 Exceptions.Add(new ExceptionRowVm("Boru", e.AgGuid, e.EntityName, e.OverrideLabel, e));
             foreach (var e in exc.ManholeFamily)
                 Exceptions.Add(new ExceptionRowVm("Baca", e.AgGuid, e.EntityName, e.OverrideLabel, e));
+            foreach (var e in exc.PipeExcav)
+                Exceptions.Add(new ExceptionRowVm("Boru Kazı", e.AgGuid, e.EntityName, e.OverrideLabel, e));
+            foreach (var e in exc.ManholeExcav)
+                Exceptions.Add(new ExceptionRowVm("Baca Kazı", e.AgGuid, e.EntityName, e.OverrideLabel, e));
         }
 
         private void ExportXml()

@@ -30,9 +30,11 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
         private const string K_META     = "PR_META";
         private const string K_NETWORKS = "SEBEKELER";
         private const string K_NET_META = "NET_META";
-        private const string K_EXC      = "ISTISNALAR";
-        private const string K_EXC_PIPE = "PIPE_FAMILY";
-        private const string K_EXC_MH   = "MANHOLE_FAMILY";
+        private const string K_EXC        = "ISTISNALAR";
+        private const string K_EXC_PIPE   = "PIPE_FAMILY";
+        private const string K_EXC_MH     = "MANHOLE_FAMILY";
+        private const string K_EXC_PEXCAV = "PIPE_EXCAV";
+        private const string K_EXC_MEXCAV = "MANHOLE_EXCAV";
         private const string K_CONN     = "CONN_RULES";
         private const string K_CONN_META = "R_META";
         private const string K_PIECE      = "PIECE_EXCL";
@@ -76,7 +78,10 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                         Str(net.SystemName ?? ""),
                         Str(net.PipeFamilyId.ToString()),
                         Str(net.PipeSinif ?? ""),
-                        Str(net.ManholeFamilyId.ToString()));
+                        Str(net.ManholeFamilyId.ToString()),
+                        Str(net.SoilName ?? ""),
+                        Str(string.Join("\n", net.PipeTrenchRuleNames   ?? new List<string>())),
+                        Str(string.Join("\n", net.ManholeExcavRuleNames ?? new List<string>())));
 
                     // Connection rules (baca seçim) — R_### subdicts, each with R_META + T_### tiers.
                     var connDict = MakeSubDict(tr, netDict, K_CONN);
@@ -167,6 +172,9 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                         Guid pf; Guid.TryParse(ReadStr(tvs, ref i), out pf); net.PipeFamilyId = pf;
                         net.PipeSinif = ReadStr(tvs, ref i);
                         Guid mf; Guid.TryParse(ReadStr(tvs, ref i), out mf); net.ManholeFamilyId = mf;
+                        net.SoilName = ReadStr(tvs, ref i);   // "" for pre-SoilName DWGs
+                        net.PipeTrenchRuleNames   = SplitNames(ReadStr(tvs, ref i));
+                        net.ManholeExcavRuleNames = SplitNames(ReadStr(tvs, ref i));
 
                         var connDict = GetSubDict(tr, netDict, K_CONN);
                         if (connDict != null)
@@ -329,6 +337,24 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                     Str(e.EntityName ?? ""),
                     Dbl(e.ManholeDiameterMm));
             }
+
+            WriteExcavExc(tr, excDict, K_EXC_PEXCAV, exc.PipeExcav);
+            WriteExcavExc(tr, excDict, K_EXC_MEXCAV, exc.ManholeExcav);
+        }
+
+        private static void WriteExcavExc(Transaction tr, DBDictionary excDict, string key, List<ExcavException> list)
+        {
+            var d = MakeSubDict(tr, excDict, key);
+            for (int i = 0; i < list.Count; i++)
+            {
+                var e = list[i];
+                MakeXRecord(tr, d, "EX_" + i.ToString("D3"),
+                    Str(e.AgGuid ?? ""),
+                    Str(e.SoilName ?? ""),
+                    Str(string.Join("\n", e.RuleNames ?? new List<string>())),
+                    Str(e.OverrideLabel ?? ""),
+                    Str(e.EntityName ?? ""));
+            }
         }
 
         private static ProjectExceptions ReadExceptions(Transaction tr, DBDictionary netDict)
@@ -367,7 +393,28 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                     if (!string.IsNullOrEmpty(ex.AgGuid)) exc.ManholeFamily.Add(ex);
                 }
 
+            ReadExcavExc(tr, excDict, K_EXC_PEXCAV, exc.PipeExcav);
+            ReadExcavExc(tr, excDict, K_EXC_MEXCAV, exc.ManholeExcav);
+
             return exc;
+        }
+
+        private static void ReadExcavExc(Transaction tr, DBDictionary excDict, string key, List<ExcavException> target)
+        {
+            var d = GetSubDict(tr, excDict, key);
+            if (d == null) return;
+            foreach (DBDictionaryEntry entry in d)
+            {
+                var tvs = ReadXRecord(tr, d, entry.Key);
+                if (tvs == null) continue;
+                int i = 0;
+                var ex = new ExcavException { AgGuid = ReadStr(tvs, ref i) };
+                ex.SoilName      = ReadStr(tvs, ref i);
+                ex.RuleNames     = SplitNames(ReadStr(tvs, ref i));
+                ex.OverrideLabel = ReadStr(tvs, ref i);
+                ex.EntityName    = ReadStr(tvs, ref i);
+                if (!string.IsNullOrEmpty(ex.AgGuid)) target.Add(ex);
+            }
         }
 
         // =====================================================================
@@ -454,6 +501,11 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
 
         private static string ReadStr(TypedValue[] tvs, ref int i)
             => (i < tvs.Length) ? (tvs[i++].Value as string ?? "") : "";
+
+        private static List<string> SplitNames(string joined)
+            => string.IsNullOrEmpty(joined)
+                ? new List<string>()
+                : new List<string>(joined.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries));
 
         private static double ReadDbl(TypedValue[] tvs, ref int i)
         {

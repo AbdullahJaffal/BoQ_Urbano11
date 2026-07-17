@@ -6,6 +6,7 @@ using OfficeOpenXml;
 using OfficeOpenXml.Style;
 using UrbanoMetraj.BoQ.Models;
 using UrbanoMetraj.BoQ.DolguCatalog.Services;
+using UrbanoMetraj.BoQ.ProjectRules.Services;
 using UrbanoMetraj.BoQ.SoilCatalog.Services;
 using UrbanoMetraj.BoQ.SmartAssembly.Services;
 using UrbanoMetraj.BoQ.PipeCatalogs.Services;
@@ -272,7 +273,7 @@ namespace UrbanoMetraj.BoQ.Services
         // ── KAZI: one material group per soil (single soil now) ───────────────
         private static void BuildKazi(Row kazi, SystemBoQ sys)
         {
-            var (poz, desc) = SoilPozDesc();
+            var (poz, desc) = SoilPozDesc(sys.SystemName);
             double mh   = sys.Manholes.Sum(m => m.ExcavationVolume);
             double pipe = sys.Pipes.Sum(p => p.TotalExcavationVolume);
 
@@ -722,9 +723,20 @@ namespace UrbanoMetraj.BoQ.Services
         // Catalog lookups + utilities
         // =====================================================================
 
-        private static (string poz, string desc) SoilPozDesc()
+        private static (string poz, string desc) SoilPozDesc(string sysName = null)
         {
-            var soil = SoilCatalogStore.Items?.FirstOrDefault();
+            SoilCatalog.Models.SoilClassification soil = null;
+
+            // RULES mode: price this network's excavation with ITS chosen Zemin Tipi (not the first soil).
+            if (ProjectRulesStore.IsRulesMode && !string.IsNullOrEmpty(sysName))
+            {
+                var net = ProjectRulesStore.FindNetwork(sysName);
+                if (net != null && !string.IsNullOrWhiteSpace(net.SoilName))
+                    soil = SoilCatalogStore.Items?.FirstOrDefault(
+                        s => string.Equals(s.SoilName, net.SoilName, System.StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (soil == null) soil = SoilCatalogStore.Items?.FirstOrDefault();
             if (soil == null) return ("", "");
             string desc = !string.IsNullOrWhiteSpace(soil.Aciklama) ? soil.Aciklama
                         : !string.IsNullOrWhiteSpace(soil.KaziTipi) ? soil.KaziTipi
