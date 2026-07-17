@@ -32,6 +32,14 @@ namespace UrbanoMetraj.BoQ.UI
 
         public static void Initialize()
         {
+            // ── Suite merge (2026-07-18): DISABLED — UrbanoLock now builds the
+            //    "Metraj" ribbon panel from its own RibbonLayout/CommandCatalog
+            //    (single source, controllable via UT_COMMANDS). Building a panel
+            //    here too would duplicate the buttons on the shared "Urbano Tools"
+            //    tab. The commands themselves are unaffected (auto-scanned) and the
+            //    body below is kept for reference / standalone-Metraj fallback.
+            return;
+#pragma warning disable CS0162 // unreachable code (intentional — see note above)
             RibbonControl ribbon = ComponentManager.Ribbon;
             if (ribbon == null) return;
 
@@ -245,6 +253,7 @@ namespace UrbanoMetraj.BoQ.UI
 
             // İlk yüklemede sekmeyi ön plana getir.
             tab.IsActive = true;
+#pragma warning restore CS0162
         }
 
         // ── İkon yükleyici ────────────────────────────────────────────────────

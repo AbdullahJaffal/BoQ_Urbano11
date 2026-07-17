@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Reflection;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Runtime;
@@ -13,15 +14,16 @@ using UrbanoMetraj.BoQ.UI;
 // plugin — to avoid a double-definition conflict. (UrbanoLock must drop its own
 // copies when it migrates to the shared core.)
 //
-// TEMP (2026-07-10) — registration DISABLED. The current UrbanoLock still declares
-// its own UT_LICENSE/_STATUS/_RELEASE, so registering them here too makes AutoCAD
-// throw eDuplicateKey and abort UrbanoMetraj's ENTIRE load (every UT_ command then
-// reads as "Unknown command"). While both plugins are mid-migration, UrbanoLock
-// OWNS the three licence commands. The shared LicenseManager is still armed below
-// (RegisterFeatureFromAssembly + Attach), so BoQ features stay licence-gated.
-// RE-ENABLE the line below once UrbanoLock drops its own copies → UrbanoMetraj then
-// becomes the sole owner as originally intended. See memory: project_suite_licensing_core.
-// [assembly: CommandClass(typeof(UrbanoLicensing.LicenseCommand))]
+// Suite merge (2026-07-18): UrbanoMetraj declares NO [assembly: CommandClass].
+// This is deliberate — with ZERO CommandClass attributes, AutoCAD auto-scans EVERY
+// public type in this DLL for [CommandMethod], INCLUDING the nested
+// NetworkPaletteSet.NetworkPanelCommand (UT_NET_PANEL). Adding even a single
+// CommandClass here would switch AutoCAD to "only listed classes" mode and silently
+// hide every command not explicitly listed (that regression made UT_NET_PANEL read
+// as "Unknown command"). The three shared UT_LICENSE/_STATUS/_RELEASE commands are
+// therefore registered by UrbanoLock instead (it already uses explicit-CommandClass
+// mode) via [assembly: CommandClass(typeof(UrbanoLicensing.LicenseCommand))] there.
+// See memory: urbano_suite_merge / project_suite_licensing_core.
 
 namespace UrbanoMetraj
 {
@@ -40,6 +42,18 @@ namespace UrbanoMetraj
     {
         public void Initialize()
         {
+            // ── Assembly resolver (REQUIRED for suite-bundle deployment) ─────────
+            // When shipped inside UrbanoSuite.bundle, UrbanoMetraj.dll and its
+            // dependencies (UrbanoLicensing.dll, Clipper2Lib.dll, EPPlus.dll) all
+            // live in the same Contents\Windows folder — but AutoCAD's AppDomain
+            // does NOT probe the bundle folder automatically, so the CLR would
+            // throw FileNotFoundException when a dependency is first used. This
+            // handler resolves any missing assembly from UrbanoMetraj.dll's own
+            // folder. Registered FIRST, before anything touches those types, and
+            // independent of ComponentEntry load order (UrbanoLock installs an
+            // identical handler; duplicates are harmless — both point here).
+            AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
+
             var doc = Application.DocumentManager.MdiActiveDocument;
             doc?.Editor.WriteMessage(
                 "\nUrbanoMetraj yüklendi. Şerit: 'Urbano Tools > Metraj'.\n" +
@@ -47,24 +61,26 @@ namespace UrbanoMetraj
                 "  UT_SMART_ASSEMBLY - Akıllı Montaj (katalog yönetimi)\n" +
                 "  UT_PROJE_AYARLARI - Proje Ayarları (Proje Kurulumu + Tür Eşleştirme)\n");
 
-            // ── Licensing (shared UrbanoLicensing core) ──────────────────────────
-            // TEMP (2026-07-10) — enforcement DISABLED at user request. Arming the
-            // shared LicenseManager (Attach) hooks each document's CommandWillStart and
-            // blocks every UT_ command with an upsell dialog
-            // ("… modülü lisansınıza dahil değil") whenever the active licence lacks the
-            // "boq" feature — which it does on dev machines. Leaving this off = no gate,
-            // no dialog. RE-ENABLE the block below (RegisterFeatureFromAssembly + Attach)
-            // when the licensing rollout is finalized. See memory: project_suite_licensing_core.
-            //try
-            //{
-            //    LicenseManager.RegisterFeatureFromAssembly(
-            //        Features.Boq, Assembly.GetExecutingAssembly());
-            //    LicenseManager.Attach();
-            //}
-            //catch (System.Exception lex)
-            //{
-            //    doc?.Editor.WriteMessage($"\n[UrbanoMetraj] Lisans başlatma hatası: {lex.Message}\n");
-            //}
+            // ── Licensing (shared UrbanoLicensing core) — ENFORCEMENT ON ─────────
+            // Suite merge (2026-07-18): register EVERY UrbanoMetraj [CommandMethod]
+            // under the "boq" feature, then arm the shared gate. Attach() hooks each
+            // document's CommandWillStart and blocks a command only when it is
+            // registered under a feature the active licence does NOT grant — so with
+            // no/lock-only licence the BoQ commands now show the upsell dialog and
+            // stop, exactly like UrbanoLock's. Attach() is idempotent (UrbanoLock may
+            // have armed it already); RegisterFeatureFromAssembly is what makes the
+            // boq commands enforceable. UT_LICENSE/_STATUS/_RELEASE are whitelisted in
+            // the core so they always stay usable. See memory: urbano_suite_merge.
+            try
+            {
+                LicenseManager.RegisterFeatureFromAssembly(
+                    Features.Boq, Assembly.GetExecutingAssembly());
+                LicenseManager.Attach();
+            }
+            catch (System.Exception lex)
+            {
+                doc?.Editor.WriteMessage($"\n[UrbanoMetraj] Lisans başlatma hatası: {lex.Message}\n");
+            }
 
             // If the ribbon is already initialised (common when reloading the DLL),
             // set it up immediately. Otherwise subscribe to ItemInitialized so we
@@ -88,9 +104,28 @@ namespace UrbanoMetraj
 
         public void Terminate()
         {
+            AppDomain.CurrentDomain.AssemblyResolve -= OnAssemblyResolve;
+
             // Best-effort: free this device's session lease so another device can
             // take the single slot immediately. Guarded — never throw on shutdown.
             try { LicenseManager.Detach(); } catch { }
+        }
+
+        // Resolves bundled dependencies (UrbanoLicensing / Clipper2Lib / EPPlus)
+        // from UrbanoMetraj.dll's own folder. See the note in Initialize().
+        private static Assembly OnAssemblyResolve(object sender, ResolveEventArgs args)
+        {
+            try
+            {
+                string simpleName = new AssemblyName(args.Name).Name;
+                string pluginDir  = Path.GetDirectoryName(
+                    Assembly.GetExecutingAssembly().Location) ?? "";
+                string candidate  = Path.Combine(pluginDir, simpleName + ".dll");
+                if (File.Exists(candidate))
+                    return Assembly.LoadFrom(candidate);
+            }
+            catch { /* fall through — let the CLR raise the original load error */ }
+            return null;
         }
     }
 }
