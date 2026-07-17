@@ -192,7 +192,7 @@ namespace UrbanoMetraj.BoQ.Services
                         // exactly what's needed to tell "just over tolerance" apart
                         // from "genuinely far short".
                         names.Add(category.Contains("Hedef derinliğe")
-                            ? $"{mh.NodeName} ({mh.StackPreCast.ResidualM * 1000.0:0} mm)"
+                            ? $"{mh.NodeName} (boşluk {mh.StackPreCast.ResidualM * 1000.0:0} mm, en küçük parça {mh.StackPreCast.SmallestAvailPieceMm:0} mm)"
                             : mh.NodeName);
                     }
                 }
@@ -1152,17 +1152,29 @@ namespace UrbanoMetraj.BoQ.Services
                     $"Boyun bileziği sayısı yetersiz (Min={boyunMin}, kullanılan={boyunUsedCount}) — Maks={(boyunMax < 0 ? "∞" : boyunMax.ToString())}";
             }
 
+            // Smallest shaft piece available at fill time — the dynamic gap tolerance below.
+            double minG = variableRings.Count > 0 ? variableRings.Min(c => c.EffectiveHeight) : double.MaxValue;
+            double minB = boyunSizes.Count   > 0 ? boyunSizes.Min(c => c.EffectiveHeight)   : double.MaxValue;
+            double minPiece = Math.Min(minG, minB);
+            stack.SmallestAvailPieceMm = minPiece >= double.MaxValue ? 0 : minPiece;
+
             stack.ResidualM = Math.Max(0, remaining);
-            // Final check: even after every role's Max cap was respected, the
-            // target depth couldn't be reached — the exact "used the max
-            // allowed count per piece but still short" case the user asked
-            // about. Never silently swallowed (see ConstraintViolated doc).
-            if (stack.ResidualM > LeftoverTolerance)
+
+            // Dynamic gap tolerance (user directive 2026-07-12): accept a residual SMALLER than the
+            // smallest available piece — no piece can close it without overshooting, so it's physically
+            // unavoidable, not a failure. Flag ONLY when the gap is ≥ the smallest piece, i.e. a piece
+            // that fits exists but couldn't be placed (a Max cap stopped the fill). Falls back to the
+            // fixed tolerance only when the family has no shaft piece at all.
+            double gapToleranceM = stack.SmallestAvailPieceMm > 0
+                ? stack.SmallestAvailPieceMm / 1000.0
+                : LeftoverTolerance;
+            if (stack.ResidualM > 1e-6 && stack.ResidualM >= gapToleranceM)
             {
                 stack.ConstraintViolated = true;
                 stack.ConstraintViolationReason =
                     $"hedef derinliğe {stack.ResidualM:0.###} m eksik kaldı " +
-                    $"(Gövde Maks={(govdeMax < 0 ? "∞" : govdeMax.ToString())}, Boyun Maks={(boyunMax < 0 ? "∞" : boyunMax.ToString())})";
+                    $"(en küçük parça {stack.SmallestAvailPieceMm:0} mm, " +
+                    $"Gövde Maks={(govdeMax < 0 ? "∞" : govdeMax.ToString())}, Boyun Maks={(boyunMax < 0 ? "∞" : boyunMax.ToString())})";
             }
 
             foreach (var kv in ringUsage.OrderByDescending(k => k.Key))

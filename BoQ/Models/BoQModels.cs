@@ -889,6 +889,11 @@ namespace UrbanoMetraj.BoQ.Models
         /// <summary>Short human-readable reason for ConstraintViolated (e.g. "Konik (Min≥1) bulunamadı", "hedef derinliğe 0.08m eksik kaldı") — surfaced per-manhole in the aggregate warning so a real cause is visible instead of just a count.</summary>
         public string ConstraintViolationReason { get; set; }
 
+        /// <summary>Diagnostic: smallest available shaft piece (Gövde/Boyun) height in mm at fill time.
+        /// When a residual gap is flagged and this is &gt; the residual, the family simply has no piece
+        /// fine enough to close it (inherent catalog tiling), not an engine/mode issue.</summary>
+        public double SmallestAvailPieceMm { get; set; }
+
         // ── Cast-in-place only ────────────────────────────────────────────────
         /// <summary>Total concrete shaft depth in metres (IsPreCast == false only).</summary>
         public double ConcreteDepth { get; set; }
