@@ -1,4 +1,4 @@
-using Autodesk.AutoCAD.ApplicationServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Runtime;
 using UrbanoMetraj.BoQ.SmartAssembly;
 using UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels;
@@ -20,6 +20,10 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog
         [CommandMethod("UT_MANHOLE_EXCAV_CATALOG")]
         public void OpenExcavationCatalog()
         {
+            // Licence gate (boq). CommandWillStart's queued ESC cannot abort a
+            // command that opens its window immediately, so block HERE. The warning
+            // is already shown once by LicenseManager - stay silent, just return.
+            if (!UrbanoLicensing.LicenseManager.IsFeatureUsable(UrbanoLicensing.Features.Boq)) return;
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
             if (doc == null || ed == null) return;

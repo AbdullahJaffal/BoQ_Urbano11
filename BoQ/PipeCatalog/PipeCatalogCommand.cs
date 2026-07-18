@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Threading;
 using Autodesk.AutoCAD.ApplicationServices;
@@ -52,6 +52,10 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
         [CommandMethod("UT_PIPE_CATALOG")]
         public void OpenPipeCatalog()
         {
+            // Licence gate (boq). CommandWillStart's queued ESC cannot abort a
+            // command that opens its window immediately, so block HERE. The warning
+            // is already shown once by LicenseManager - stay silent, just return.
+            if (!UrbanoLicensing.LicenseManager.IsFeatureUsable(UrbanoLicensing.Features.Boq)) return;
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
             if (doc == null || ed == null) return;

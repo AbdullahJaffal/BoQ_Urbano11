@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
@@ -201,6 +201,10 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
         [CommandMethod("UT_SMART_ASSEMBLY", CommandFlags.Modal)]
         public void OpenSmartAssembly()
         {
+            // Licence gate (boq). CommandWillStart's queued ESC cannot abort a
+            // command that opens its window immediately, so block HERE. The warning
+            // is already shown once by LicenseManager - stay silent, just return.
+            if (!UrbanoLicensing.LicenseManager.IsFeatureUsable(UrbanoLicensing.Features.Boq)) return;
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
             if (doc == null || ed == null) return;
@@ -222,6 +226,10 @@ namespace UrbanoMetraj.BoQ.SmartAssembly
         [CommandMethod("UT_PROJE_AYARLARI", CommandFlags.Modal)]
         public void OpenProjectSettings()
         {
+            // Licence gate (boq). CommandWillStart's queued ESC cannot abort a
+            // command that opens its window immediately, so block HERE. The warning
+            // is already shown once by LicenseManager - stay silent, just return.
+            if (!UrbanoLicensing.LicenseManager.IsFeatureUsable(UrbanoLicensing.Features.Boq)) return;
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
             if (doc == null || ed == null) return;

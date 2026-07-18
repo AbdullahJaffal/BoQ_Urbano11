@@ -1,4 +1,4 @@
-using Autodesk.AutoCAD.ApplicationServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using UrbanoMetraj.BoQ.Models;
@@ -23,6 +23,10 @@ namespace UrbanoMetraj.BoQ
         [CommandMethod("UT_BOQ_VIEW", CommandFlags.Modal)]
         public void ShowResults()
         {
+            // Licence gate (boq). CommandWillStart's queued ESC cannot abort a
+            // command that opens its window immediately, so block HERE. The warning
+            // is already shown once by LicenseManager - stay silent, just return.
+            if (!UrbanoLicensing.LicenseManager.IsFeatureUsable(UrbanoLicensing.Features.Boq)) return;
             // Bring existing window to front if already open.
             if (_openDialog != null && !_openDialog.IsDisposed)
             {

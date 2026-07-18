@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -70,6 +70,10 @@ namespace UrbanoMetraj.BoQ
         [CommandMethod("UT_BOQ", CommandFlags.Modal)]
         public void Run()
         {
+            // Licence gate (boq). CommandWillStart's queued ESC cannot abort a
+            // command that opens its window immediately, so block HERE. The warning
+            // is already shown once by LicenseManager - stay silent, just return.
+            if (!UrbanoLicensing.LicenseManager.IsFeatureUsable(UrbanoLicensing.Features.Boq)) return;
             Document doc = Application.DocumentManager.MdiActiveDocument;
             Editor   ed  = doc.Editor;
 
@@ -238,6 +242,10 @@ namespace UrbanoMetraj.BoQ
         [CommandMethod("UT_BOQ_HESAPLA", CommandFlags.Modal)]
         public void RunCalculate()
         {
+            // Licence gate (boq). CommandWillStart's queued ESC cannot abort a
+            // command that opens its window immediately, so block HERE. The warning
+            // is already shown once by LicenseManager - stay silent, just return.
+            if (!UrbanoLicensing.LicenseManager.IsFeatureUsable(UrbanoLicensing.Features.Boq)) return;
             Document doc = Application.DocumentManager.MdiActiveDocument;
             Editor   ed  = doc.Editor;
 

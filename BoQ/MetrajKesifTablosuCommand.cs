@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -31,6 +31,10 @@ namespace UrbanoMetraj.BoQ
         [CommandMethod("UT_METRAJ_KESIF_TABLOSU", CommandFlags.Modal)]
         public void Run()
         {
+            // Licence gate (boq). CommandWillStart's queued ESC cannot abort a
+            // command that opens its window immediately, so block HERE. The warning
+            // is already shown once by LicenseManager - stay silent, just return.
+            if (!UrbanoLicensing.LicenseManager.IsFeatureUsable(UrbanoLicensing.Features.Boq)) return;
             Document doc = Application.DocumentManager.MdiActiveDocument;
             Editor   ed  = doc.Editor;
 
