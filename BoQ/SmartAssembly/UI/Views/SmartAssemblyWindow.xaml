@@ -1,0 +1,886 @@
+<Window x:Class="UrbanoMetraj.BoQ.SmartAssembly.UI.Views.SmartAssemblyWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:UrbanoMetraj.BoQ.SmartAssembly.UI.Converters"
+        xmlns:mhExcav="clr-namespace:UrbanoMetraj.BoQ.ManholeExcavationCatalog.UI.Views"
+        xmlns:pipeCat="clr-namespace:UrbanoMetraj.BoQ.PipeCatalogs.UI.Views"
+        xmlns:pipeTrench="clr-namespace:UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.Views"
+        xmlns:soilCat="clr-namespace:UrbanoMetraj.BoQ.SoilCatalog.UI.Views"
+        xmlns:dolguCat="clr-namespace:UrbanoMetraj.BoQ.DolguCatalog.UI.Views"
+        xmlns:typeMap="clr-namespace:UrbanoMetraj.BoQ.TypeMapping.UI.Views"
+        Title="Akıllı Montaj"
+        Width="1350" Height="760"
+        MinWidth="1050" MinHeight="580"
+        WindowStyle="ToolWindow"
+        ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="False">
+
+    <Window.Resources>
+        <conv:NullToVisibilityConverter  x:Key="NullToVis"/>
+        <conv:BoolToVisibilityConverter  x:Key="BoolToVis"/>
+        <!-- Proxy so ContextMenu items (outside the visual tree) can reach RepositoryTab commands -->
+        <conv:BindingProxy x:Key="VmProxy" Data="{Binding}"/>
+
+        <!-- Prominent primary-action (Kaydet) button — accent so it stands out. -->
+        <Style x:Key="KaydetButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="10,3"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="#00467F" CornerRadius="2"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="b" Property="Background" Value="#9BB8CE"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Compact top-level menu button used for the İçe/Dışa dropdowns. -->
+        <Style x:Key="AktarMenu" TargetType="MenuItem">
+            <Setter Property="Padding" Value="8,3"/>
+        </Style>
+
+        <Style x:Key="SutunBasligi" TargetType="DataGridColumnHeader">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="4,2"/>
+            <Setter Property="Background" Value="#F0F0F0"/>
+        </Style>
+
+        <!-- Invalid pipe range row — red background -->
+        <Style x:Key="BoruAralikSatiri" TargetType="DataGridRow">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsPipeRangeValid}" Value="False">
+                    <Setter Property="Background" Value="#FFCCCC"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Invalid depth tier row — red background -->
+        <Style x:Key="DerinlikKatmanSatiri" TargetType="DataGridRow">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsDepthRangeValid}" Value="False">
+                    <Setter Property="Background" Value="#FFCCCC"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Local-override rule row — italic yellow -->
+        <Style x:Key="YerelPipeRangeSatiri" TargetType="DataGridRow">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsPipeRangeValid}" Value="False">
+                    <Setter Property="Background" Value="#FFCCCC"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel LastChildFill="True">
+
+        <StatusBar DockPanel.Dock="Bottom" Height="24">
+            <StatusBarItem>
+                <TextBlock Text="Akıllı Baca Montaj — Veri Temeli v1.0"
+                           Foreground="Gray" FontSize="11"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <TabControl SelectedIndex="{Binding SelectedTabIndex}" Margin="4">
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 1  —  Prefabrik Baca Kataloğu
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Prefabrik Baca Kataloğu">
+                <Grid Margin="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="230"/>
+                        <ColumnDefinition Width="5"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="5"/>
+                        <ColumnDefinition Width="310"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- ── Sol panel: Bileşen Aileleri ── -->
+                    <DockPanel Grid.Column="0">
+                        <!-- Unified toolbar: [+ Ekle] | [Kaydet] [İçe▾] [Dışa▾]
+                             Aileyi Sil → sağ tık (aşağıdaki DataGrid bağlam menüsü). -->
+                        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                            <Button Content="+ Ekle"    Command="{Binding RepositoryTab.AddFamilyCommand}"
+                                    Padding="8,2" Margin="0,0,6,2" ToolTip="Yeni aile ekle"/>
+                            <Separator Width="1" Height="20" Margin="0,0,6,2" Background="#BBBBBB"/>
+                            <Button Content="💾 Kaydet" Command="{Binding RepositoryTab.SaveCommand}"
+                                    Style="{StaticResource KaydetButton}" Margin="0,0,6,2"
+                                    ToolTip="Kataloğu cihaza kaydet (SmartAssemblyComponents.xml)"/>
+                            <Menu Background="Transparent" VerticalAlignment="Center" Margin="0,0,2,2">
+                                <MenuItem Header="İçe Aktar ▾" Style="{StaticResource AktarMenu}">
+                                    <MenuItem Header="XML dosyasından…"
+                                              Command="{Binding RepositoryTab.ImportCommand}"
+                                              ToolTip="Bileşen kataloğunu XML dosyasından yükle."/>
+                                    <MenuItem Header="Excel dosyasından…"
+                                              Command="{Binding RepositoryTab.ImportExcelCommand}"
+                                              ToolTip="Sütunları eşleştirerek seçili aileye toplu bileşen ekler."/>
+                                </MenuItem>
+                            </Menu>
+                            <Menu Background="Transparent" VerticalAlignment="Center" Margin="0,0,0,2">
+                                <MenuItem Header="Dışa Aktar ▾" Style="{StaticResource AktarMenu}">
+                                    <MenuItem Header="XML olarak…"
+                                              Command="{Binding RepositoryTab.ExportCommand}"
+                                              ToolTip="Kataloğu farklı konuma XML olarak kaydet."/>
+                                    <MenuItem Header="Excel olarak…"
+                                              Command="{Binding RepositoryTab.ExportExcelCommand}"
+                                              ToolTip="Her aile ayrı sayfada; sütunlar içe aktarma başlıklarıyla aynıdır."/>
+                                </MenuItem>
+                            </Menu>
+                        </WrapPanel>
+                        <TextBlock Text="Bileşen Aileleri" FontWeight="SemiBold"
+                                   DockPanel.Dock="Top" Margin="4,6,4,2"/>
+                        <DataGrid ItemsSource="{Binding RepositoryTab.Families}"
+                                  SelectedItem="{Binding RepositoryTab.SelectedFamily}"
+                                  AutoGenerateColumns="False" CanUserAddRows="False"
+                                  SelectionMode="Single"
+                                  PreviewMouseRightButtonDown="Grid_SelectRowOnRightClick"
+                                  ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                            <DataGrid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Aileyi Sil"
+                                              Command="{Binding Data.RepositoryTab.DeleteFamilyCommand,
+                                                        Source={StaticResource VmProxy}}"/>
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Aile Adı"
+                                    Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                    Width="*"/>
+                                <DataGridTextColumn Header="Malzeme"
+                                    Binding="{Binding Malzeme, UpdateSourceTrigger=PropertyChanged}"
+                                    Width="80"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+
+                    <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+
+                    <!-- ── Orta panel: Seçili Aile Detayı + Bileşenler ── -->
+                    <DockPanel Grid.Column="2">
+                        <!-- Family detail header (visible when family selected) -->
+                        <Border DockPanel.Dock="Top"
+                                Visibility="{Binding RepositoryTab.IsFamilySelected,
+                                             Converter={StaticResource BoolToVis}}"
+                                Background="#F5F5F5" BorderBrush="#CCCCCC"
+                                BorderThickness="0,0,0,1" Padding="6,5">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="120"/>
+                                </Grid.ColumnDefinitions>
+                                <Label Content="Aile Adı:" Grid.Column="0"
+                                       VerticalAlignment="Center" Padding="0,0,6,0"/>
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding RepositoryTab.SelectedFamily.Name,
+                                                UpdateSourceTrigger=PropertyChanged}"
+                                         VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <Label Content="Malzeme:" Grid.Column="2"
+                                       VerticalAlignment="Center" Padding="0,0,6,0"/>
+                                <TextBox Grid.Column="3"
+                                         Text="{Binding RepositoryTab.SelectedFamily.Malzeme,
+                                                UpdateSourceTrigger=PropertyChanged}"
+                                         VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <!-- Component toolbar (Çoğalt / Sil → sağ tık bağlam menüsü) -->
+                        <ToolBarTray DockPanel.Dock="Top">
+                            <ToolBar>
+                                <Label Content="Yeni tip:" VerticalAlignment="Center"/>
+                                <ComboBox Width="130"
+                                          ItemsSource="{Binding RepositoryTab.AllRoles}"
+                                          DisplayMemberPath="Display"
+                                          SelectedValue="{Binding RepositoryTab.NewRole}"
+                                          SelectedValuePath="Role"/>
+                                <Button Content="+ Ekle"  Command="{Binding RepositoryTab.AddCommand}"       Margin="4,0,0,0"/>
+                                <TextBlock Text="(satırda sağ tık: Çoğalt / Sil)" Foreground="Gray"
+                                           FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                            </ToolBar>
+                        </ToolBarTray>
+                        <!-- Component DataGrid -->
+                        <DataGrid ItemsSource="{Binding RepositoryTab.Components}"
+                                  SelectedItem="{Binding RepositoryTab.SelectedComponent}"
+                                  AutoGenerateColumns="False" CanUserAddRows="False"
+                                  SelectionMode="Single"
+                                  PreviewMouseRightButtonDown="Grid_SelectRowOnRightClick"
+                                  ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                            <DataGrid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Çoğalt"
+                                              Command="{Binding Data.RepositoryTab.DuplicateCommand,
+                                                        Source={StaticResource VmProxy}}"/>
+                                    <MenuItem Header="Sil"
+                                              Command="{Binding Data.RepositoryTab.DeleteCommand,
+                                                        Source={StaticResource VmProxy}}"/>
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Poz No"
+                                    Binding="{Binding PozNo, UpdateSourceTrigger=PropertyChanged}" Width="90"/>
+                                <DataGridTextColumn Header="Ad"
+                                    Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                                <DataGridTextColumn Header="Rol"
+                                    Binding="{Binding RoleDisplay}" Width="120" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Yükseklik (mm)"
+                                    Binding="{Binding TotalHeightMm, StringFormat=0}"
+                                    IsReadOnly="True" Width="100"
+                                    ElementStyle="{x:Null}" EditingElementStyle="{x:Null}"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+
+                    <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch"/>
+
+                    <!-- ── Sağ panel: Bileşen Detayı ── -->
+                    <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="8"
+                                    Visibility="{Binding RepositoryTab.IsComponentSelected,
+                                                 Converter={StaticResource BoolToVis}}">
+
+                                <TextBlock Text="Bileşen Detayı"
+                                           FontWeight="Bold" FontSize="13" Margin="0,0,0,8"/>
+
+                                <!-- Ortak alanlar -->
+                                <Label Content="Poz No:"/>
+                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.PozNo,
+                                                UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                <Label Content="Ad:"/>
+                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.Name,
+                                                UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+
+                                <!-- Etkin Yükseklik + değişken checkbox -->
+                                <DockPanel Margin="0,2,0,0">
+                                    <CheckBox Content="değişken"
+                                              DockPanel.Dock="Right"
+                                              IsChecked="{Binding RepositoryTab.SelectedComponent.IsVariable,
+                                                          UpdateSourceTrigger=PropertyChanged}"
+                                              Visibility="{Binding RepositoryTab.SelectedComponent.ShowIsVariable,
+                                                           Converter={StaticResource BoolToVis}}"
+                                              VerticalAlignment="Center" Margin="6,0,0,0"
+                                              ToolTip="İşaretlendiğinde yükseklik değişken (saha ayarı) — elle giriş ve kompozit hesap devre dışı"/>
+                                    <Label Content="Etkin Yükseklik (mm):" Padding="5,0,0,0"
+                                           ToolTip="Kompozit seçiliyse alt parça toplamından otomatik hesaplanır"/>
+                                </DockPanel>
+                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.EffectiveHeight,
+                                                UpdateSourceTrigger=PropertyChanged}"
+                                         IsReadOnly="{Binding RepositoryTab.SelectedComponent.IsEffectiveHeightReadOnly}"
+                                         Margin="0,0,0,2">
+                                    <TextBox.Style>
+                                        <Style TargetType="TextBox">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RepositoryTab.SelectedComponent.IsEffectiveHeightReadOnly}" Value="True">
+                                                    <Setter Property="Background" Value="#F0F0F0"/>
+                                                    <Setter Property="Foreground" Value="Gray"/>
+                                                    <Setter Property="FontStyle"  Value="Italic"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBox.Style>
+                                </TextBox>
+                                <TextBlock Text="(Baca Yüksekliğine Bağlı)"
+                                           FontSize="10" Foreground="Gray" FontStyle="Italic"
+                                           Margin="0,0,0,4"
+                                           Visibility="{Binding RepositoryTab.SelectedComponent.IsEffectiveHeightReadOnly,
+                                                        Converter={StaticResource BoolToVis}}"/>
+
+                                <Label Content="Aile Etiketi:"/>
+                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.FamilyTag,
+                                                UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                <Label Content="Açıklama:"/>
+                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.Aciklama,
+                                                UpdateSourceTrigger=PropertyChanged}"
+                                         TextWrapping="Wrap" AcceptsReturn="True"
+                                         MinHeight="48" VerticalScrollBarVisibility="Auto"
+                                         Margin="0,0,0,4"/>
+                                <Label Content="Dış Hacim (m³):"
+                                       ToolTip="Bileşenin toplam mekânsal hacmi"/>
+                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.ExternalVolume,
+                                                UpdateSourceTrigger=PropertyChanged, StringFormat=0.0000}"
+                                         Margin="0,0,0,4"/>
+                                <Label Content="Malzeme Hacmi (m³):"
+                                       ToolTip="Net beton / HDPE hacmi"/>
+                                <TextBox Text="{Binding RepositoryTab.SelectedComponent.MaterialVolume,
+                                                UpdateSourceTrigger=PropertyChanged, StringFormat=0.0000}"
+                                         Margin="0,0,0,4"/>
+                                <TextBlock Text="değişken: girilen hacim 1 m yükseklik içindir — gerçek hacim, hesaplanan yüksekliğe göre orantılanır"
+                                           FontSize="10" Foreground="Gray" FontStyle="Italic"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,4"
+                                           Visibility="{Binding RepositoryTab.SelectedComponent.IsVariable,
+                                                        Converter={StaticResource BoolToVis}}"/>
+
+                                <!-- Zorunlu Parça — tüm tipler için BottomElement hariç -->
+                                <CheckBox Content="Zorunlu Parça"
+                                          IsChecked="{Binding RepositoryTab.SelectedComponent.ZorunluParca,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                          Visibility="{Binding RepositoryTab.SelectedComponent.ShowZorunluParca,
+                                                       Converter={StaticResource BoolToVis}}"
+                                          ToolTip="Bu bileşen her montajda zorunlu olarak yer alır"
+                                          Margin="0,0,0,4"/>
+
+                                <!-- Yükseltme Parçası — sadece MiddleElement ve Adjuster -->
+                                <CheckBox Content="Yükseltme Parçası"
+                                          IsChecked="{Binding RepositoryTab.SelectedComponent.YukseltmeParcasi,
+                                                      UpdateSourceTrigger=PropertyChanged}"
+                                          Visibility="{Binding RepositoryTab.SelectedComponent.ShowYukseltmeParcasi,
+                                                       Converter={StaticResource BoolToVis}}"
+                                          ToolTip="Bu halka yükseltme amacıyla kullanılır"
+                                          Margin="0,0,0,6"/>
+
+                                <!-- BottomElement -->
+                                <StackPanel Visibility="{Binding RepositoryTab.IsBottomElementSelected,
+                                                         Converter={StaticResource BoolToVis}}">
+                                    <Separator Margin="0,2,0,6"/>
+                                    <TextBlock Text="Taban Kaidesi (Zemin Plakası)" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <Label Content="Kaide Dış Hacim (m³):"
+                                           ToolTip="Yalnızca kaide (zemin plakası) dış hacmi — değişken Taban'da yüksekliğe bağlı DEĞİLDİR"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.FloorExternalVolume,
+                                                    UpdateSourceTrigger=PropertyChanged, StringFormat=0.0000}"
+                                             Margin="0,0,0,4"/>
+                                    <Label Content="Kaide Malzeme Hacmi (m³):"
+                                           ToolTip="Yalnızca kaide (zemin plakası) net beton hacmi — değişken Taban'da yüksekliğe bağlı DEĞİLDİR"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.FloorMaterialVolume,
+                                                    UpdateSourceTrigger=PropertyChanged, StringFormat=0.0000}"
+                                             Margin="0,0,0,4"/>
+                                    <TextBlock Text="değişken Taban: yukarıdaki Dış/Malzeme Hacmi DUVARIN 1 m hacmidir; kaide hacimleri sabittir (hacim = duvar × yükseklik + kaide)."
+                                               FontSize="10" Foreground="Gray" FontStyle="Italic"
+                                               TextWrapping="Wrap" Margin="0,0,0,4"/>
+                                    <Separator Margin="0,2,0,6"/>
+                                    <TextBlock Text="Taban Geometrisi" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <Label Content="Plan Şekli:"/>
+                                    <ComboBox ItemsSource="{Binding RepositoryTab.AllFootprintShapes}"
+                                              DisplayMemberPath="Display"
+                                              SelectedValuePath="Shape"
+                                              SelectedValue="{Binding RepositoryTab.SelectedComponent.PlanShape,
+                                                              UpdateSourceTrigger=PropertyChanged}"
+                                              Margin="0,0,0,4"/>
+
+                                    <!-- Dairesel -->
+                                    <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.IsCircularFootprint,
+                                                             Converter={StaticResource BoolToVis}}">
+                                        <Label Content="Taban Çapı (mm):"/>
+                                        <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintDiamMm,
+                                                         UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    </StackPanel>
+
+                                    <!-- Kare -->
+                                    <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.IsSquareFootprint,
+                                                             Converter={StaticResource BoolToVis}}">
+                                        <Label Content="Kenar Uzunluğu (mm):"/>
+                                        <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintSideMm,
+                                                         UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    </StackPanel>
+
+                                    <!-- Dikdörtgen -->
+                                    <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.IsRectangularFootprint,
+                                                             Converter={StaticResource BoolToVis}}">
+                                        <Label Content="Uzun Kenar (mm):"/>
+                                        <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintLengthMm,
+                                                         UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                        <Label Content="Kısa Kenar (mm):"/>
+                                        <TextBox Text="{Binding RepositoryTab.SelectedComponent.FootprintWidthMm,
+                                                         UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                        <Label Content="Uzun Kenar Yönü:"
+                                               ToolTip="Dikdörtgen tabanın uzun kenarının boru yönüne göre konumu"/>
+                                        <ComboBox ItemsSource="{Binding RepositoryTab.FootprintOrientationOptions}"
+                                                  SelectedItem="{Binding RepositoryTab.SelectedComponent.FootprintOrientation,
+                                                                 UpdateSourceTrigger=PropertyChanged}"
+                                                  Margin="0,0,0,4"/>
+                                    </StackPanel>
+
+                                    <Label Content="Et Kalınlığı (mm):"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.WallThicknessMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    <Label Content="Taban Kalınlığı (mm):"
+                                           ToolTip="Kaide plakasının yapısal kalınlığı — DataGrid sütununda Etkin Yüksekliğe eklenir"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.TabanKalinligiMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    <Label Content="Üst Açılış Çapı (mm):"
+                                           ToolTip="Şaft halkasının oturduğu iç açıklık"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.TopOpeningDiamMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"/>
+                                    <CheckBox IsChecked="{Binding RepositoryTab.SelectedComponent.IsCompositeChecked,
+                                                          UpdateSourceTrigger=PropertyChanged}"
+                                              IsEnabled="{Binding RepositoryTab.SelectedComponent.IsCompositeEnabled}"
+                                              Content="Kompozit Alt Parçalı" Margin="0,0,0,4"/>
+                                    <StackPanel Visibility="{Binding RepositoryTab.SelectedComponent.IsCompositeChecked,
+                                                             Converter={StaticResource BoolToVis}}">
+                                        <DockPanel Margin="0,4,0,2">
+                                            <TextBlock Text="Alt Parçalar" FontWeight="SemiBold"
+                                                       DockPanel.Dock="Left" VerticalAlignment="Center"/>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <Button Content="+ Parça"
+                                                        Command="{Binding RepositoryTab.AddSubPieceCommand}"
+                                                        Padding="4,1" Margin="0,0,2,0"/>
+                                                <Button Content="Sil"
+                                                        Command="{Binding RepositoryTab.DeleteSubPieceCommand}"
+                                                        Padding="4,1"/>
+                                            </StackPanel>
+                                        </DockPanel>
+                                        <DataGrid ItemsSource="{Binding RepositoryTab.SubPieces}"
+                                                  SelectedItem="{Binding RepositoryTab.SelectedSubPiece}"
+                                                  AutoGenerateColumns="False" CanUserAddRows="False"
+                                                  MaxHeight="160"
+                                                  ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Ad"
+                                                    Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                                    Width="*"/>
+                                                <DataGridTextColumn Header="H (mm)"
+                                                    Binding="{Binding HeightMm, UpdateSourceTrigger=PropertyChanged, StringFormat=0}"
+                                                    Width="65"/>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <!-- MiddleElement / Adjuster -->
+                                <StackPanel Visibility="{Binding RepositoryTab.IsMiddleOrAdjusterSelected,
+                                                         Converter={StaticResource BoolToVis}}">
+                                    <Separator Margin="0,2,0,6"/>
+                                    <TextBlock Text="Gövde / Ayar Halkası" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <Label Content="İç Çap (mm):"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.InnerDiamMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    <Label Content="Et Kalınlığı (mm):"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.WallThicknessMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                </StackPanel>
+
+                                <!-- Reducer -->
+                                <StackPanel Visibility="{Binding RepositoryTab.IsReducerSelected,
+                                                         Converter={StaticResource BoolToVis}}">
+                                    <Separator Margin="0,2,0,6"/>
+                                    <TextBlock Text="Konik Geçiş" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <Label Content="Alt İç Çap (mm):"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.BottomDiamMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    <Label Content="Üst İç Çap (mm):"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.TopDiamMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    <Label Content="Et Kalınlığı (mm):"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.WallThicknessMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                </StackPanel>
+
+                                <!-- Cover -->
+                                <StackPanel Visibility="{Binding RepositoryTab.IsCoverSelected,
+                                                         Converter={StaticResource BoolToVis}}">
+                                    <Separator Margin="0,2,0,6"/>
+                                    <TextBlock Text="Rögar Kapağı" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <Label Content="Yük Sınıfı (EN 124):"
+                                           ToolTip="Örnek: A15, B125, C250, D400, E600, F900"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.LoadClass,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    <Label Content="Net Açıklık (mm):"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.ClearOpeningMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                </StackPanel>
+
+                                <!-- Temel Altı Parça -->
+                                <StackPanel Visibility="{Binding RepositoryTab.IsTemelAltiParcaSelected,
+                                                         Converter={StaticResource BoolToVis}}">
+                                    <Separator Margin="0,2,0,6"/>
+                                    <TextBlock Text="Temel Altı Parça" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <Label Content="Boy (mm):"
+                                           ToolTip="Plandaki uzun boyut (mm)"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.Boy,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    <Label Content="En (mm):"
+                                           ToolTip="Plandaki kısa boyut (mm)"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.En,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    <Label Content="Bağlandı Taban Çapı (mm):"
+                                           ToolTip="Bu parçanın bağlı olduğu tabanın Üst Açılış Çapı (mm)"/>
+                                    <TextBox Text="{Binding RepositoryTab.SelectedComponent.BaglandiTabanCapiMm,
+                                                    UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                </StackPanel>
+
+                            </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 2  —  Boru Kataloğu
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Boru Kataloğu">
+                <pipeCat:PipeCatalogView DataContext="{Binding PipeCatalogTab}"/>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 3  —  Kazı Tipi Kataloğu
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Kazı Tipi Kataloğu">
+                <soilCat:SoilCatalogView DataContext="{Binding SoilCatalogTab}"/>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 4  —  Dolgu Kataloğu
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Dolgu Kataloğu">
+                <dolguCat:DolguCatalogView DataContext="{Binding DolguCatalogTab}"/>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 5  —  Baca Seçim Kuralları
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Baca Seçim Kuralları">
+                <DockPanel Margin="6">
+
+                    <!-- Toolbar -->
+                    <ToolBarTray DockPanel.Dock="Top">
+                        <ToolBar>
+                            <Button Content="Sistem Tipi Ekle / Düzenle"
+                                    Command="{Binding MasterRulesTab.ManageSystemTypesCommand}"
+                                    ToolTip="Şebeke/sistem tiplerini yönet (ekle, yeniden adlandır, sil)"/>
+                            <Separator/>
+                            <TextBlock Text="Boru Aralığı:" VerticalAlignment="Center"
+                                       FontWeight="SemiBold" Margin="0,0,6,0"/>
+                            <Button Content="+ Ekle"   Command="{Binding MasterRulesTab.AddPipeRangeCommand}"/>
+                            <Button Content="Çoğalt"   Command="{Binding MasterRulesTab.DuplicatePipeRangeCommand}" Margin="2,0,0,0"
+                                    ToolTip="Seçili boru aralığını tüm katmanlarıyla birlikte kopyala"/>
+                            <Button Content="Sil"      Command="{Binding MasterRulesTab.DeletePipeRangeCommand}"   Margin="2,0,0,0"/>
+                            <Separator/>
+                            <Button Content="↑ Yukarı" Command="{Binding MasterRulesTab.MoveUpCommand}"
+                                    ToolTip="Boru aralığını öncelik sırasında yukarı taşı"/>
+                            <Button Content="↓ Aşağı"  Command="{Binding MasterRulesTab.MoveDownCommand}" Margin="2,0,0,0"/>
+                            <Separator/>
+                            <TextBlock Text="Derinlik Katmanı:" VerticalAlignment="Center"
+                                       FontWeight="SemiBold" Margin="0,0,6,0"/>
+                            <Button Content="+ Ekle"   Command="{Binding MasterRulesTab.AddTierCommand}"/>
+                            <Button Content="Sil"      Command="{Binding MasterRulesTab.DeleteTierCommand}" Margin="2,0,0,0"/>
+                            <Separator/>
+                            <Button Content="💾 Kaydet"
+                                    Command="{Binding MasterRulesTab.SaveCommand}"
+                                    Style="{StaticResource KaydetButton}"
+                                    ToolTip="Kural matrisini cihaza kaydet (SmartAssemblyRules.xml)"/>
+                            <Button Content="İçe Aktar"
+                                    Command="{Binding MasterRulesTab.ImportCommand}"
+                                    Margin="2,0,0,0"
+                                    ToolTip="XML dosyasından kural matrisi içe aktar"/>
+                            <Button Content="Dışa Aktar"
+                                    Command="{Binding MasterRulesTab.ExportCommand}"
+                                    Margin="2,0,0,0"
+                                    ToolTip="Kural matrisini seçilen XML dosyasına aktar"/>
+                        </ToolBar>
+                    </ToolBarTray>
+
+                    <TextBlock DockPanel.Dock="Top" Margin="4,4,0,4"
+                               Text="Boru aralığı seçin → derinlik katmanlarını sağda düzenleyin.  Kırmızı satır = geçersiz aralık."
+                               FontStyle="Italic" Foreground="Gray" FontSize="11"/>
+
+                    <!-- Master-Detail split -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="5"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Sol: Boru Çapı Aralıkları -->
+                        <DockPanel Grid.Column="0">
+                            <TextBlock DockPanel.Dock="Top" Text="Boru Çapı Aralıkları"
+                                       FontWeight="Bold" Margin="0,0,0,4"/>
+                            <DataGrid x:Name="MasterPipeRangesGrid"
+                                      ItemsSource="{Binding MasterRulesTab.PipeRanges}"
+                                      SelectedItem="{Binding MasterRulesTab.SelectedPipeRange}"
+                                      AutoGenerateColumns="False" CanUserAddRows="False"
+                                      SelectionMode="Single"
+                                      RowStyle="{StaticResource BoruAralikSatiri}"
+                                      ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                                <DataGrid.Columns>
+
+                                    <!-- 0 — System Type -->
+                                    <DataGridTemplateColumn Header="Sistem Tipi" Width="110">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding SystemTypeDisplay}"
+                                                           VerticalAlignment="Center" Padding="3,0"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                            <DataTemplate>
+                                                <ComboBox
+                                                    ItemsSource="{Binding DataContext.MasterRulesTab.AvailableSystemTypes,
+                                                                  ElementName=MasterPipeRangesGrid}"
+                                                    SelectedItem="{Binding SelectedSystemType,
+                                                                   UpdateSourceTrigger=PropertyChanged}"
+                                                    DisplayMemberPath="Name"
+                                                    IsEditable="False"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                    </DataGridTemplateColumn>
+
+                                    <!-- 1 — Pipe Family -->
+                                    <DataGridTemplateColumn Header="Aile" Width="110">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding SelectedPipeFamily.FamilyName, FallbackValue='—'}"
+                                                           VerticalAlignment="Center" Padding="3,0"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding AvailableFamilies}"
+                                                          SelectedItem="{Binding SelectedPipeFamily,
+                                                                         UpdateSourceTrigger=PropertyChanged}"
+                                                          DisplayMemberPath="FamilyName"
+                                                          IsEditable="False"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                    </DataGridTemplateColumn>
+
+                                    <!-- 2 — Min Pipe (populated by selected family) -->
+                                    <DataGridTemplateColumn Header="Min Boru" Width="130">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding SelectedMinPipe.Display, FallbackValue='—'}"
+                                                           VerticalAlignment="Center" Padding="3,0"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding PipesInFamily}"
+                                                          SelectedItem="{Binding SelectedMinPipe,
+                                                                         UpdateSourceTrigger=PropertyChanged}"
+                                                          DisplayMemberPath="Display"
+                                                          IsEditable="False"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                    </DataGridTemplateColumn>
+
+                                    <!-- 3 — Max Pipe (same family list) -->
+                                    <DataGridTemplateColumn Header="Max Boru" Width="130">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding SelectedMaxPipe.Display, FallbackValue='—'}"
+                                                           VerticalAlignment="Center" Padding="3,0"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding PipesInFamily}"
+                                                          SelectedItem="{Binding SelectedMaxPipe,
+                                                                         UpdateSourceTrigger=PropertyChanged}"
+                                                          DisplayMemberPath="Display"
+                                                          IsEditable="False"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                    </DataGridTemplateColumn>
+
+                                    <DataGridTextColumn Header="Katman"
+                                        Binding="{Binding TierCount}" IsReadOnly="True" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+
+                        <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+
+                        <!-- Sağ: Derinlik Katmanları (seçili boru aralığı için) -->
+                        <DockPanel Grid.Column="2"
+                                   Visibility="{Binding MasterRulesTab.IsPipeRangeSelected,
+                                                Converter={StaticResource BoolToVis}}">
+                            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                                <TextBlock FontWeight="Bold" DockPanel.Dock="Left" VerticalAlignment="Center">
+                                    <TextBlock.Text>
+                                        <Binding Path="MasterRulesTab.SelectedPipeRange.PipeRangeDisplay"
+                                                 StringFormat="Derinlik Katmanları — {0}"/>
+                                    </TextBlock.Text>
+                                </TextBlock>
+                            </DockPanel>
+                            <!-- Tier grid + constraint panel side by side -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="5"/>
+                                    <ColumnDefinition Width="Auto" MinWidth="260"/>
+                                </Grid.ColumnDefinitions>
+
+                                <DataGrid Grid.Column="0"
+                                          x:Name="MasterTiersGrid"
+                                          ItemsSource="{Binding MasterRulesTab.SelectedPipeRange.DepthTiers}"
+                                          SelectedItem="{Binding MasterRulesTab.SelectedDepthTier}"
+                                          AutoGenerateColumns="False" CanUserAddRows="False"
+                                          SelectionMode="Single"
+                                          RowStyle="{StaticResource DerinlikKatmanSatiri}"
+                                          ColumnHeaderStyle="{StaticResource SutunBasligi}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Min Der. (m)"
+                                            Binding="{Binding MinDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.000}"
+                                            Width="90"/>
+                                        <DataGridTextColumn Header="Max Der. (m)"
+                                            Binding="{Binding MaxDepthM, UpdateSourceTrigger=PropertyChanged, StringFormat=0.0}"
+                                            Width="90"/>
+                                        <DataGridCheckBoxColumn Header="Yd. Döküm"
+                                            Binding="{Binding IsCastInSitu, UpdateSourceTrigger=PropertyChanged}"
+                                            Width="80"/>
+                                        <DataGridTemplateColumn Header="Seçilen Taban" Width="*">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding ResultDisplay}"
+                                                               VerticalAlignment="Center" Padding="2,0"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                            <DataGridTemplateColumn.CellEditingTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox
+                                                        ItemsSource="{Binding DataContext.MasterRulesTab.AvailableBases,
+                                                                      ElementName=MasterTiersGrid}"
+                                                        SelectedValue="{Binding SelectedBaseId,
+                                                                        UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
+                                                        SelectedValuePath="Id"
+                                                        DisplayMemberPath="Display"
+                                                        IsEnabled="{Binding IsBaseSelectable}"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellEditingTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+
+                                <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+
+                                <!-- Parça Kısıtları — visible when a tier is selected -->
+                                <Border Grid.Column="2"
+                                        Visibility="{Binding MasterRulesTab.IsTierSelected,
+                                                     Converter={StaticResource BoolToVis}}"
+                                        BorderBrush="#CCCCCC" BorderThickness="1,0,0,0">
+                                    <DockPanel Margin="6,0,0,0">
+                                        <TextBlock DockPanel.Dock="Top"
+                                                   Text="Parça Kısıtları"
+                                                   FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                        <TextBlock DockPanel.Dock="Bottom"
+                                                   FontSize="10" Foreground="Gray" FontStyle="Italic"
+                                                   Text="Maks 0 = kullanma  |  Maks ∞ = yüksekliğe göre sınırsız"
+                                                   Margin="0,4,0,0"/>
+                                        <DataGrid ItemsSource="{Binding MasterRulesTab.TierConstraints}"
+                                                  AutoGenerateColumns="False" CanUserAddRows="False"
+                                                  SelectionMode="Single" HeadersVisibility="Column">
+                                            <DataGrid.RowStyle>
+                                                <Style TargetType="DataGridRow">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsReadOnly}" Value="True">
+                                                            <Setter Property="Foreground" Value="Gray"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </DataGrid.RowStyle>
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Parça Tipi"
+                                                    Binding="{Binding RoleDisplay}" IsReadOnly="True" Width="130"/>
+
+                                                <!-- Min column -->
+                                                <DataGridTemplateColumn Header="Min" Width="55">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding MinCount}"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"/>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                    <DataGridTemplateColumn.CellEditingTemplate>
+                                                        <DataTemplate>
+                                                            <Grid>
+                                                                <TextBlock Text="{Binding MinCount}"
+                                                                           HorizontalAlignment="Center"
+                                                                           VerticalAlignment="Center"
+                                                                           Visibility="{Binding IsReadOnly,
+                                                                               Converter={StaticResource BoolToVis}}"/>
+                                                                <ComboBox ItemsSource="{Binding ZeroOneOptions}"
+                                                                          SelectedItem="{Binding MinCount,
+                                                                              UpdateSourceTrigger=PropertyChanged}"
+                                                                          Visibility="{Binding IsEditableZeroOrOne,
+                                                                              Converter={StaticResource BoolToVis}}"/>
+                                                                <TextBox Text="{Binding MinCount,
+                                                                             UpdateSourceTrigger=PropertyChanged}"
+                                                                         Visibility="{Binding IsEditableFree,
+                                                                             Converter={StaticResource BoolToVis}}"/>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellEditingTemplate>
+                                                </DataGridTemplateColumn>
+
+                                                <!-- Max column: -1=∞, 0=don't use, N=at most N -->
+                                                <DataGridTemplateColumn Header="Maks" Width="*">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding MaxDisplay}"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"/>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                    <DataGridTemplateColumn.CellEditingTemplate>
+                                                        <DataTemplate>
+                                                            <Grid>
+                                                                <TextBlock Text="{Binding MaxDisplay}"
+                                                                           HorizontalAlignment="Center"
+                                                                           VerticalAlignment="Center"
+                                                                           Visibility="{Binding IsReadOnly,
+                                                                               Converter={StaticResource BoolToVis}}"/>
+                                                                <ComboBox ItemsSource="{Binding ZeroOneOptions}"
+                                                                          SelectedItem="{Binding MaxCount,
+                                                                              UpdateSourceTrigger=PropertyChanged}"
+                                                                          Visibility="{Binding IsEditableZeroOrOne,
+                                                                              Converter={StaticResource BoolToVis}}"/>
+                                                                <TextBox Text="{Binding MaxCountText,
+                                                                             UpdateSourceTrigger=PropertyChanged}"
+                                                                         ToolTip="اكتب رقماً أو ∞ للسماح بعدد غير محدود"
+                                                                         Visibility="{Binding IsEditableFree,
+                                                                             Converter={StaticResource BoolToVis}}"/>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellEditingTemplate>
+                                                </DataGridTemplateColumn>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </DockPanel>
+                                </Border>
+                            </Grid>
+                        </DockPanel>
+
+                        <!-- Yer tutucu: boru aralığı seçilmemiş -->
+                        <TextBlock Grid.Column="2"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center"
+                                   Text="Soldaki listeden bir boru çapı aralığı seçin veya '+ Ekle' ile yeni oluşturun."
+                                   Foreground="Gray" FontStyle="Italic"
+                                   Visibility="{Binding MasterRulesTab.IsPipeRangeSelected,
+                                                Converter={StaticResource BoolToVis},
+                                                ConverterParameter=invert}"/>
+                    </Grid>
+                </DockPanel>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 6  —  Baca Kazı Kuralları
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Baca Kazı Kuralları">
+                <mhExcav:ManholeExcavationCatalogView DataContext="{Binding ManholeExcavTab}"/>
+            </TabItem>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 SEKME 7  —  Boru Hendek Kuralları
+                 ═══════════════════════════════════════════════════════════════ -->
+            <TabItem Header="Boru Hendek Kuralları">
+                <pipeTrench:PipeTrenchCatalogView DataContext="{Binding PipeTrenchTab}"/>
+            </TabItem>
+
+        </TabControl>
+    </DockPanel>
+</Window>

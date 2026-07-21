@@ -1,0 +1,154 @@
+<UserControl x:Class="UrbanoMetraj.BoQ.SoilCatalog.UI.Views.SoilCatalogView"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:UrbanoMetraj.BoQ.SmartAssembly.UI.Converters">
+
+    <UserControl.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        <!-- Proxy so ContextMenu items (outside the visual tree) can reach VM commands -->
+        <conv:BindingProxy x:Key="VmProxy" Data="{Binding}"/>
+
+        <Style x:Key="ColHeader" TargetType="DataGridColumnHeader">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="4,2"/>
+            <Setter Property="Background" Value="#F0F0F0"/>
+        </Style>
+
+        <Style x:Key="ActionBtn" TargetType="Button">
+            <Setter Property="Padding" Value="10,3"/>
+            <Setter Property="Margin"  Value="0,0,4,0"/>
+        </Style>
+
+        <!-- Prominent primary-action (Kaydet) button — accent so it stands out. -->
+        <Style x:Key="KaydetButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="10,3"/>
+            <Setter Property="Margin"     Value="0,0,4,0"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="#00467F" CornerRadius="2"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="b" Property="Background" Value="#9BB8CE"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <DockPanel>
+
+        <!-- ── Status bar ──────────────────────────────────────────────────── -->
+        <StatusBar DockPanel.Dock="Bottom" Height="24">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusText}" Foreground="Gray" FontSize="11"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <!-- ── Toolbar ─────────────────────────────────────────────────────── -->
+        <Border DockPanel.Dock="Top"
+                BorderBrush="#CCCCCC" BorderThickness="0,0,0,1"
+                Background="#F8F8F8" Padding="6,5">
+            <!-- Unified toolbar: [+ Ekle] | [Kaydet] [İçe] [Dışa]
+                 Çoğalt / Sil → satırda sağ tık (aşağıdaki DataGrid bağlam menüsü). -->
+            <WrapPanel>
+
+                <Button Content="+ Ekle"  Command="{Binding AddCommand}"
+                        Style="{StaticResource ActionBtn}"/>
+
+                <Separator Width="1" Height="22" Margin="6,0" Background="#CCCCCC"/>
+
+                <!-- Kaydet: serializes to the fixed internal %APPDATA% path -->
+                <Button Content="💾 Kaydet" Command="{Binding SaveCommand}"
+                        Style="{StaticResource KaydetButton}"
+                        ToolTip="Zemin kataloğunu dahili konuma kaydeder&#x0a;(%APPDATA%\UrbanoMetraj\SoilCatalog.xml)"/>
+
+                <!-- İçe Aktar: OpenFileDialog → merge or replace -->
+                <Button Content="İçe Aktar" Command="{Binding ImportCommand}"
+                        Style="{StaticResource ActionBtn}"
+                        ToolTip="Daha önce dışa aktarılmış bir XML dosyasını içe aktarır."/>
+
+                <!-- Dışa Aktar: SaveFileDialog → user-chosen path -->
+                <Button Content="Dışa Aktar" Command="{Binding ExportCommand}"
+                        Style="{StaticResource ActionBtn}"
+                        ToolTip="Kataloğu seçilen konuma XML olarak dışa aktarır.&#x0a;Yedekleme veya ekip paylaşımı için kullanın."/>
+
+                <TextBlock Text="(satırda sağ tık: Çoğalt / Sil)" Foreground="Gray"
+                           FontSize="11" VerticalAlignment="Center" Margin="6,0,0,0"/>
+
+            </WrapPanel>
+        </Border>
+
+        <!-- ── Main grid ───────────────────────────────────────────────────── -->
+        <DataGrid Margin="6"
+                  ItemsSource="{Binding Items}"
+                  SelectedItem="{Binding SelectedItem}"
+                  AutoGenerateColumns="False" CanUserAddRows="False"
+                  SelectionMode="Single"
+                  PreviewMouseRightButtonDown="Grid_SelectRowOnRightClick"
+                  ColumnHeaderStyle="{StaticResource ColHeader}">
+            <DataGrid.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Çoğalt"
+                              Command="{Binding Data.DuplicateCommand, Source={StaticResource VmProxy}}"/>
+                    <MenuItem Header="Sil"
+                              Command="{Binding Data.DeleteCommand, Source={StaticResource VmProxy}}"/>
+                </ContextMenu>
+            </DataGrid.ContextMenu>
+            <DataGrid.Columns>
+
+                <DataGridTextColumn Header="Poz No"
+                    Binding="{Binding BoqItemCode, UpdateSourceTrigger=PropertyChanged}"
+                    Width="110"/>
+
+                <DataGridTextColumn Header="Zemin Adı"
+                    Binding="{Binding SoilName, UpdateSourceTrigger=PropertyChanged}"
+                    Width="*"/>
+
+                <DataGridTextColumn Header="Kabarma Katsayısı"
+                    Binding="{Binding BulkingFactor,
+                              UpdateSourceTrigger=PropertyChanged,
+                              StringFormat=0.000}"
+                    Width="130"/>
+
+                <DataGridTextColumn Header="Kazı Tipi"
+                    Binding="{Binding KaziTipi, UpdateSourceTrigger=PropertyChanged}"
+                    Width="120"/>
+
+                <DataGridTemplateColumn Header="Açıklama" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Aciklama}"
+                                       TextWrapping="Wrap"
+                                       Padding="2,1"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <TextBox Text="{Binding Aciklama, UpdateSourceTrigger=PropertyChanged}"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     MinHeight="48"
+                                     VerticalScrollBarVisibility="Auto"
+                                     BorderThickness="0"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+
+            </DataGrid.Columns>
+        </DataGrid>
+
+    </DockPanel>
+</UserControl>

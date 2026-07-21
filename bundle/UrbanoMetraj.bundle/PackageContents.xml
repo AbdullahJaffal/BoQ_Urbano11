@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  UrbanoMetraj.bundle — BricsCAD edition (v1.1.0.0) ApplicationPackage manifest.
+
+  BricsCAD V23's autoloader reads the SAME AutoCAD-style manifest: it honours
+  Platform="AutoCAD*" and LoadOnAutoCADStartup="true".  This is verified against
+  the working MyInfrastructureTools.bundle installed in this machine's BricsCAD
+  ApplicationPlugins folder
+  (%APPDATA%\Bricsys\BricsCAD\V23x64\en_US\Support\ApplicationPlugins).
+  Boolean attributes MUST be lowercase "true"/"false" or the loader treats them
+  as false and refuses to auto-load the DLL.
+
+  IMPORTANT: the DLL in this bundle is the BricsCAD build (references BrxMgd /
+  TD_Mgd, Teigha.* / Bricscad.* namespaces).  Do NOT install this bundle into
+  AutoCAD / Civil 3D — a BricsCAD-compiled DLL would fail to load there.  Use the
+  separate v1.0.0.0 AutoCAD/C3D build for those products.
+-->
+<ApplicationPackage
+  SchemaVersion="1.0"
+  ProductType="Application"
+  SupportedLocales="Mult"
+  AutodeskProduct="AutoCAD"
+  Name="UrbanoMetraj (BricsCAD)"
+  Description="UrbanoMetraj As-Built protection plugin for Urbano networks — BricsCAD edition"
+  AppVersion="1.1.0"
+  Author="UrbanoMetraj">
+
+  <CompanyDetails Name="UrbanoMetraj"/>
+
+  <RuntimeRequirements OS="Win64" Platform="AutoCAD*"
+                       SeriesMin="R24.0" SeriesMax="R30.0"/>
+
+  <Components Description="UrbanoMetraj core module (BricsCAD)">
+    <RuntimeRequirements OS="Win64" Platform="AutoCAD*"
+                         SeriesMin="R24.0" SeriesMax="R30.0"/>
+    <ComponentEntry
+      AppName="UrbanoMetraj"
+      ModuleName="./Contents/Windows/UrbanoMetraj.dll"
+      AppDescription="UrbanoMetraj As-Built locking, validation and licensing (BricsCAD)"
+      LoadOnCommandInvocation="false"
+      LoadOnAutoCADStartup="true"/>
+  </Components>
+
+</ApplicationPackage>

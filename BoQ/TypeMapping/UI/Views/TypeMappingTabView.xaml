@@ -1,0 +1,260 @@
+<UserControl x:Class="UrbanoMetraj.BoQ.TypeMapping.UI.Views.TypeMappingTabView"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:viewModels="clr-namespace:UrbanoMetraj.BoQ.TypeMapping.UI.ViewModels">
+
+    <UserControl.Resources>
+        <Style x:Key="ColHeader" TargetType="DataGridColumnHeader">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="4,2"/>
+            <Setter Property="Background" Value="#F0F0F0"/>
+        </Style>
+
+        <Style x:Key="ActionBtn" TargetType="Button">
+            <Setter Property="Padding" Value="10,3"/>
+            <Setter Property="Margin"  Value="0,0,4,0"/>
+        </Style>
+
+        <!-- Prominent primary-action (Kaydet) button — accent so it stands out. -->
+        <Style x:Key="KaydetButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="10,3"/>
+            <Setter Property="Margin"     Value="0,0,4,0"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="#00467F" CornerRadius="2"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="b" Property="Background" Value="#9BB8CE"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <DockPanel>
+
+        <!-- ── Status bar ──────────────────────────────────────────────────── -->
+        <StatusBar DockPanel.Dock="Bottom" Height="24">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusText}" Foreground="Gray" FontSize="11"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <!-- ── Toolbar ─────────────────────────────────────────────────────── -->
+        <Border DockPanel.Dock="Top"
+                BorderBrush="#CCCCCC" BorderThickness="0,0,0,1"
+                Background="#F8F8F8" Padding="6,5">
+            <!-- Unified toolbar: [Kaydet] | [↺ Yenile]
+                 Eşleştirmeler Urbano dışa aktarımından otomatik doldurulur → Ekle/İçe/Dışa/Sil yok;
+                 satırlar yalnızca DWG'ye Kaydet ile yazılır. Refresh (↺ Yenile) diğer sekmelerdeki
+                 gibi sona alındı. -->
+            <WrapPanel>
+                <Button Content="💾 Kaydet" Command="{Binding SaveCommand}"
+                        Style="{StaticResource KaydetButton}"
+                        ToolTip="Eşleştirmeleri aktif çizimin (DWG) içine kaydeder."/>
+                <Separator Width="1" Height="22" Margin="6,0" Background="#CCCCCC"/>
+                <Button Content="↺ Yenile" Command="{Binding RefreshCommand}"
+                        Style="{StaticResource ActionBtn}"
+                        ToolTip="Son Urbano dışa aktarımından (Metraj Verisi Güncelle) kataloğ öğelerini yeniden okur."/>
+            </WrapPanel>
+        </Border>
+
+        <!-- ── Two stacked grids: Pipe links / Manhole links ──────────────────── -->
+        <Grid Margin="6">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="6"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <GroupBox Grid.Row="0" Header="Boru Kataloğu Eşleştirmeleri (Urbano ↔ Boru Kataloğu)">
+                <DockPanel>
+                <Border DockPanel.Dock="Top" Background="#EFEFEF" BorderBrush="#CCCCCC"
+                        BorderThickness="0,0,0,1" Padding="6,4">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Seçilenlere uygula:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox Width="130" Margin="0,0,4,0"
+                                  ItemsSource="{Binding AvailablePipeFamilies}"
+                                  SelectedItem="{Binding BulkPipeFamily}"
+                                  DisplayMemberPath="FamilyName"/>
+                        <ComboBox Width="90" Margin="0,0,8,0"
+                                  ItemsSource="{Binding BulkPipeSinifs}"
+                                  SelectedItem="{Binding BulkPipeSinif}"/>
+                        <Button Content="Uygula"
+                                Style="{StaticResource ActionBtn}"
+                                Command="{Binding ApplyBulkPipeCommand}"
+                                ToolTip="Tabloda Ctrl/Shift ile birden çok satır seçin, sonra Aile+Sınıf'ı buradan seçip uygulayın."/>
+                    </StackPanel>
+                </Border>
+                <DataGrid ItemsSource="{Binding PipeLinks}"
+                          AutoGenerateColumns="False" CanUserAddRows="False"
+                          SelectionMode="Extended"
+                          ColumnHeaderStyle="{StaticResource ColHeader}">
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow">
+                            <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
+                        </Style>
+                    </DataGrid.RowStyle>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Urbano Kataloğ Öğesi" Binding="{Binding UrbanoName}"
+                            Width="150" IsReadOnly="True"/>
+                        <DataGridTextColumn Header="Urbano Grubu" Binding="{Binding UrbanoGroupName}"
+                            Width="150" IsReadOnly="True"
+                            ToolTipService.ToolTip="Aynı isim/çap iki farklı grupta tekrarlanabilir — hangi öğeyi eşleştirdiğini bu grup adına göre doğrula."/>
+                        <DataGridTextColumn Header="Urbano GUID" Binding="{Binding UrbanoGuid}"
+                            Width="200" IsReadOnly="True"/>
+
+                        <DataGridTemplateColumn Header="Aile" Width="130">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding SelectedFamily.FamilyName, FallbackValue='—'}"
+                                               VerticalAlignment="Center" Padding="3,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding AvailableFamilies}"
+                                              SelectedItem="{Binding SelectedFamily, UpdateSourceTrigger=PropertyChanged}"
+                                              DisplayMemberPath="FamilyName"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+
+                        <DataGridTemplateColumn Header="Sınıf" Width="90"
+                            ToolTipService.ToolTip="Aynı çaplı iki boru farklı sınıfa (SN8/SN10 gibi) ait olabilir — önce sınıfı seçin.">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding SelectedSinif, FallbackValue='—'}"
+                                               VerticalAlignment="Center" Padding="3,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding AvailableSinifs}"
+                                              SelectedItem="{Binding SelectedSinif, UpdateSourceTrigger=PropertyChanged}"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+
+                        <DataGridTemplateColumn Header="Bağlı Boru" Width="180">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding SelectedPipe.Display, FallbackValue='(eşleştirilmemiş)'}"
+                                               VerticalAlignment="Center" Padding="3,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding FilteredPipes}"
+                                              SelectedItem="{Binding SelectedPipe, UpdateSourceTrigger=PropertyChanged}"
+                                              DisplayMemberPath="Display"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+                </DockPanel>
+            </GroupBox>
+
+            <GroupBox Grid.Row="2" Header="Baca Kataloğu Eşleştirmeleri (Urbano ↔ Taban Parçası + Çap Çözümleme Modu)">
+                <DockPanel>
+                <Border DockPanel.Dock="Top" Background="#EFEFEF" BorderBrush="#CCCCCC"
+                        BorderThickness="0,0,0,1" Padding="6,4">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Seçilenlere uygula:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox Width="130" Margin="0,0,8,0"
+                                  ItemsSource="{Binding AvailableManholeFamilies}"
+                                  SelectedItem="{Binding BulkManholeFamily}"
+                                  DisplayMemberPath="Name"/>
+                        <Button Content="Uygula"
+                                Style="{StaticResource ActionBtn}"
+                                Command="{Binding ApplyBulkManholeCommand}"
+                                ToolTip="Tabloda Ctrl/Shift ile birden çok satır seçin, sonra Aile'yi buradan seçip uygulayın."/>
+                    </StackPanel>
+                </Border>
+                <DataGrid ItemsSource="{Binding ManholeLinks}"
+                          AutoGenerateColumns="False" CanUserAddRows="False"
+                          SelectionMode="Extended"
+                          ColumnHeaderStyle="{StaticResource ColHeader}">
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow">
+                            <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
+                        </Style>
+                    </DataGrid.RowStyle>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Urbano Kataloğ Öğesi" Binding="{Binding UrbanoName}"
+                            Width="150" IsReadOnly="True"/>
+                        <DataGridTextColumn Header="Urbano Grubu" Binding="{Binding UrbanoGroupName}"
+                            Width="150" IsReadOnly="True"
+                            ToolTipService.ToolTip="Aynı isim/çap iki farklı grupta tekrarlanabilir — hangi öğeyi eşleştirdiğini bu grup adına göre doğrula."/>
+                        <DataGridTextColumn Header="Urbano GUID" Binding="{Binding UrbanoGuid}"
+                            Width="200" IsReadOnly="True"/>
+
+                        <DataGridTemplateColumn Header="Aile" Width="130">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding SelectedFamily.Name, FallbackValue='—'}"
+                                               VerticalAlignment="Center" Padding="3,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding AvailableFamilies}"
+                                              SelectedItem="{Binding SelectedFamily, UpdateSourceTrigger=PropertyChanged}"
+                                              DisplayMemberPath="Name"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+
+                        <DataGridTemplateColumn Header="Taban Parçası" Width="180"
+                            ToolTipService.ToolTip="Kataloğumuz her yığını taban parçasından başlayarak sıralar — bu bacayı hangi taban ile eşleştirdiğinizi seçin.">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding SelectedBottom.Name, FallbackValue='(eşleştirilmemiş)'}"
+                                               VerticalAlignment="Center" Padding="3,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{Binding BottomsInFamily}"
+                                              SelectedItem="{Binding SelectedBottom, UpdateSourceTrigger=PropertyChanged}"
+                                              DisplayMemberPath="Name"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+
+                        <DataGridTemplateColumn Header="Çap Modu" Width="170">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding DiameterMode}"
+                                               VerticalAlignment="Center" Padding="3,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <ComboBox ItemsSource="{x:Static viewModels:ManholeLinkRowVm.AvailableModes}"
+                                              SelectedItem="{Binding DiameterMode, UpdateSourceTrigger=PropertyChanged}"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+                </DockPanel>
+            </GroupBox>
+        </Grid>
+
+    </DockPanel>
+</UserControl>

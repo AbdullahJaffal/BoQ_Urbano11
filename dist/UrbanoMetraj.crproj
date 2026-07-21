@@ -1,0 +1,32 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ConfuserEx2 protection project for UrbanoMetraj. Run:
+      Confuser.CLI.exe dist\UrbanoMetraj.crproj
+
+  CONSERVATIVE / AutoCAD-safe profile — NO renaming (AutoCAD command discovery,
+  WPF palette binding, EPPlus + DataContractJsonSerializer all use reflection).
+  Enabled protections:
+    constants   -> encrypts strings/numbers: API endpoint URL, RSA PublicKeyXml,
+                   licence messages (unreadable in dnSpy / ILSpy).
+    ctrl flow   -> scrambles licence-validation logic (LicenseGate/Verifier).
+    anti tamper -> method bodies encrypted; patching the verify branch corrupts
+                   the image instead of cleanly bypassing.
+    anti ildasm -> discourages ILDASM.
+  Only UrbanoMetraj.dll is processed. EPPlus.dll (third-party) is left untouched.
+
+  NOTE: comments must stay OUTSIDE <project> — ConfuserEx's loader trips on
+  comment/probePath nodes interleaved with the element sequence.
+  pattern="true" = apply to all members; inherit="false" = ONLY these
+  protections (no preset, no rename).
+-->
+<project outputDir="confused" baseDir="..\bin\Release" xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" inherit="false">
+    <protection id="anti ildasm" />
+    <protection id="constants" />
+    <protection id="ctrl flow" />
+    <protection id="anti tamper" />
+  </rule>
+  <module path="UrbanoLicensing.dll" />
+  <module path="UrbanoMetraj.dll" />
+  <probePath>C:\Program Files\Bricsys\BricsCAD V23 en_US</probePath>
+</project>

@@ -1,0 +1,41 @@
+# Build outputs
+bin/
+obj/
+
+# BricsCAD packaging artifacts (rebuilt by build-release.ps1)
+dist/UrbanoMetraj.bundle/
+installer/Output/
+stage/
+**/confused/
+
+# Secrets — never commit
+**/key.json
+*.pem
+.env
+.env.*
+
+# Visual Studio cache / solution user files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build logs + any per-session versioned build scripts (avoid DLL-lock sprawl).
+# The canonical script is build.bat <suffix>; build_v*.bat are regenerated locals.
+build_v*.txt
+build_v*.bat
+
+# NuGet
+packages/
+*.nupkg
+project.lock.json
+
+# Rider / JetBrains
+.idea/
+*.DotSettings.user
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
