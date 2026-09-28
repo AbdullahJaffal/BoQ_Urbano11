@@ -38,5 +38,17 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
 
         public static NetworkRule FindNetwork(string systemName)
             => _loaded ? _ruleSet?.FindNetwork(systemName) : null;
+
+        /// <summary>
+        /// True when this network is flagged pressure / non-gravity (BASINÇLI) in RULES mode — its
+        /// manhole pipeline is skipped by the calc. Always false outside RULES mode (the flag lives
+        /// on the per-network rule) so the legacy path keeps its full manhole behavior.
+        /// </summary>
+        public static bool IsBasincli(string systemName)
+        {
+            if (!IsRulesMode) return false;
+            var net = FindNetwork(systemName);
+            return net != null && net.IsBasincli;
+        }
     }
 }

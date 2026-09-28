@@ -121,6 +121,12 @@ namespace UrbanoMetraj.BoQ.Services
 
         private enum Kind { Band, Label, Content }
 
+        // How a row's money columns behave:
+        //   Sum    — aggregate: Σ of its direct children's money (section/band totals).
+        //   Priced — the user enters BF here; TUTAR = MİKTAR × BF (the single priced row).
+        //   None   — quantity-only: shows MİKTAR but NO pricing (a breakdown row).
+        private enum Money { Sum, Priced, None }
+
         private sealed class Row
         {
             public Kind   Kind;
@@ -131,6 +137,7 @@ namespace UrbanoMetraj.BoQ.Services
             public double Miktar;
             public string Birim;
             public string MiktarFmt;
+            public Money? MoneyOverride;   // null → default (below); set for KAZI/DOLGU material groups
             public readonly List<Row> Children = new List<Row>();
 
             public int    ExcelRow;
@@ -140,6 +147,12 @@ namespace UrbanoMetraj.BoQ.Services
 
             public bool HasChildren => Children.Count > 0;
             public bool HasContent  => Children.Count > 0;
+
+            // Default: bands/labels aggregate (Sum); a Content leaf is priced; a Content
+            // row that has children aggregates. KAZI/DOLGU override this so pricing sits
+            // only on the material total (see MarkPricedTotal).
+            public Money EffectiveMoney => MoneyOverride ??
+                (Kind != Kind.Content ? Money.Sum : (HasChildren ? Money.Sum : Money.Priced));
 
             public static Row Band(string title)  => new Row { Kind = Kind.Band,  Title = title };
             public static Row Label(string title) => new Row { Kind = Kind.Label, Title = title };
@@ -284,7 +297,9 @@ namespace UrbanoMetraj.BoQ.Services
 
             string title = !string.IsNullOrWhiteSpace(desc) ? desc : "KAZI";
             var band = Row.Band(title);
-            band.Add(BuildAgg(contribs, 0, poz, desc));
+            var total = BuildAgg(contribs, 0, poz, desc);
+            MarkPricedTotal(total);
+            band.Add(total);
             kazi.Add(band);
         }
 
@@ -339,7 +354,9 @@ namespace UrbanoMetraj.BoQ.Services
                              : (!string.IsNullOrEmpty(desc) ? desc : "DOLGU");
 
                 var band = Row.Band(title);
-                band.Add(BuildAgg(contribs, 0, poz, desc));
+                var total = BuildAgg(contribs, 0, poz, desc);
+                MarkPricedTotal(total);
+                band.Add(total);
                 dolgu.Add(band);
             }
         }
@@ -368,6 +385,24 @@ namespace UrbanoMetraj.BoQ.Services
                 total.Add(label);
             }
             return total;
+        }
+
+        // KAZI/DOLGU pricing rule: the user enters BF ONLY on the material total, so the
+        // same material is never priced twice (e.g. Baca-kazı and Boru-kazı sharing a soil).
+        // The top row of a material group is Priced (TUTAR = MİKTAR × BF); everything under
+        // it becomes quantity-only (MİKTAR shown, no pricing). The higher section/network
+        // totals still Σ these priced material totals.
+        private static void MarkPricedTotal(Row materialTotal)
+        {
+            if (materialTotal == null) return;
+            materialTotal.MoneyOverride = Money.Priced;
+            foreach (var c in materialTotal.Children) MarkQuantityOnly(c);
+        }
+
+        private static void MarkQuantityOnly(Row n)
+        {
+            n.MoneyOverride = Money.None;
+            foreach (var c in n.Children) MarkQuantityOnly(c);
         }
 
         private static string DetailAck(string desc, Contrib c) => desc ?? "";
@@ -583,18 +618,17 @@ namespace UrbanoMetraj.BoQ.Services
                 ws.Cells[r, 5].Style.VerticalAlignment = ExcelVerticalAlignment.Top;
             }
 
+            Money money = n.EffectiveMoney;
+
             if (n.Kind == Kind.Content)
             {
                 ws.Cells[r, 2].Value = n.Poz;
                 ws.Cells[r, 6].Value = n.Birim;
                 if (n.HasMiktar) ws.Cells[r, 7].Value = n.Miktar;
 
-                if (n.HasChildren)
+                if (money == Money.Priced)
                 {
-                    foreach (int col in MoneyCols) ws.Cells[r, col].Formula = SumChildren(n, col);
-                }
-                else
-                {
+                    // The single priced row: user fills BF, TUTAR = MİKTAR × BF.
                     ws.Cells[r, 12].Formula = $"{ColMalzBf}{r}+{ColIsciBf}{r}+{ColGgBf}{r}+{ColKarBf}{r}";
                     ws.Cells[r, 13].Formula = $"{ColMiktar}{r}*{ColMalzBf}{r}";
                     ws.Cells[r, 14].Formula = $"{ColMiktar}{r}*{ColIsciBf}{r}";
@@ -602,21 +636,27 @@ namespace UrbanoMetraj.BoQ.Services
                     ws.Cells[r, 16].Formula = $"{ColMiktar}{r}*{ColKarBf}{r}";
                     ws.Cells[r, 17].Formula = $"{ColMalzT}{r}+{ColIsciT}{r}+{ColGgT}{r}+{ColKarT}{r}";
                 }
+                else if (money == Money.Sum)
+                {
+                    foreach (int col in MoneyCols) ws.Cells[r, col].Formula = SumChildren(n, col);
+                }
+                // Money.None → quantity-only: MİKTAR shown, pricing columns left empty.
 
                 ExcelExportService.ApplyDataRowStyle(ws, r, ColCount, false);
                 ws.Cells[r, 6].Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
                 if (n.HasMiktar) ExcelExportService.SetNumericFormat(ws, r, 7, 7, n.MiktarFmt);
-                ExcelExportService.SetNumericFormat(ws, r, 8, ColCount, FmtPrice);
-                // Aggregate content rows read as bold totals.
+                if (money != Money.None) ExcelExportService.SetNumericFormat(ws, r, 8, ColCount, FmtPrice);
+                // Aggregate/total content rows read as bold.
                 if (n.HasChildren) ws.Cells[r, 5].Style.Font.Bold = true;
             }
             else
             {
-                foreach (int col in MoneyCols)
-                {
-                    ws.Cells[r, col].Formula = SumChildren(n, col);
-                    ws.Cells[r, col].Style.Numberformat.Format = FmtPrice;
-                }
+                if (money == Money.Sum)
+                    foreach (int col in MoneyCols)
+                    {
+                        ws.Cells[r, col].Formula = SumChildren(n, col);
+                        ws.Cells[r, col].Style.Numberformat.Format = FmtPrice;
+                    }
                 StyleBand(ws, r, n);
             }
 

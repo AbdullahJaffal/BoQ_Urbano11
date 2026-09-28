@@ -81,7 +81,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                         Str(net.ManholeFamilyId.ToString()),
                         Str(net.SoilName ?? ""),
                         Str(string.Join("\n", net.PipeTrenchRuleNames   ?? new List<string>())),
-                        Str(string.Join("\n", net.ManholeExcavRuleNames ?? new List<string>())));
+                        Str(string.Join("\n", net.ManholeExcavRuleNames ?? new List<string>())),
+                        I16((short)(net.IsBasincli ? 1 : 0)));
 
                     // Connection rules (baca seçim) — R_### subdicts, each with R_META + T_### tiers.
                     var connDict = MakeSubDict(tr, netDict, K_CONN);
@@ -97,7 +98,9 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                             var t    = tiers[ti];
                             var ttvs = new List<TypedValue>
                             {
-                                Dbl(t.MinDepthM), Dbl(t.MaxDepthM), Dbl(t.ManholeDiameterMm),
+                                // Slot 3 = TabanId (string). Pre-2026-09 DWGs stored a diameter
+                                // (double) here → reads back as "" → Taban not chosen.
+                                Dbl(t.MinDepthM), Dbl(t.MaxDepthM), Str(t.TabanId.ToString()),
                                 I16((short)(t.IsCastInSitu ? 1 : 0)), Str(t.Notes ?? "")
                             };
                             foreach (var cc in t.ComponentConstraints ?? new List<ComponentTypeConstraint>())
@@ -110,7 +113,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                         }
                     }
 
-                    // Piece exclusions — PR_### row subdict (ROW_META = familyId+diameter) + PE_## role records.
+                    // Piece exclusions — PR_### row subdict (ROW_META = familyId+tabanId) + PE_## role records.
                     var pieceDict = MakeSubDict(tr, netDict, K_PIECE);
                     var rows = net.PieceExclusionRows ?? new List<PieceExclusionRow>();
                     for (int pri = 0; pri < rows.Count; pri++)
@@ -118,7 +121,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                         var row     = rows[pri];
                         var rowDict = MakeSubDict(tr, pieceDict, "PR_" + pri.ToString("D3"));
                         MakeXRecord(tr, rowDict, K_PIECE_META,
-                            Str(row.ManholeFamilyId.ToString()), Dbl(row.ManholeDiameterMm));
+                            Str(row.ManholeFamilyId.ToString()), Str(row.TabanId.ToString()));
                         var roles = row.Roles ?? new List<PieceExclusion>();
                         for (int pi = 0; pi < roles.Count; pi++)
                         {
@@ -175,6 +178,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                         net.SoilName = ReadStr(tvs, ref i);   // "" for pre-SoilName DWGs
                         net.PipeTrenchRuleNames   = SplitNames(ReadStr(tvs, ref i));
                         net.ManholeExcavRuleNames = SplitNames(ReadStr(tvs, ref i));
+                        net.IsBasincli            = ReadI16(tvs, ref i) == 1;   // 0/absent for pre-BASINCLI DWGs
 
                         var connDict = GetSubDict(tr, netDict, K_CONN);
                         if (connDict != null)
@@ -205,11 +209,11 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                                     int ti = 0;
                                     var tier = new ConnDepthTier
                                     {
-                                        MinDepthM         = ReadDbl(ttv, ref ti),
-                                        MaxDepthM         = ReadDbl(ttv, ref ti),
-                                        ManholeDiameterMm = ReadDbl(ttv, ref ti),
-                                        IsCastInSitu      = ReadI16(ttv, ref ti) == 1,
-                                        Notes             = ReadStr(ttv, ref ti)
+                                        MinDepthM    = ReadDbl(ttv, ref ti),
+                                        MaxDepthM    = ReadDbl(ttv, ref ti),
+                                        TabanId      = ReadGuid(ttv, ref ti),   // legacy diameter → Empty
+                                        IsCastInSitu = ReadI16(ttv, ref ti) == 1,
+                                        Notes        = ReadStr(ttv, ref ti)
                                     };
                                     while (ti + 3 <= ttv.Length)   // trailing constraint triples: role, min, max
                                     {
@@ -243,8 +247,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                                 Guid fid; Guid.TryParse(ReadStr(rmeta, ref ri2), out fid);
                                 var row = new PieceExclusionRow
                                 {
-                                    ManholeFamilyId   = fid,
-                                    ManholeDiameterMm = ReadDbl(rmeta, ref ri2)
+                                    ManholeFamilyId = fid,
+                                    TabanId         = ReadGuid(rmeta, ref ri2)   // legacy diameter → Empty
                                 };
                                 foreach (DBDictionaryEntry pe in rowDict)
                                 {
@@ -258,7 +262,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                                     while (pj < ptv.Length) ex.AllowedHeightsMm.Add(ReadDbl(ptv, ref pj));
                                     row.Roles.Add(ex);
                                 }
-                                net.PieceExclusionRows.Add(row);
+                                // Legacy diameter-keyed rows can't be mapped to a Taban → dropped.
+                                if (row.TabanId != Guid.Empty) net.PieceExclusionRows.Add(row);
                             }
                         }
 
@@ -335,7 +340,10 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                     Str(e.ManholeFamilyId.ToString()),
                     Str(e.OverrideLabel ?? ""),
                     Str(e.EntityName ?? ""),
-                    Dbl(e.ManholeDiameterMm));
+                    Dbl(0),   // legacy diameter slot (kept so the positions below stay stable)
+                    // Appended (not inserted) — old DWGs read 0 → false. 1 = force Yerinde Döküm.
+                    Dbl(e.IsCastInPlace ? 1.0 : 0.0),
+                    Str(e.TabanId.ToString()));   // appended 2026-09 — absent in old DWGs → Empty
             }
 
             WriteExcavExc(tr, excDict, K_EXC_PEXCAV, exc.PipeExcav);
@@ -389,7 +397,9 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                     Guid mf; Guid.TryParse(ReadStr(tvs, ref i), out mf); ex.ManholeFamilyId = mf;
                     ex.OverrideLabel      = ReadStr(tvs, ref i);
                     ex.EntityName         = ReadStr(tvs, ref i);
-                    ex.ManholeDiameterMm  = ReadDbl(tvs, ref i);   // 0 for pre-diameter DWGs
+                    ReadDbl(tvs, ref i);                                // legacy diameter slot — ignored
+                    ex.IsCastInPlace      = ReadDbl(tvs, ref i) != 0.0; // 0/absent → false
+                    ex.TabanId            = ReadGuid(tvs, ref i);       // absent in old DWGs → Empty
                     if (!string.IsNullOrEmpty(ex.AgGuid)) exc.ManholeFamily.Add(ex);
                 }
 
@@ -501,6 +511,13 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
 
         private static string ReadStr(TypedValue[] tvs, ref int i)
             => (i < tvs.Length) ? (tvs[i++].Value as string ?? "") : "";
+
+        /// <summary>Reads a Guid stored as text; a non-text value (legacy diameter) or bad text → Empty.</summary>
+        private static Guid ReadGuid(TypedValue[] tvs, ref int i)
+        {
+            Guid g;
+            return Guid.TryParse(ReadStr(tvs, ref i), out g) ? g : Guid.Empty;
+        }
 
         private static List<string> SplitNames(string joined)
             => string.IsNullOrEmpty(joined)

@@ -20,7 +20,11 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
         // ── Left panel — pipe-range list ──────────────────────────────────────
         public ObservableCollection<PipeRangeRuleVm> PipeRanges    { get; } = new ObservableCollection<PipeRangeRuleVm>();
+        /// <summary>Taban choices for the selected range's tiers — only its Baca Aile's Tabans.</summary>
         public ObservableCollection<BottomElementVm> AvailableBases { get; } = new ObservableCollection<BottomElementVm>();
+
+        /// <summary>Manhole families — "Baca Aile" ComboBox source of the pipe-range grid.</summary>
+        public ObservableCollection<ComponentFamily> AvailableManholeFamilies => _catalog.Families;
 
         private PipeRangeRuleVm _selectedPipeRange;
         public PipeRangeRuleVm SelectedPipeRange
@@ -31,6 +35,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                 Set(ref _selectedPipeRange, value);
                 OnPropertyChanged(nameof(IsPipeRangeSelected));
                 SelectedDepthTier = null;
+                RebuildAvailableBases();
             }
         }
 
@@ -63,6 +68,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         public ICommand MoveDownCommand           { get; }
         public ICommand AddTierCommand            { get; }
         public ICommand DeleteTierCommand         { get; }
+        public ICommand DuplicateTierCommand      { get; }
 
         public ICommand SaveCommand               { get; }
         public ICommand ExportCommand            { get; }
@@ -84,6 +90,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             MoveDownCommand           = new RelayCommand(OnMoveDown, _ => IsPipeRangeSelected && PipeRanges.IndexOf(_selectedPipeRange) < PipeRanges.Count - 1);
             AddTierCommand            = new RelayCommand(OnAddTier,    _ => IsPipeRangeSelected);
             DeleteTierCommand         = new RelayCommand(OnDeleteTier, _ => IsTierSelected);
+            DuplicateTierCommand      = new RelayCommand(OnDuplicateTier, _ => IsTierSelected);
             SaveCommand               = new RelayCommand(OnSave);
             ExportCommand             = new RelayCommand(OnExport);
             ImportCommand             = new RelayCommand(OnImport);
@@ -108,13 +115,39 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
         /// <summary>Called whenever components change in the Repository tab.</summary>
         public void RefreshBasesCombo()
         {
-            AvailableBases.Clear();
-            foreach (var b in _catalog.GetBases())
-                AvailableBases.Add(new BottomElementVm(b));
-
             foreach (var pr in PipeRanges)
+            {
+                pr.AttachManholeFamily(FamilyById(pr.Model.ManholeFamilyId));
                 foreach (var tier in pr.DepthTiers)
                     ResolveBaseName(tier);
+            }
+            RebuildAvailableBases();
+        }
+
+        /// <summary>Taban list of the selected range = the Tabans of its Baca Aile only (one family
+        /// per range). Empty until a Baca Aile is chosen.</summary>
+        private void RebuildAvailableBases()
+        {
+            AvailableBases.Clear();
+            var fam = FamilyById(_selectedPipeRange?.Model.ManholeFamilyId ?? Guid.Empty);
+            if (fam == null) return;
+            foreach (var c in fam.Components)
+                if (c is BottomElementComponent b) AvailableBases.Add(new BottomElementVm(b));
+        }
+
+        private ComponentFamily FamilyById(Guid id)
+        {
+            if (id == Guid.Empty) return null;
+            foreach (var f in _catalog.Families) if (f.Id == id) return f;
+            return null;
+        }
+
+        private void OnRangeManholeFamilyChanged(object sender, EventArgs e)
+        {
+            var pr = sender as PipeRangeRuleVm;
+            if (pr == null) return;
+            foreach (var tier in pr.DepthTiers) ResolveBaseName(tier);   // re-flag tiers of another family
+            if (pr == _selectedPipeRange) RebuildAvailableBases();
         }
 
         /// <summary>Replaces the pipe catalog; rebuilds all PipeRangeRule VMs so their
@@ -129,23 +162,77 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
         private PipeRangeRuleVm BuildVm(PipeRangeRule model)
         {
+            // Ranges saved before "Baca Aile" existed: adopt the single family their Tabans come from
+            // (stays empty when the tiers mix families — Kaydet then asks for it to be fixed).
+            if (model.ManholeFamilyId == Guid.Empty)
+                model.ManholeFamilyId = _catalog.ResolveManholeFamilyId(model);
+
             var vm = new PipeRangeRuleVm(model, _pipeCatalog, _catalog.SystemTypes);
+            vm.AttachManholeFamily(FamilyById(model.ManholeFamilyId));
+            vm.ManholeFamilyChanged += OnRangeManholeFamilyChanged;
             foreach (var t in model.DepthTiers)
             {
                 var tvm = new DepthTierVm(t, ResolveBaseName);
-                ResolveBaseName(tvm);
                 vm.DepthTiers.Add(tvm);
+                ResolveBaseName(tvm, vm);   // the range isn't in PipeRanges yet — pass it explicitly
             }
             return vm;
         }
 
-        private void ResolveBaseName(DepthTierVm vm)
+        private void ResolveBaseName(DepthTierVm vm) => ResolveBaseName(vm, FindRangeOf(vm));
+
+        private void ResolveBaseName(DepthTierVm vm, PipeRangeRuleVm owner)
         {
             if (vm.IsCastInSitu) { vm.BaseName = "Yerinde Döküm"; return; }
             var comp = _catalog.FindById(vm.SelectedBaseId);
             vm.BaseName = comp != null ? comp.Name : (vm.SelectedBaseId == Guid.Empty ? "(seçilmedi)" : "?");
+
+            // Flag a Taban that isn't in its range's Baca Aile (legacy data / family changed later).
+            if (comp != null && owner != null && owner.Model.ManholeFamilyId != Guid.Empty &&
+                _catalog.FindFamilyOf(comp.Id)?.Id != owner.Model.ManholeFamilyId)
+                vm.BaseName = "⚠ " + comp.Name + " (ailede yok)";
             if (vm == _selectedDepthTier)
                 RebuildTierConstraints();
+        }
+
+        private PipeRangeRuleVm FindRangeOf(DepthTierVm tier)
+        {
+            foreach (var pr in PipeRanges)
+                if (pr.DepthTiers.Contains(tier)) return pr;
+            return _selectedPipeRange;   // tier just added to the selected range (not in its list yet)
+        }
+
+        /// <summary>
+        /// Kaydet guard (decision 2026-09-25): each range needs a Baca Aile when it has a precast tier,
+        /// every precast tier needs a Taban, and that Taban must belong to the range's Baca Aile.
+        /// Returns the problems found (empty = OK).
+        /// </summary>
+        private System.Collections.Generic.List<string> ValidateRules()
+        {
+            var issues = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < PipeRanges.Count; i++)
+            {
+                var pr    = PipeRanges[i];
+                string at = string.Format("Aralık {0} ({1})", i + 1, pr.PipeRangeDisplay);
+                bool hasPrecast = false;
+                foreach (var t in pr.Model.DepthTiers) if (!t.IsCastInSitu) { hasPrecast = true; break; }
+                if (hasPrecast && pr.Model.ManholeFamilyId == Guid.Empty)
+                    issues.Add(at + ": Baca Aile seçilmemiş.");
+
+                for (int k = 0; k < pr.Model.DepthTiers.Count; k++)
+                {
+                    var t = pr.Model.DepthTiers[k];
+                    if (t.IsCastInSitu) continue;
+                    string tat = string.Format("{0}, katman {1} ({2:0.0}–{3} m)", at, k + 1, t.MinDepthM,
+                        t.MaxDepthM <= 0 ? "∞" : t.MaxDepthM.ToString("0.0"));
+                    if (t.SelectedBaseId == Guid.Empty || _catalog.FindById(t.SelectedBaseId) == null)
+                        issues.Add(tat + ": Taban seçilmemiş.");
+                    else if (pr.Model.ManholeFamilyId != Guid.Empty &&
+                             _catalog.FindFamilyOf(t.SelectedBaseId)?.Id != pr.Model.ManholeFamilyId)
+                        issues.Add(tat + ": Taban, aralığın Baca Aile'sine ait değil.");
+                }
+            }
+            return issues;
         }
 
         private void RebuildTierConstraints()
@@ -242,6 +329,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
                 MinPipeMm            = src.MinPipeMm,
                 MaxPipeMm            = src.MaxPipeMm,
                 SelectedPipeFamilyId = src.SelectedPipeFamilyId,
+                ManholeFamilyId      = src.ManholeFamilyId,
                 MinPipeId            = src.MinPipeId,
                 MaxPipeId            = src.MaxPipeId
             };
@@ -325,6 +413,18 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
         private void OnSave(object _)
         {
+            var issues = ValidateRules();
+            if (issues.Count > 0)
+            {
+                const int show = 15;
+                string list = string.Join("\n• ", issues.GetRange(0, Math.Min(show, issues.Count)));
+                if (issues.Count > show) list += string.Format("\n… ve {0} sorun daha", issues.Count - show);
+                MessageBox.Show(
+                    "Kurallar kaydedilmedi — önce şunları düzeltin:\n\n• " + list +
+                    "\n\nHer boru aralığı tek bir Baca Aile'ye aittir; Yerinde Döküm olmayan her katmanda o aileden bir Taban seçilmelidir.",
+                    "Kural Doğrulama", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
             try
             {
                 MasterCatalogXmlManager.ExportPipeRules(_catalog,
@@ -401,6 +501,31 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
             _selectedPipeRange.Model.DepthTiers.Remove(_selectedDepthTier.Model);
             _selectedPipeRange.DepthTiers.Remove(_selectedDepthTier);
             SelectedDepthTier = null;
+        }
+
+        private void OnDuplicateTier(object _)
+        {
+            if (_selectedDepthTier == null || _selectedPipeRange == null) return;
+            var t = _selectedDepthTier.Model;
+            var clone = new DepthTierRule
+            {
+                MinDepthM      = t.MinDepthM,
+                MaxDepthM      = t.MaxDepthM,
+                SelectedBaseId = t.SelectedBaseId,
+                IsCastInSitu   = t.IsCastInSitu,
+                Notes          = t.Notes
+            };
+            foreach (var cc in t.ComponentConstraints)
+                clone.ComponentConstraints.Add(new ComponentTypeConstraint
+                { Role = cc.Role, MinCount = cc.MinCount, MaxCount = cc.MaxCount });
+
+            var tiers = _selectedPipeRange.Model.DepthTiers;
+            tiers.Insert(tiers.IndexOf(t) + 1, clone);
+            var vm = new DepthTierVm(clone, ResolveBaseName);
+            ResolveBaseName(vm);
+            _selectedPipeRange.DepthTiers.Insert(_selectedPipeRange.DepthTiers.IndexOf(_selectedDepthTier) + 1, vm);
+            Application.Current?.Dispatcher?.BeginInvoke(DispatcherPriority.Background,
+                new Action(() => SelectedDepthTier = vm));
         }
 
         // ── Min depth auto-calculation ────────────────────────────────────────

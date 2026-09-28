@@ -77,5 +77,36 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
                     if (c.Id == id) return c;
             return null;
         }
+
+        /// <summary>The family that owns <paramref name="componentId"/>, or null.</summary>
+        public ComponentFamily FindFamilyOf(Guid componentId)
+        {
+            if (componentId == Guid.Empty) return null;
+            foreach (var f in Families)
+                foreach (var c in f.Components)
+                    if (c.Id == componentId) return f;
+            return null;
+        }
+
+        /// <summary>
+        /// "Baca Aile" of a master pipe range: its explicit <see cref="PipeRangeRule.ManholeFamilyId"/>,
+        /// else — for ranges saved before that field existed — the single family owning every precast
+        /// tier's Taban. Guid.Empty when the tiers mix families, or none has a Taban (all cast-in-situ).
+        /// </summary>
+        public Guid ResolveManholeFamilyId(PipeRangeRule rule)
+        {
+            if (rule == null) return Guid.Empty;
+            if (rule.ManholeFamilyId != Guid.Empty) return rule.ManholeFamilyId;
+            Guid found = Guid.Empty;
+            foreach (var t in rule.DepthTiers ?? new List<DepthTierRule>())
+            {
+                if (t.IsCastInSitu) continue;
+                var fam = FindFamilyOf(t.SelectedBaseId);
+                if (fam == null) continue;
+                if (found == Guid.Empty) found = fam.Id;
+                else if (found != fam.Id) return Guid.Empty;   // mixed families
+            }
+            return found;
+        }
     }
 }

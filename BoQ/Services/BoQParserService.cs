@@ -193,7 +193,7 @@ namespace UrbanoMetraj.BoQ.Services
             var sections = ParseSections(doc, catDict, sysNames, nodes, notes, ed, activeSystems);
             Dbg(ed, $"\n         {sections.Count} section(s) calculated.");
 
-            ComputeManholeDepths(nodes, sections, notes, ed);
+            ComputeManholeDepths(nodes, sections, sysNames, notes, ed);
 
             // CAD Seçimi: restrict clash + output to the picked sections. Manhole
             // depths above were computed from ALL connected pipes first, so they stay
@@ -1128,7 +1128,7 @@ namespace UrbanoMetraj.BoQ.Services
                     if (trenchTier.BeddingLayers.Count > 0)
                     {
                         if (trenchTier.BeddingLayers.Any(l => l.IsFillToSurface))
-                            notes.Add("[WARN] Yataklama layer breakdown skipped (a fill-to-surface layer is configured) — reporting combined total only.");
+                            notes.Add(NoteMarker.Info + " Yataklama katman ayrıntısı atlandı (yüzeye-doldur katmanı tanımlı) — yalnızca birleşik toplam raporlanıyor. (Hesap geçerli.)");
                         else
                             beddingSplits = ComputeLayerRatios(
                                 trenchTier.BeddingLayers.Select(l => (l.LayerName, l.MaterialType, l.ThicknessM)).ToList(),
@@ -1323,11 +1323,11 @@ namespace UrbanoMetraj.BoQ.Services
             }
 
             if (missingCatalogCount > 0)
-                notes.Add($"[WARN] {missingCatalogCount} boru kesiti için Urbano katalog kaydı bulunamadı.");
+                notes.Add($"{NoteMarker.Warning} {missingCatalogCount} boru kesiti için Urbano katalog kaydı bulunamadı.");
             if (missingTrenchRuleCount > 0)
-                notes.Add($"[WARN] {missingTrenchRuleCount} boru kesiti için Hendek Kataloğu kuralı bulunamadı — varsayılan hendek boyutları kullanıldı.");
+                notes.Add($"{NoteMarker.Warning} {missingTrenchRuleCount} boru kesiti için Hendek Kataloğu kuralı bulunamadı — varsayılan hendek boyutları kullanıldı.");
             if (unlinkedPipeCount > 0)
-                notes.Add($"[WARN] {unlinkedPipeCount} boru kesiti Tür Eşleştirme'de bağlı değil — Poz No/Sınıf boş kalacak ve bağlı bacalar çap/malzeme listesini çözemeyebilir.");
+                notes.Add($"{NoteMarker.Warning} {unlinkedPipeCount} boru kesiti Tür Eşleştirme'de bağlı değil — Poz No/Sınıf boş kalacak ve bağlı bacalar çap/malzeme listesini çözemeyebilir.");
 
             return result;
         }
@@ -1492,11 +1492,23 @@ namespace UrbanoMetraj.BoQ.Services
         private static void ComputeManholeDepths(
             Dictionary<string, NodeInfo> nodes,
             List<SectionInfo>            sections,
+            Dictionary<int, string>      sysNames,
             List<string>                 notes,
             Editor ed)
         {
             foreach (var n in nodes.Values)
                 n.Depth = 0;
+
+            // BASINÇLI networks have no manholes — skip their nodes entirely so no manhole depth is
+            // computed and no Dolgu/Kazı "invalid level" warning is raised for them. The pipe-trench
+            // depth (SectionInfo.DepthToInv*/TrueDepth*) is computed in ParseSections and is untouched.
+            var basincliNodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var nd in nodes.Values)
+            {
+                string sn = sysNames != null && sysNames.ContainsKey(nd.SystemId)
+                    ? sysNames[nd.SystemId] : $"System_{nd.SystemId}";
+                if (ProjectRulesStore.IsBasincli(sn)) basincliNodes.Add(nd.Guid);
+            }
 
             // Collect pipe-invert elevations (with each pipe's own wall thickness)
             // that arrive at each node.
@@ -1523,6 +1535,9 @@ namespace UrbanoMetraj.BoQ.Services
             // and answers a different question: ring-stack height, not dig depth).
             foreach (var nd in nodes.Values)
             {
+                if (basincliNodes.Contains(nd.Guid))
+                    continue;   // pressure network — no manhole, no depth/warning
+
                 if (!invertsByNode.ContainsKey(nd.Guid) ||
                     invertsByNode[nd.Guid].Count == 0)
                     continue;
@@ -1748,7 +1763,15 @@ namespace UrbanoMetraj.BoQ.Services
                     });
                 }
 
-                foreach (var nd in nodes.Values
+                // BASINÇLI (pressure / non-gravity) networks have no manholes: emit none, so the
+                // whole downstream manhole pipeline (Manhole AI stacking, excav overlap, manhole
+                // rows/sheet, pipe↔manhole net-length linking and every manhole-linking warning)
+                // sees nothing to do. Pipe items above are unaffected — the pipe-trench geometry is
+                // pipe-level and already computed. Depths for these nodes were likewise skipped in
+                // ComputeManholeDepths, so no spurious Dolgu/Kazı warnings were raised either.
+                bool isBasincli = ProjectRulesStore.IsBasincli(sysName);
+
+                foreach (var nd in isBasincli ? Enumerable.Empty<NodeInfo>() : nodes.Values
                     .Where(n => n.SystemId == sid)
                     .OrderBy(n => n.Name))
                 {

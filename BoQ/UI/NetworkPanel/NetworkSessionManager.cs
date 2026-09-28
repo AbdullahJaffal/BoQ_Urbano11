@@ -135,6 +135,10 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
         /// </summary>
         public static void InitializeFromDrawing(Database db)
         {
+            // Land any queued palette changes on their drawing before the state
+            // and layer cache are replaced.
+            FlushPending();
+
             _suppressSave = true;
             try
             {
@@ -253,7 +257,7 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
             catch { /* cache build failure is non-fatal; toggles will be no-ops */ }
         }
 
-        // ── Layer visibility (cache-driven) ───────────────────────────────────
+        // ── Layer visibility (cache-driven, DEFERRED) ─────────────────────────
 
         private static void ApplyLayerVisibility(string networkId, bool visible)
         {
@@ -262,12 +266,11 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
         }
 
         /// <summary>
-        /// Turns the layers of every supplied network on/off inside a <b>single</b>
-        /// document lock + transaction, followed by <b>one</b> Editor.Regen() at the
-        /// end. This is what keeps the [TÜMÜ] master toggle cheap: the old per-network
-        /// path opened a fresh transaction and issued a Regen for each network, so
-        /// N networks meant N full-drawing regens — the visible flicker/heaviness.
-        /// The layer outcome is identical to calling the single-network path per id.
+        /// Queues the layers of EVERY supplied network to be turned on/off. Nothing
+        /// touches the drawing here: palette clicks only change the in-memory state
+        /// and the palette rows, and the drawing is updated in ONE batch by
+        /// <see cref="FlushPending"/> (see "Deferred apply" below). Last write per
+        /// network wins, so on/off/on between two flushes costs nothing.
         /// </summary>
         private static void ApplyLayerVisibilityBatch(IEnumerable<string> networkIds, bool visible)
         {
@@ -275,21 +278,133 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
-            var db = doc.Database;
 
+            bool any = false;
+            foreach (var networkId in networkIds)
+            {
+                if (string.IsNullOrEmpty(networkId)) continue;
+                _pendingLayers[networkId] = visible;
+                any = true;
+            }
+            if (any) MarkPending(doc);
+        }
+
+        // ── Deferred apply (palette → drawing) ────────────────────────────────
+        //
+        // Why: the old path committed the layer change AND issued a full
+        // Editor.Regen() on EVERY palette click. Regen rebuilds the display of
+        // every entity in the drawing (tens of thousands in an Urbano DWG), so
+        // each click froze AutoCAD. Turning a layer on/off does not need a Regen
+        // (only freeze/thaw does) — a screen update is enough.
+        //
+        // How: clicks only queue work. FlushPending pushes all queued layer
+        // changes + the NOD UI-state save in ONE lock + transaction, followed by
+        // ONE UpdateScreen, when the first of these happens:
+        //   • the mouse leaves the palette (NetworkPaletteControl.MouseLeave) —
+        //     i.e. before the user can click anywhere in the drawing;
+        //   • an idle safety-net timer fires while the pointer is NOT over the
+        //     palette (covers a missed MouseLeave);
+        //   • any command is about to start (CommandWillStart) — so commands and
+        //     sibling plugins reading URBANOLOCK_UI_STATE always see fresh state;
+        //   • the document is being deactivated or closed;
+        //   • the palette is re-initialised for another drawing.
+        // Same mechanism as UrbanoLock.UI.UrbanoSessionManager.
+
+        // Network → desired visibility, waiting to be pushed to the drawing.
+        private static readonly Dictionary<string, bool> _pendingLayers =
+            new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        // UI state (Known/Active/Visible) waiting to be written to the NOD.
+        private static bool _pendingSave;
+
+        // The document the pending work belongs to (the layer cache is per drawing).
+        private static Document _pendingDoc;
+
+        private static bool _flushing;
+
+        private static System.Windows.Threading.DispatcherTimer _flushTimer;
+        private const int FlushIdleMs = 1500;
+
+        private static readonly HashSet<Document> _hookedDocs = new HashSet<Document>();
+        private static bool _docManagerHooked;
+
+        /// <summary>
+        /// Set by the palette control: returns true while the pointer is over the
+        /// palette. The idle timer never flushes while this is true, so the drawing
+        /// only updates once the user has left the panel.
+        /// </summary>
+        public static Func<bool> IsPointerOverPanel;
+
+        /// <summary>True when palette changes are queued but not yet in the drawing.</summary>
+        public static bool HasPending => _pendingDoc != null;
+
+        private static void MarkPending(Document doc)
+        {
+            // Pending work belongs to exactly one drawing — push the old batch first.
+            if (_pendingDoc != null && _pendingDoc != doc) FlushPending();
+
+            _pendingDoc = doc;
+            EnsureDocumentHooks(doc);
+
+            if (_flushTimer == null)
+            {
+                _flushTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(FlushIdleMs)
+                };
+                _flushTimer.Tick += OnFlushTimerTick;
+            }
+            _flushTimer.Stop();
+            _flushTimer.Start();
+        }
+
+        private static void OnFlushTimerTick(object sender, EventArgs e)
+        {
+            bool overPanel = false;
+            try { overPanel = IsPointerOverPanel?.Invoke() ?? false; } catch { }
+            if (overPanel) return;   // keep waiting — MouseLeave will flush
+            FlushPending();
+        }
+
+        /// <summary>
+        /// Pushes every queued palette change to the drawing: layer on/off for the
+        /// queued networks and the NOD UI-state save, in one document lock + one
+        /// transaction, followed by one cheap screen update (no Regen).
+        /// Safe to call at any time; a no-op when nothing is pending.
+        /// </summary>
+        public static void FlushPending()
+        {
+            if (_flushing) return;
+            _flushTimer?.Stop();
+
+            var doc = _pendingDoc;
+            if (doc == null) return;
+
+            // Snapshot + clear first so a re-entrant call is a no-op.
+            var layers = new Dictionary<string, bool>(_pendingLayers, StringComparer.OrdinalIgnoreCase);
+            bool save  = _pendingSave;
+            _pendingLayers.Clear();
+            _pendingSave = false;
+            _pendingDoc  = null;
+
+            if (!IsDocumentOpen(doc)) return;
+            if (layers.Count == 0 && !save) return;
+
+            _flushing = true;
             try
             {
+                var db = doc.Database;
+                bool anyChanged = false;
+
                 using (doc.LockDocument())
                 using (var tr = db.TransactionManager.StartOpenCloseTransaction())
                 {
-                    bool anyChanged = false;
-
-                    foreach (var networkId in networkIds)
+                    foreach (var kv in layers)
                     {
-                        if (string.IsNullOrEmpty(networkId)) continue;
-                        if (!_layerCache.TryGetValue(networkId, out var layerIds) || layerIds.Count == 0)
+                        if (!_layerCache.TryGetValue(kv.Key, out var layerIds) || layerIds.Count == 0)
                             continue;
 
+                        bool visible = kv.Value;
                         foreach (var id in layerIds)
                         {
                             if (id.IsNull || !id.IsValid || id.IsErased) continue;
@@ -307,11 +422,67 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
                         }
                     }
 
+                    if (save) WriteUiState(tr, db);
+
                     tr.Commit();
-                    if (anyChanged) try { doc.Editor.Regen(); } catch { }
+                }
+
+                // On/off only needs a redraw, not a Regen (the UrbanoLabels
+                // UpdateScreen approach). Regen is reserved for freeze/thaw.
+                if (anyChanged)
+                {
+                    try { doc.Editor.UpdateScreen(); } catch { }
+                    try { Application.UpdateScreen(); } catch { }
                 }
             }
             catch { /* best-effort; silently skip if document is busy */ }
+            finally
+            {
+                _flushing = false;
+            }
+        }
+
+        private static bool IsDocumentOpen(Document doc)
+        {
+            if (doc == null) return false;
+            try
+            {
+                foreach (Document d in Application.DocumentManager)
+                    if (d == doc) return !doc.IsDisposed;
+            }
+            catch { }
+            return false;
+        }
+
+        private static void EnsureDocumentHooks(Document doc)
+        {
+            if (!_docManagerHooked)
+            {
+                var dm = Application.DocumentManager;
+                dm.DocumentToBeDeactivated += (s, e) => FlushPending();
+                dm.DocumentToBeDestroyed   += OnDocumentToBeDestroyed;
+                _docManagerHooked = true;
+            }
+
+            if (doc != null && _hookedDocs.Add(doc))
+            {
+                doc.CommandWillStart   += (s, e) => FlushPending();
+                doc.BeginDocumentClose += (s, e) => FlushPending();
+            }
+        }
+
+        private static void OnDocumentToBeDestroyed(object sender, DocumentCollectionEventArgs e)
+        {
+            if (e.Document == null) return;
+            // The drawing is going away — its queued work has nowhere to land.
+            if (e.Document == _pendingDoc)
+            {
+                _flushTimer?.Stop();
+                _pendingLayers.Clear();
+                _pendingSave = false;
+                _pendingDoc  = null;
+            }
+            _hookedDocs.Remove(e.Document);
         }
 
         // ── NOD: network list (shared with UrbanoLock) ────────────────────────
@@ -344,29 +515,16 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
 
         private const string NodUiStateKey = "URBANOLOCK_UI_STATE";
 
-        private static void SaveUiStateToNod(Database db)
+        /// <summary>
+        /// Writes the current checkbox + eye state to the shared NOD entry. Runs
+        /// inside the <see cref="FlushPending"/> transaction. Caller commits.
+        /// </summary>
+        private static void WriteUiState(Transaction tr, Database db)
         {
-            if (db == null) return;
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-
-            string knownCsv   = string.Join(",", _known);
-            string activeCsv  = string.Join(",", _active);
-            string visibleCsv = string.Join(",", _visible);
-
-            try
-            {
-                using (doc.LockDocument())
-                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
-                {
-                    WriteXrecord(tr, db, NodUiStateKey,
-                        new TypedValue((int)DxfCode.Text, "KNOWN="   + knownCsv),
-                        new TypedValue((int)DxfCode.Text, "ACTIVE="  + activeCsv),
-                        new TypedValue((int)DxfCode.Text, "VISIBLE=" + visibleCsv));
-                    tr.Commit();
-                }
-            }
-            catch { /* non-fatal */ }
+            WriteXrecord(tr, db, NodUiStateKey,
+                new TypedValue((int)DxfCode.Text, "KNOWN="   + string.Join(",", _known)),
+                new TypedValue((int)DxfCode.Text, "ACTIVE="  + string.Join(",", _active)),
+                new TypedValue((int)DxfCode.Text, "VISIBLE=" + string.Join(",", _visible)));
         }
 
         private static UiStateRecord LoadUiStateFromNod(Database db)
@@ -411,8 +569,12 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
         {
             StateChanged?.Invoke(null, EventArgs.Empty);
 
-            if (!_suppressSave)
-                SaveUiStateToNod(Application.DocumentManager.MdiActiveDocument?.Database);
+            // UI state is queued for the NOD and written at the next FlushPending.
+            if (_suppressSave) return;
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            _pendingSave = true;
+            MarkPending(doc);
         }
 
         private static void WriteXrecord(

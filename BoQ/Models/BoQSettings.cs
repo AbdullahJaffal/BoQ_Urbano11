@@ -195,6 +195,15 @@ namespace UrbanoMetraj.BoQ.Models
         /// </summary>
         public bool BacaKaziDisCapKullan { get; set; } = true;
 
+        /// <summary>
+        /// When true, a pre-cast manhole whose depth is below the minimum buildable pre-cast
+        /// height (mandatory pieces at their smallest heights still overshoot — see
+        /// ManholeStackResult.DepthInsufficient) is automatically treated as CAST-IN-PLACE
+        /// (Yerinde Döküm) instead of emitting a "derinlik yetersiz" warning. Default false
+        /// (keep the legacy behaviour: flag it as a constraint violation, stay pre-cast).
+        /// </summary>
+        public bool MinAltiYerindeDokum { get; set; } = false;
+
         /// <summary>Selected surface (Arazi1…Arazi10) used for the manhole "Kırmızı Kot".</summary>
         public string BacaKirmiziKotSurface { get; set; } = "Arazi1";
 

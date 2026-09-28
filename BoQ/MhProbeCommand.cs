@@ -68,6 +68,7 @@ namespace UrbanoMetraj.BoQ
             sta.Start();
 
             InputBlocker.Show();
+            InputBlockerWatchdog.Arm(45000);   // safety valve — see InputBlockerWatchdog
             doc.SendStringToExecute("_ARS_EXPORT_XML\n", true, false, true);
         }
 

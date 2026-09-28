@@ -259,7 +259,19 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
         public double SlopeRatio
         {
             get => _model.SlopeRatio;
-            set { _model.SlopeRatio = value; OnPropertyChanged(); }
+            set { _model.SlopeRatio = value; OnPropertyChanged(); OnPropertyChanged(nameof(SevX)); }
+        }
+
+        /// <summary>
+        /// Display-only reciprocal proxy bound by the "Şev (1:x)" grid column. The grid binds
+        /// to this VM (not the model), so the SevX proxy MUST exist here too — delegating to
+        /// <see cref="PipeTrenchDepthTier.SevX"/>. Without it the binding path is unresolvable
+        /// and committing a cell edit crashes the AutoCAD host.
+        /// </summary>
+        public double SevX
+        {
+            get => _model.SevX;
+            set { _model.SevX = value; OnPropertyChanged(); OnPropertyChanged(nameof(SlopeRatio)); }
         }
 
         public bool RequiresShoring
@@ -876,7 +888,7 @@ namespace UrbanoMetraj.BoQ.PipeTrenchCatalog.UI.ViewModels
         private void OnDeleteRule(object _)
         {
             if (_selectedRule == null) return;
-            if (!ValidateCurrentRule("Sil")) return;
+            // No ValidateCurrentRule here: the rule being deleted doesn't need to be complete.
             _backingRules.Remove(_selectedRule.Model);
             Rules.Remove(_selectedRule);
             SelectedRule = null;

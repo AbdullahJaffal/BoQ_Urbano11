@@ -116,6 +116,10 @@ namespace UrbanoMetraj.BoQ
             staThread.Start();
 
             InputBlocker.Show();
+            // Safety valve: force-hide the blocker if the automation gets stuck (e.g. a modal
+            // popup it could not dismiss starves the Idle-driven Hide). DialogTimeout is 30 s, so
+            // 45 s only fires when genuinely wedged, never during a normal run.
+            InputBlockerWatchdog.Arm(45000);
             doc.SendStringToExecute("_ARS_EXPORT_XML\n", true, false, true);
         }
 
@@ -191,6 +195,9 @@ namespace UrbanoMetraj.BoQ
             catch (Exception ex)
             {
                 ed.WriteMessage($"\n[BoQ ERROR] {ex.GetType().Name}: {ex.Message}\n");
+                for (var inner = ex.InnerException; inner != null; inner = inner.InnerException)
+                    ed.WriteMessage($"[BoQ ERROR]  ↳ InnerException: {inner.GetType().FullName}: {inner.Message}\n");
+                ed.WriteMessage($"[BoQ ERROR]  Stack:\n{ex}\n");
             }
             finally
             {
@@ -533,24 +540,48 @@ namespace UrbanoMetraj.BoQ
 
                 if (report.DiscoveryNotes.Count > 0)
                 {
-                    string footer = ProjectRulesStore.IsRulesMode
+                    // Sort by severity (Error → Warning → Info) and pick the dialog icon/tone from
+                    // the highest level present, so a run that produced ONLY informational notes
+                    // (e.g. an ignored rounding gap) is shown calmly as info, not as a scary warning.
+                    var ordered = report.DiscoveryNotes
+                        .OrderBy(n => (int)NoteMarker.SeverityOf(n))
+                        .ToList();
+                    bool hasError   = ordered.Any(n => NoteMarker.SeverityOf(n) == NoteSeverity.Error);
+                    bool hasWarning = ordered.Any(n => NoteMarker.SeverityOf(n) == NoteSeverity.Warning);
+                    bool onlyInfo   = !hasError && !hasWarning;
+
+                    string guidance = ProjectRulesStore.IsRulesMode
                         ? "\n\nKurallar modu etkin. Eksikler için Proje Ayarları → Proje Kurulumu (DWG) → " +
                           "Kurallar'da her aktif ağ için: Boru ailesi/sınıfı, Baca ailesi ve Bağlantı " +
-                          "Kuralları'nı (özellikle her katmanın Baca Çapı'nı — o ailenin Taban çaplarından " +
+                          "Kuralları'nı (özellikle her katmanın Taban'ını — o ailenin Taban'larından " +
                           "biri olmalı) tamamlayın."
                         : "\n\nEksik eşleştirmeler nedeniyle Poz No/Sınıf, baca çapı veya Prefabrik Malzeme " +
                           "Listesi hatalı/eksik olabilir. Devam etmeden önce eşleştirmeleri Proje Ayarları'ndan " +
                           "(Tür Eşleştirme) ve Akıllı Montaj'dan (Baca Seçim Kuralları) tamamlamanız önerilir.";
+
+                    string intro = onlyInfo
+                        ? "Hesaplama tamamlandı. Aşağıdakiler yalnızca bilgilendirme amaçlıdır:\n\n"
+                        : "Hesaplama tamamlandı. Dikkat edilmesi gereken kalemler:\n\n";
+
+                    string footer = onlyInfo
+                        ? "\n\nℹ Bu kalemler hesabı VE malzeme listesini ETKİLEMEZ — sonuç geçerlidir."
+                        : guidance + "\n\nİşaretler:  ⛔ Hata   ⚠ Uyarı   ℹ Bilgi (hesabı etkilemez)";
+
                     MessageBox.Show(
-                        "Hesaplama tamamlandı, ancak bazı veriler eksik veya bağlı değil:\n\n" +
-                        string.Join("\n", report.DiscoveryNotes) + footer,
-                        "Eksik Eşleştirme Uyarısı",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        intro + string.Join("\n", ordered) + footer,
+                        onlyInfo ? "Hesaplama Tamamlandı — Bilgi" : "Hesaplama Uyarıları",
+                        MessageBoxButtons.OK,
+                        hasError ? MessageBoxIcon.Error
+                                 : hasWarning ? MessageBoxIcon.Warning
+                                              : MessageBoxIcon.Information);
                 }
             }
             catch (Exception ex)
             {
                 ed.WriteMessage($"\n[BoQ ERROR] {ex.GetType().Name}: {ex.Message}\n");
+                for (var inner = ex.InnerException; inner != null; inner = inner.InnerException)
+                    ed.WriteMessage($"[BoQ ERROR]  ↳ InnerException: {inner.GetType().FullName}: {inner.Message}\n");
+                ed.WriteMessage($"[BoQ ERROR]  Stack:\n{ex}\n");
             }
         }
 

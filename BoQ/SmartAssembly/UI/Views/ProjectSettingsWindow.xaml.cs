@@ -96,7 +96,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.Views
                 _currentSettings.KaziSeviyesi, _currentSettings.DolguSeviyesi,
                 _currentSettings.BacaKapakSeviyesi,
                 _currentSettings.RingFillMode, _currentSettings.NetLengthMode,
-                _currentSettings.MetrajDegiskenParcaBandM);
+                _currentSettings.MetrajDegiskenParcaBandM, _currentSettings.MinAltiYerindeDokum);
 
             _settingsHost.Child = _settingsControl;
 
@@ -135,6 +135,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.Views
             _currentSettings.RingFillMode                = _settingsControl.RingFillMode;
             _currentSettings.NetLengthMode               = _settingsControl.NetLengthMode;
             _currentSettings.MetrajDegiskenParcaBandM    = _settingsControl.MetrajDegiskenParcaBandM;
+            _currentSettings.MinAltiYerindeDokum         = _settingsControl.MinAltiYerindeDokum;
 
             try
             {

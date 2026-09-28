@@ -145,7 +145,8 @@ namespace UrbanoMetraj.BoQ.Services
                     I16((short)(settings.BacaBacaKaziHesapla ? 1 : 0)),
                     I16((short)(settings.BacaAltiParcaEklensin ? 1 : 0)),
                     I16((short)(settings.BacaKaziDisCapKullan ? 1 : 0)),
-                    Dbl(settings.MetrajDegiskenParcaBandM));
+                    Dbl(settings.MetrajDegiskenParcaBandM),
+                    I16((short)(settings.MinAltiYerindeDokum ? 1 : 0)));
 
                 // Manhole lookup by system name (first wins on duplicate names).
                 var sysByName = new Dictionary<string, SystemBoQ>(StringComparer.Ordinal);
@@ -309,7 +310,8 @@ namespace UrbanoMetraj.BoQ.Services
                 I16((short)(s.BacaBacaKaziHesapla ? 1 : 0)),
                 I16((short)(s.BacaAltiParcaEklensin ? 1 : 0)),
                 I16((short)(s.BacaKaziDisCapKullan ? 1 : 0)),
-                Dbl(s.MetrajDegiskenParcaBandM)
+                Dbl(s.MetrajDegiskenParcaBandM),
+                I16((short)(s.MinAltiYerindeDokum ? 1 : 0))
             };
         }
 
@@ -372,7 +374,9 @@ namespace UrbanoMetraj.BoQ.Services
                     // Absent in older DWGs → default true (Dış Çap), matching BoQSettings.
                     BacaKaziDisCapKullan = mi >= meta.Length || ReadI16(meta, ref mi) != 0,
                     // Metraj variable-piece height band (m). Absent in older DWGs → 0.5.
-                    MetrajDegiskenParcaBandM = mi < meta.Length ? ReadDbl(meta, ref mi) : 0.5
+                    MetrajDegiskenParcaBandM = mi < meta.Length ? ReadDbl(meta, ref mi) : 0.5,
+                    // "Min altı Yerinde Döküm" toggle. Absent in older DWGs → false.
+                    MinAltiYerindeDokum = mi < meta.Length && ReadI16(meta, ref mi) != 0
                 };
 
                 var report = new BoQReport();
@@ -587,6 +591,15 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             }
 
+            // Appended AFTER the Alt Temel Katmanları block — the per-manhole
+            // "forced cast-in-place" flag (Yerinde Döküm exception / cast-in-situ
+            // tier / Min-altı setting). Needed so the reload path (URBANO_BOQ_VIEW,
+            // which does NOT re-run ManholeAIService.Process) can still route the
+            // manhole to the concrete BOM instead of mistaking StackPreCast==null
+            // for a genuine catalog miss.
+            foreach (var m in mhs)
+                tvs.Add(I16(m.ForcedCastInPlace ? (short)1 : (short)0));
+
             MakeXRecord(tr, netDict, K_NETWORK_META, tvs.ToArray());
         }
 
@@ -720,6 +733,12 @@ namespace UrbanoMetraj.BoQ.Services
                 }
                 m.ResolvedSubBaseLayers = layers;
             }
+
+            // Trailing forced-cast-in-place block (absent in old DWGs — ReadI16
+            // gracefully returns 0 past the end of tvs, so ForcedCastInPlace stays
+            // false and the manhole is treated as pre-cast exactly as before).
+            foreach (var m in sys.Manholes)
+                m.ForcedCastInPlace = ReadI16(tvs, ref i) != 0;
 
             return sys;
         }

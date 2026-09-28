@@ -78,20 +78,23 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
                 ? model.PipeSinif : null;
 
             _selectedManholeFamily = _manholeFamilies?.FirstOrDefault(f => f.Id == model.ManholeFamilyId);
-            RebuildManholeDiameters();
+            RebuildTabans();
             RebuildKaziFilters();
 
             // Connection rules (baca seçim).
             foreach (var r in Model.ConnectionRules)
-                ConnectionRules.Add(new ConnRuleVm(r));
+                ConnectionRules.Add(new ConnRuleVm(r, TabanDisplay));
 
             RebuildPieceRows();
 
-            ImportConnRulesCommand = new RelayCommand(_ => ImportConnRules(), _ => _masterCatalog?.MasterPipeRules != null);
+            ImportConnRulesCommand = new RelayCommand(_ => ImportConnRules(),
+                _ => _masterCatalog?.MasterPipeRules != null && _selectedPipeFamily != null && _selectedManholeFamily != null);
             AddConnRuleCommand     = new RelayCommand(_ => AddConnRule());
             DeleteConnRuleCommand  = new RelayCommand(_ => DeleteConnRule(), _ => _selectedConnRule != null);
             AddTierCommand         = new RelayCommand(_ => AddTier(),        _ => _selectedConnRule != null);
             DeleteTierCommand      = new RelayCommand(_ => DeleteTier(),     _ => _selectedTier != null);
+            DuplicateConnRuleCommand = new RelayCommand(_ => DuplicateConnRule(), _ => _selectedConnRule != null);
+            DuplicateTierCommand     = new RelayCommand(_ => DuplicateTier(),     _ => _selectedTier != null);
             InitPieceCommands();
         }
 
@@ -99,11 +102,31 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
 
         public bool IsActive { get; }
 
+        /// <summary>Pressure / non-gravity network (BASINÇLI): the calc skips this network's whole
+        /// manhole pipeline and keeps only the pipe-trench geometry. See <see cref="NetworkRule.IsBasincli"/>.</summary>
+        public bool IsBasincli
+        {
+            get => Model.IsBasincli;
+            set
+            {
+                if (Model.IsBasincli == value) return;
+                Model.IsBasincli = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(RuleSummary));
+            }
+        }
+
         /// <summary>Short status shown per row: which pipe/manhole selections are still missing.</summary>
         public string RuleSummary
         {
             get
             {
+                if (Model.IsBasincli)
+                    return "BASINÇLI (mansız) — " + (_selectedPipeFamily == null
+                        ? "Boru: —"
+                        : "Boru: " + _selectedPipeFamily.FamilyName +
+                          (string.IsNullOrEmpty(_selectedSinif) ? "" : " / " + _selectedSinif));
+
                 var parts = new List<string>();
                 parts.Add(_selectedPipeFamily == null
                     ? "Boru: —"
@@ -158,7 +181,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             {
                 if (!Set(ref _selectedManholeFamily, value)) return;
                 Model.ManholeFamilyId = value?.Id ?? Guid.Empty;
-                RebuildManholeDiameters();
+                RebuildTabans();
                 RebuildPieceRows();
                 OnPropertyChanged(nameof(RuleSummary));
             }
@@ -231,27 +254,42 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
         }
 
         /// <summary>
-        /// Distinct top-opening diameters (mm) of the selected family's Taban pieces — the only
-        /// values a connection-rule "Baca Çapı" may take (it's a catalog choice, not a free number).
+        /// The selected family's Taban pieces (by name, as in the catalog's "Seçilen Taban") — the only
+        /// values a connection-rule tier's Taban may take.
         /// </summary>
-        public ObservableCollection<double> AvailableManholeDiameters { get; } = new ObservableCollection<double>();
+        public ObservableCollection<BottomElementVm> AvailableTabans { get; } = new ObservableCollection<BottomElementVm>();
 
-        private void RebuildManholeDiameters()
+        private void RebuildTabans()
         {
-            AvailableManholeDiameters.Clear();
-            if (_selectedManholeFamily == null) return;
-            var dias = _selectedManholeFamily.Components
-                .OfType<BottomElementComponent>()
-                .Select(b => b.TopOpeningDiameterMm)
-                .Where(d => d > 0)
-                .Distinct()
-                .OrderBy(d => d);
-            foreach (var d in dias) AvailableManholeDiameters.Add(d);
+            AvailableTabans.Clear();
+            foreach (var b in TabansOf(_selectedManholeFamily))
+                AvailableTabans.Add(new BottomElementVm(b));
+
+            // The tiers' display text depends on the family (a Taban from another family is flagged).
+            foreach (var r in ConnectionRules)
+                foreach (var t in r.Tiers) t.RefreshTabanDisplay();
         }
 
-        // ── Piece exclusions ("Kullanımdan parça çıkar") — user-added rows per (family, diameter) ──
-        public ObservableCollection<PieceRowVm>      PieceRows            { get; } = new ObservableCollection<PieceRowVm>();
-        public ObservableCollection<FamilyDiaOption> AvailablePieceOptions { get; } = new ObservableCollection<FamilyDiaOption>();
+        internal static IEnumerable<BottomElementComponent> TabansOf(ComponentFamily fam)
+            => fam == null
+                ? Enumerable.Empty<BottomElementComponent>()
+                : fam.Components.OfType<BottomElementComponent>()
+                     .OrderBy(b => b.TopOpeningDiameterMm).ThenBy(b => b.Name);
+
+        /// <summary>Display text of a tier's Taban: catalog-style "Ad — H mm"; flagged when it is not
+        /// part of this network's family (e.g. imported from a catalog rule of another family).</summary>
+        private string TabanDisplay(Guid tabanId)
+        {
+            if (tabanId == Guid.Empty) return "(seçilmedi)";
+            var inFam = TabansOf(_selectedManholeFamily).FirstOrDefault(b => b.Id == tabanId);
+            if (inFam != null) return new BottomElementVm(inFam).Display;
+            var any = _masterCatalog?.FindById(tabanId) as BottomElementComponent;
+            return any != null ? "⚠ " + any.Name + " (ailede yok)" : "⚠ (katalogda yok)";
+        }
+
+        // ── Piece exclusions ("Kullanımdan parça çıkar") — user-added rows per (family, Taban) ──
+        public ObservableCollection<PieceRowVm>        PieceRows             { get; } = new ObservableCollection<PieceRowVm>();
+        public ObservableCollection<FamilyTabanOption> AvailablePieceOptions { get; } = new ObservableCollection<FamilyTabanOption>();
 
         private const double DiaTol = 1e-6;
 
@@ -263,8 +301,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             (ComponentRole.Cover,         "Kapak"),
         };
 
-        private FamilyDiaOption _selectedPieceOption;
-        public FamilyDiaOption SelectedPieceOption { get => _selectedPieceOption; set => Set(ref _selectedPieceOption, value); }
+        private FamilyTabanOption _selectedPieceOption;
+        public FamilyTabanOption SelectedPieceOption { get => _selectedPieceOption; set => Set(ref _selectedPieceOption, value); }
 
         public ICommand AddPieceRowCommand    { get; private set; }
         public ICommand DeletePieceRowCommand { get; private set; }
@@ -290,7 +328,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
         }
 
         /// <summary>Rebuilds the exclusion rows (from the model) and the "add" options (families in use ×
-        /// their Taban diameters, minus rows already added). Called on family or exception changes.</summary>
+        /// their Tabans, minus rows already added). Called on family or exception changes.</summary>
         public void RebuildPieceRows()
         {
             PieceRows.Clear();
@@ -298,10 +336,12 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             {
                 var fam = _manholeFamilies?.FirstOrDefault(f => f.Id == row.ManholeFamilyId);
                 if (fam == null) continue;   // family no longer exists
-                var vm = new PieceRowVm(row, fam.Name);
+                var taban = TabansOf(fam).FirstOrDefault(b => b.Id == row.TabanId);
+                if (taban == null) continue; // Taban no longer in the family
+                var vm = new PieceRowVm(row, fam.Name, new BottomElementVm(taban).Display);
                 foreach (var (role, name) in _exclRoles)
                 {
-                    var heights = HeightsForRole(fam, role, row.ManholeDiameterMm);
+                    var heights = HeightsForRole(fam, role, taban.TopOpeningDiameterMm);
                     if (heights.Count == 0) continue;
                     var pe = row.Roles.FirstOrDefault(x => x.Role == role);
                     var allowed = new HashSet<double>(pe?.AllowedHeightsMm ?? Enumerable.Empty<double>());
@@ -318,19 +358,14 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             AvailablePieceOptions.Clear();
             var used = new HashSet<string>(
                 (Model.PieceExclusionRows ?? new List<PieceExclusionRow>())
-                    .Select(r => r.ManholeFamilyId + "|" + r.ManholeDiameterMm.ToString("0.###")));
+                    .Select(r => r.ManholeFamilyId + "|" + r.TabanId));
             foreach (var fam in FamiliesInUse())
-            {
-                var dias = fam.Components.OfType<BottomElementComponent>()
-                    .Select(b => b.TopOpeningDiameterMm).Where(d => d > 0)
-                    .Distinct().OrderBy(d => d);
-                foreach (var d in dias)
+                foreach (var b in TabansOf(fam))
                 {
-                    if (used.Contains(fam.Id + "|" + d.ToString("0.###"))) continue;
-                    AvailablePieceOptions.Add(new FamilyDiaOption
-                    { FamilyId = fam.Id, FamilyName = fam.Name, DiameterMm = d });
+                    if (used.Contains(fam.Id + "|" + b.Id)) continue;
+                    AvailablePieceOptions.Add(new FamilyTabanOption
+                    { FamilyId = fam.Id, FamilyName = fam.Name, TabanId = b.Id, TabanDisplay = new BottomElementVm(b).Display });
                 }
-            }
             SelectedPieceOption = AvailablePieceOptions.FirstOrDefault();
         }
 
@@ -339,8 +374,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             if (_selectedPieceOption == null) return;
             Model.PieceExclusionRows.Add(new PieceExclusionRow
             {
-                ManholeFamilyId   = _selectedPieceOption.FamilyId,
-                ManholeDiameterMm = _selectedPieceOption.DiameterMm
+                ManholeFamilyId = _selectedPieceOption.FamilyId,
+                TabanId         = _selectedPieceOption.TabanId
             });
             RebuildPieceRows();
         }
@@ -442,31 +477,76 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
         public ICommand DeleteConnRuleCommand  { get; }
         public ICommand AddTierCommand         { get; }
         public ICommand DeleteTierCommand      { get; }
+        public ICommand DuplicateConnRuleCommand { get; }
+        public ICommand DuplicateTierCommand     { get; }
 
+        /// <summary>
+        /// Copies the master catalog's pipe ranges that belong to THIS network: Boru Aile = the
+        /// network's pipe family (a range with no pipe family applies to every family) AND Baca Aile =
+        /// the network's manhole family (decision 2026-09-25). A range is taken whole — its
+        /// Yerinde Döküm tiers included — so no depth gaps appear. Legacy ranges whose tiers mix
+        /// families (no resolvable Baca Aile) are skipped and reported.
+        /// </summary>
         private void ImportConnRules()
         {
-            if (_masterCatalog?.MasterPipeRules == null) return;
+            if (_masterCatalog?.MasterPipeRules == null || _selectedPipeFamily == null || _selectedManholeFamily == null)
+                return;
+            Guid pipeFamId = _selectedPipeFamily.Id;
+            Guid mhFamId   = _selectedManholeFamily.Id;
+
+            var picked = new List<PipeRangeRule>();
+            int unresolved = 0;
+            foreach (var pr in _masterCatalog.MasterPipeRules)
+            {
+                var tiers = pr.DepthTiers ?? new List<DepthTierRule>();
+                if (tiers.Count == 0) continue;
+                if (pr.SelectedPipeFamilyId != Guid.Empty && pr.SelectedPipeFamilyId != pipeFamId) continue;
+
+                Guid rangeFam = _masterCatalog.ResolveManholeFamilyId(pr);
+                if (rangeFam == Guid.Empty)
+                {
+                    // All-Yerinde-Döküm range: no precast piece → valid for any manhole family.
+                    if (tiers.All(t => t.IsCastInSitu)) picked.Add(pr);
+                    else unresolved++;   // tiers mix families → can't tell which network it belongs to
+                    continue;
+                }
+                if (rangeFam == mhFamId) picked.Add(pr);
+            }
+
+            string unresolvedNote = unresolved == 0 ? "" : string.Format(
+                "\n\n{0} aralık atlandı: katmanlarının Taban'ları birden fazla aileye ait (Baca Aile belirsiz). " +
+                "Akıllı Montaj → Baca Seçim Kuralları'nda düzeltin.", unresolved);
+
+            if (picked.Count == 0)
+            {
+                System.Windows.MessageBox.Show(
+                    string.Format("Bu aileye ait kural yok.\n\nBoru Aile: {0}\nBaca Aile: {1}\n\n" +
+                                  "Ana katalogda bu iki aileye ait bir boru aralığı bulunamadı; mevcut kurallar değiştirilmedi.",
+                                  _selectedPipeFamily.FamilyName, _selectedManholeFamily.Name) + unresolvedNote,
+                    "Katalogdan İçe Aktar", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                return;
+            }
+
             if (Model.ConnectionRules.Count > 0)
             {
                 var ans = System.Windows.MessageBox.Show(
-                    "Mevcut bağlantı kurallarının üzerine katalog kuralları kopyalansın mı?",
+                    string.Format("Mevcut bağlantı kurallarının üzerine katalogdaki {0} kural kopyalansın mı?", picked.Count),
                     "Onay", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
                 if (ans != System.Windows.MessageBoxResult.Yes) return;
             }
 
             Model.ConnectionRules.Clear();
-            foreach (var pr in _masterCatalog.MasterPipeRules)
+            foreach (var pr in picked)
             {
                 var rule = new ConnectionRule { MinPipeMm = pr.MinPipeMm, MaxPipeMm = pr.MaxPipeMm };
                 foreach (var dt in pr.DepthTiers ?? new List<DepthTierRule>())
                 {
-                    // Output = manhole diameter within the network family: seed it from the catalog
-                    // base this master tier referenced (its top-opening Ø), then editable per project.
-                    double diam = (_masterCatalog.FindById(dt.SelectedBaseId) as BottomElementComponent)?.TopOpeningDiameterMm ?? 0;
+                    // Output = the same Taban the master tier referenced, then editable per project
+                    // (flagged in the grid when it isn't part of this network's family).
                     var ct = new ConnDepthTier
                     {
                         MinDepthM = dt.MinDepthM, MaxDepthM = dt.MaxDepthM,
-                        ManholeDiameterMm = diam, IsCastInSitu = dt.IsCastInSitu, Notes = dt.Notes ?? ""
+                        TabanId = dt.SelectedBaseId, IsCastInSitu = dt.IsCastInSitu, Notes = dt.Notes ?? ""
                     };
                     foreach (var cc in dt.ComponentConstraints ?? new List<ComponentTypeConstraint>())
                         ct.ComponentConstraints.Add(new ComponentTypeConstraint
@@ -476,13 +556,18 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
                 Model.ConnectionRules.Add(rule);
             }
             RebuildConnRules();
+
+            if (unresolved > 0)
+                System.Windows.MessageBox.Show(
+                    string.Format("{0} kural içe aktarıldı.", picked.Count) + unresolvedNote,
+                    "Katalogdan İçe Aktar", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
         }
 
         private void AddConnRule()
         {
             var rule = new ConnectionRule();
             Model.ConnectionRules.Add(rule);
-            var vm = new ConnRuleVm(rule);
+            var vm = new ConnRuleVm(rule, TabanDisplay);
             ConnectionRules.Add(vm);
             SelectedConnRule = vm;
         }
@@ -500,7 +585,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             if (_selectedConnRule == null) return;
             var t = new ConnDepthTier();
             _selectedConnRule.Model.Tiers.Add(t);
-            var tvm = new ConnTierVm(t);
+            var tvm = new ConnTierVm(t, TabanDisplay);
             _selectedConnRule.Tiers.Add(tvm);
             SelectedTier = tvm;
         }
@@ -513,10 +598,46 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             SelectedTier = null;
         }
 
+        private void DuplicateConnRule()
+        {
+            if (_selectedConnRule == null) return;
+            var src  = _selectedConnRule.Model;
+            var copy = new ConnectionRule { MinPipeMm = src.MinPipeMm, MaxPipeMm = src.MaxPipeMm };
+            foreach (var t in src.Tiers) copy.Tiers.Add(CloneTier(t));
+            Model.ConnectionRules.Insert(Model.ConnectionRules.IndexOf(src) + 1, copy);
+            var vm = new ConnRuleVm(copy, TabanDisplay);
+            ConnectionRules.Insert(ConnectionRules.IndexOf(_selectedConnRule) + 1, vm);
+            SelectedConnRule = vm;
+        }
+
+        private void DuplicateTier()
+        {
+            if (_selectedTier == null || _selectedConnRule == null) return;
+            var copy = CloneTier(_selectedTier.Model);
+            var tiers = _selectedConnRule.Model.Tiers;
+            tiers.Insert(tiers.IndexOf(_selectedTier.Model) + 1, copy);
+            var tvm = new ConnTierVm(copy, TabanDisplay);
+            _selectedConnRule.Tiers.Insert(_selectedConnRule.Tiers.IndexOf(_selectedTier) + 1, tvm);
+            SelectedTier = tvm;
+        }
+
+        private static ConnDepthTier CloneTier(ConnDepthTier t)
+        {
+            var c = new ConnDepthTier
+            {
+                MinDepthM = t.MinDepthM, MaxDepthM = t.MaxDepthM, TabanId = t.TabanId,
+                IsCastInSitu = t.IsCastInSitu, Notes = t.Notes ?? ""
+            };
+            foreach (var cc in t.ComponentConstraints ?? new List<ComponentTypeConstraint>())
+                c.ComponentConstraints.Add(new ComponentTypeConstraint
+                { Role = cc.Role, MinCount = cc.MinCount, MaxCount = cc.MaxCount });
+            return c;
+        }
+
         private void RebuildConnRules()
         {
             ConnectionRules.Clear();
-            foreach (var r in Model.ConnectionRules) ConnectionRules.Add(new ConnRuleVm(r));
+            foreach (var r in Model.ConnectionRules) ConnectionRules.Add(new ConnRuleVm(r, TabanDisplay));
             SelectedConnRule = ConnectionRules.FirstOrDefault();
         }
     }
@@ -527,10 +648,10 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
         public ConnectionRule Model { get; }
         public ObservableCollection<ConnTierVm> Tiers { get; } = new ObservableCollection<ConnTierVm>();
 
-        public ConnRuleVm(ConnectionRule model)
+        public ConnRuleVm(ConnectionRule model, Func<Guid, string> tabanDisplay)
         {
             Model = model ?? throw new ArgumentNullException(nameof(model));
-            foreach (var t in Model.Tiers) Tiers.Add(new ConnTierVm(t));
+            foreach (var t in Model.Tiers) Tiers.Add(new ConnTierVm(t, tabanDisplay));
             Tiers.CollectionChanged += (s, e) => OnPropertyChanged(nameof(TierCount));
         }
 
@@ -553,42 +674,55 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
         public string RangeDisplay => string.Format("{0:0}–{1:0} mm", MinPipeMm, MaxPipeMm);
     }
 
-    /// <summary>ViewModel over one <see cref="ConnDepthTier"/> (depth band → manhole diameter).</summary>
+    /// <summary>ViewModel over one <see cref="ConnDepthTier"/> (depth band → Taban).</summary>
     public sealed class ConnTierVm : ViewModelBase
     {
-        public ConnDepthTier Model { get; }
-        public ConnTierVm(ConnDepthTier model) { Model = model ?? throw new ArgumentNullException(nameof(model)); }
+        private readonly Func<Guid, string> _tabanDisplay;
 
-        public double MinDepthM         { get => Model.MinDepthM;         set { Model.MinDepthM = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsDepthValid)); } }
-        public double MaxDepthM         { get => Model.MaxDepthM;         set { Model.MaxDepthM = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsDepthValid)); } }
-        public double ManholeDiameterMm { get => Model.ManholeDiameterMm; set { Model.ManholeDiameterMm = value; OnPropertyChanged(); } }
-        public bool   IsCastInSitu      { get => Model.IsCastInSitu;      set { Model.IsCastInSitu = value; OnPropertyChanged(); } }
-        public string Notes             { get => Model.Notes;             set { Model.Notes = value; OnPropertyChanged(); } }
+        public ConnDepthTier Model { get; }
+        public ConnTierVm(ConnDepthTier model, Func<Guid, string> tabanDisplay)
+        {
+            Model         = model ?? throw new ArgumentNullException(nameof(model));
+            _tabanDisplay = tabanDisplay;
+        }
+
+        public double MinDepthM    { get => Model.MinDepthM;    set { Model.MinDepthM = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsDepthValid)); } }
+        public double MaxDepthM    { get => Model.MaxDepthM;    set { Model.MaxDepthM = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsDepthValid)); } }
+        public Guid   TabanId      { get => Model.TabanId;      set { Model.TabanId = value; OnPropertyChanged(); OnPropertyChanged(nameof(TabanDisplay)); } }
+        public bool   IsCastInSitu { get => Model.IsCastInSitu; set { Model.IsCastInSitu = value; OnPropertyChanged(); } }
+        public string Notes        { get => Model.Notes;        set { Model.Notes = value; OnPropertyChanged(); } }
+
+        public string TabanDisplay => _tabanDisplay?.Invoke(Model.TabanId) ?? "";
+
+        public void RefreshTabanDisplay() => OnPropertyChanged(nameof(TabanDisplay));
 
         public bool IsDepthValid => MaxDepthM <= 0 || MinDepthM <= MaxDepthM;
     }
 
-    /// <summary>A "family — Ø" pick option for adding a piece-exclusion row.</summary>
-    public sealed class FamilyDiaOption
+    /// <summary>A "family — Taban" pick option for adding a piece-exclusion row.</summary>
+    public sealed class FamilyTabanOption
     {
-        public Guid   FamilyId   { get; set; }
-        public string FamilyName { get; set; } = "";
-        public double DiameterMm { get; set; }
-        public string Display => string.Format("{0} — Ø{1:0} mm", FamilyName, DiameterMm);
+        public Guid   FamilyId     { get; set; }
+        public string FamilyName   { get; set; } = "";
+        public Guid   TabanId      { get; set; }
+        public string TabanDisplay { get; set; } = "";
+        public string Display => FamilyName + " — " + TabanDisplay;
     }
 
-    /// <summary>One "remove pieces from use" row: a (family, diameter) with its roles.</summary>
+    /// <summary>One "remove pieces from use" row: a (family, Taban) with its roles.</summary>
     public sealed class PieceRowVm
     {
-        public PieceRowVm(PieceExclusionRow model, string familyName)
+        public PieceRowVm(PieceExclusionRow model, string familyName, string tabanDisplay)
         {
-            Model      = model;
-            FamilyName = familyName ?? "";
+            Model        = model;
+            FamilyName   = familyName ?? "";
+            TabanDisplay = tabanDisplay ?? "";
         }
 
         public PieceExclusionRow Model { get; }
-        public string FamilyName { get; }
-        public string Header => string.Format("{0} — Ø{1:0} mm", FamilyName, Model.ManholeDiameterMm);
+        public string FamilyName   { get; }
+        public string TabanDisplay { get; }
+        public string Header => FamilyName + " — " + TabanDisplay;
         public ObservableCollection<RolePieceVm> Roles { get; } = new ObservableCollection<RolePieceVm>();
     }
 
@@ -766,8 +900,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
         private string _excPipeSinif;
         public string ExcPipeSinif { get => _excPipeSinif; set => Set(ref _excPipeSinif, value); }
 
-        private readonly ObservableCollection<double> _excManholeDiameters = new ObservableCollection<double>();
-        public ObservableCollection<double> AvailableExcManholeDiameters => _excManholeDiameters;
+        private readonly ObservableCollection<BottomElementVm> _excTabans = new ObservableCollection<BottomElementVm>();
+        public ObservableCollection<BottomElementVm> AvailableExcTabans => _excTabans;
 
         private ComponentFamily _excManholeFamily;
         public ComponentFamily ExcManholeFamily
@@ -776,18 +910,29 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             set
             {
                 if (!Set(ref _excManholeFamily, value)) return;
-                _excManholeDiameters.Clear();
-                if (value != null)
-                    foreach (var d in value.Components.OfType<BottomElementComponent>()
-                                 .Select(b => b.TopOpeningDiameterMm).Where(d => d > 0)
-                                 .Distinct().OrderBy(d => d))
-                        _excManholeDiameters.Add(d);
-                ExcManholeDiameter = _excManholeDiameters.FirstOrDefault();
+                _excTabans.Clear();
+                foreach (var b in NetworkRuleRowVm.TabansOf(value))
+                    _excTabans.Add(new BottomElementVm(b));
+                ExcManholeTabanId = _excTabans.FirstOrDefault()?.Id ?? Guid.Empty;
             }
         }
 
-        private double _excManholeDiameter;
-        public double ExcManholeDiameter { get => _excManholeDiameter; set => Set(ref _excManholeDiameter, value); }
+        private Guid _excManholeTabanId;
+        public Guid ExcManholeTabanId
+        {
+            get => _excManholeTabanId;
+            set { if (Set(ref _excManholeTabanId, value)) System.Windows.Input.CommandManager.InvalidateRequerySuggested(); }
+        }
+
+        // When checked, the manhole exception forces YERINDE DÖKÜM (cast-in-place) for the picked
+        // manholes — no family/diameter needed. Toggling it re-evaluates AddManholeExceptionCommand's
+        // CanExecute (which no longer requires a family/diameter in this mode).
+        private bool _excManholeCastInPlace;
+        public bool ExcManholeCastInPlace
+        {
+            get => _excManholeCastInPlace;
+            set { if (Set(ref _excManholeCastInPlace, value)) System.Windows.Input.CommandManager.InvalidateRequerySuggested(); }
+        }
 
         // ── Excavation exceptions (Zemin Tipi + Kural Adı override) ───────────
         private const string AllRulesSentinel = "(Tümü)";
@@ -871,7 +1016,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             ImportXmlCommand = new RelayCommand(_ => ImportXml());
 
             AddPipeExceptionCommand    = new RelayCommand(_ => AddPipeException(),    _ => _pickEntities != null && _excPipeFamily != null && _selectedNetwork != null);
-            AddManholeExceptionCommand = new RelayCommand(_ => AddManholeException(), _ => _pickEntities != null && _excManholeFamily != null && _excManholeDiameter > 0 && _selectedNetwork != null);
+            AddManholeExceptionCommand = new RelayCommand(_ => AddManholeException(), _ => _pickEntities != null && _selectedNetwork != null && (_excManholeCastInPlace || (_excManholeFamily != null && _excManholeTabanId != Guid.Empty)));
             AddPipeExcavExceptionCommand    = new RelayCommand(_ => AddPipeExcavException(),    _ => _pickEntities != null && !string.IsNullOrEmpty(_excExcavPipeSoil) && _selectedNetwork != null);
             AddManholeExcavExceptionCommand = new RelayCommand(_ => AddManholeExcavException(), _ => _pickEntities != null && !string.IsNullOrEmpty(_excExcavMhSoil)   && _selectedNetwork != null);
             DeleteExceptionCommand     = new RelayCommand(DeleteException, r => r is ExceptionRowVm);
@@ -1013,16 +1158,28 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
 
         private void AddManholeException()
         {
-            if (_pickEntities == null || _excManholeFamily == null || _excManholeDiameter <= 0 || _selectedNetwork == null) return;
-            Guid   famId = _excManholeFamily.Id;
-            double dia   = _excManholeDiameter;
-            string label = string.Format("{0} — Ø{1:0} mm", _excManholeFamily.Name, dia);
+            if (_pickEntities == null || _selectedNetwork == null) return;
+
+            // Yerinde Döküm mode: no family/diameter — the picked manholes are forced cast-in-place.
+            if (_excManholeCastInPlace)
+            {
+                _pickEntities("\nYerinde Döküm istisnası uygulanacak bacaları seçin (yalnızca blok/daire): ",
+                              ExceptionEntityKind.Manhole, _selectedNetwork.SystemName,
+                              guids => ApplyManholeException(guids, Guid.Empty, Guid.Empty, "Yerinde Döküm", true));
+                return;
+            }
+
+            if (_excManholeFamily == null || _excManholeTabanId == Guid.Empty) return;
+            Guid   famId   = _excManholeFamily.Id;
+            Guid   tabanId = _excManholeTabanId;
+            string label   = _excManholeFamily.Name + " — " +
+                             (_excTabans.FirstOrDefault(t => t.Id == tabanId)?.Display ?? "?");
             _pickEntities("\nBaca istisnası uygulanacak bacaları seçin (yalnızca blok/daire): ",
                           ExceptionEntityKind.Manhole, _selectedNetwork.SystemName,
-                          guids => ApplyManholeException(guids, famId, dia, label));
+                          guids => ApplyManholeException(guids, famId, tabanId, label, false));
         }
 
-        private void ApplyManholeException(List<string> guids, Guid famId, double dia, string label)
+        private void ApplyManholeException(List<string> guids, Guid famId, Guid tabanId, string label, bool castInPlace)
         {
             if (guids == null || guids.Count == 0) { StatusText = "İstisna: hiç öğe seçilmedi."; return; }
 
@@ -1037,13 +1194,14 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
                 if (existing != null)
                 {
                     if (!replaceConflicts) { skipped++; continue; }
-                    existing.ManholeFamilyId = famId; existing.ManholeDiameterMm = dia; existing.OverrideLabel = label;
+                    existing.ManholeFamilyId = famId; existing.TabanId = tabanId;
+                    existing.OverrideLabel = label; existing.IsCastInPlace = castInPlace;
                     updated++;
                 }
                 else
                 {
                     exc.ManholeFamily.Add(new ManholeFamilyException
-                    { AgGuid = g, ManholeFamilyId = famId, ManholeDiameterMm = dia, OverrideLabel = label, EntityName = LookupName(g) });
+                    { AgGuid = g, ManholeFamilyId = famId, TabanId = tabanId, OverrideLabel = label, IsCastInPlace = castInPlace, EntityName = LookupName(g) });
                     added++;
                 }
             }
@@ -1134,7 +1292,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
             if (row.Model is PipeFamilyException pe)    exc.PipeFamily.Remove(pe);
             if (row.Model is ManholeFamilyException me) exc.ManholeFamily.Remove(me);
             if (row.Model is ExcavException ee) { exc.PipeExcav.Remove(ee); exc.ManholeExcav.Remove(ee); }
-            RebuildExceptions();
+            Exceptions.Remove(row);   // not a rebuild — keeps the other selected rows valid for bulk Sil
             _selectedNetwork?.RebuildPieceRows();
             StatusText = "İstisna silindi. (Kaydet ile DWG'ye yazın)";
         }
@@ -1253,6 +1411,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.UI.ViewModels
                     target.PipeFamilyId    = impNet.PipeFamilyId;
                     target.PipeSinif       = impNet.PipeSinif;
                     target.ManholeFamilyId = impNet.ManholeFamilyId;
+                    target.IsBasincli      = impNet.IsBasincli;
                 }
                 RebuildNetworks();
                 RaiseModeChanged();

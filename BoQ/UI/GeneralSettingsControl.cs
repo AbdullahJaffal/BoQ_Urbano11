@@ -37,6 +37,7 @@ namespace UrbanoMetraj.BoQ.UI
         private ComboBox      _cmbRingFillMode;
         private ComboBox      _cmbNetLengthMode;
         private NumericUpDown _nudDegiskenBand;
+        private CheckBox      _chkMinAltiYerinde;
 
         private static readonly object[] AraziOptions =
         {
@@ -70,6 +71,7 @@ namespace UrbanoMetraj.BoQ.UI
         public RingFillMode       RingFillMode                => _cmbRingFillMode.SelectedIndex == 1 ? RingFillMode.BestFit : RingFillMode.Greedy;
         public NetLengthMode      NetLengthMode               => _cmbNetLengthMode.SelectedIndex == 1 ? NetLengthMode.InnerDiameter : NetLengthMode.OuterDiameter;
         public double             MetrajDegiskenParcaBandM    => (double)_nudDegiskenBand.Value;
+        public bool                MinAltiYerindeDokum         => _chkMinAltiYerinde.Checked;
 
         public GeneralSettingsControl(double solidInterval, double sectionInterval,
             OverlapAssignment excavationOverlap, OverlapAssignment backfillOverlap,
@@ -80,9 +82,9 @@ namespace UrbanoMetraj.BoQ.UI
             string kirmiziKotC3DSurface, string araziKotuC3DSurface, string terrasmanKotuC3DSurface,
             string kaziSeviyesi, string dolguSeviyesi, string bacaKapakSeviyesi,
             RingFillMode ringFillMode, NetLengthMode netLengthMode,
-            double metrajDegiskenParcaBandM)
+            double metrajDegiskenParcaBandM, bool minAltiYerindeDokum)
         {
-            Size       = new Size(480, 848);
+            Size       = new Size(480, 890);
             AutoScroll = true;
             Font       = new Font("Segoe UI", 9f);
             BackColor  = Color.WhiteSmoke;
@@ -155,7 +157,7 @@ namespace UrbanoMetraj.BoQ.UI
             var grp3 = new GroupBox
             {
                 Text = "Hesaplama Seçenekleri",
-                Left = 10, Top = 226, Width = 460, Height = 312
+                Left = 10, Top = 226, Width = 460, Height = 354
             };
             var lblKazi = new Label
             {
@@ -288,13 +290,30 @@ namespace UrbanoMetraj.BoQ.UI
                 TextAlign = ContentAlignment.TopLeft
             };
 
+            // Min. altı Yerinde Döküm: when the manhole is too shallow to build even the smallest
+            // mandatory pre-cast stack, treat it as cast-in-place instead of flagging a shortfall.
+            _chkMinAltiYerinde = new CheckBox
+            {
+                Text = "Minimum yükseklik altında bacayı Yerinde Döküm say",
+                Left = 8, Top = 304, Width = 440, Height = 22,
+                Checked = minAltiYerindeDokum
+            };
+            var lblMinAltiHint = new Label
+            {
+                Text = "Zorunlu parçalar en kısa hâliyle bile sığmıyorsa, baca prefabrik yerine yerinde döküm hesaplanır.",
+                Left = 8, Top = 328, Width = 440, Height = 20,
+                ForeColor = Color.Gray, Font = new Font("Segoe UI", 7.5f),
+                TextAlign = ContentAlignment.TopLeft
+            };
+
             grp3.Controls.AddRange(new Control[]
             {
                 lblKazi, _cmbKazi, lblDolgu, _cmbDolgu, lblBaca, _cmbBaca, lblBacaKazi, _cmbBacaKazi,
                 lblRingFillMode, _cmbRingFillMode, lblNetLengthMode, _cmbNetLengthMode,
                 lblBacaBacaKazi, _cmbBacaBacaKazi, lblBacaAltiParca, _cmbBacaAltiParca,
                 lblBacaKaziGenislik, _cmbBacaKaziGenislik,
-                lblDegiskenBand, _nudDegiskenBand, lblDegiskenBandUnit, lblDegiskenBandHint
+                lblDegiskenBand, _nudDegiskenBand, lblDegiskenBandUnit, lblDegiskenBandHint,
+                _chkMinAltiYerinde, lblMinAltiHint
             });
             Controls.Add(grp3);
 
@@ -304,7 +323,7 @@ namespace UrbanoMetraj.BoQ.UI
             var grp4 = new GroupBox
             {
                 Text = "Kot Ayarları",
-                Left = 10, Top = 548, Width = 460, Height = 148
+                Left = 10, Top = 590, Width = 460, Height = 148
             };
 
             var lblColBaca = new Label
@@ -366,7 +385,7 @@ namespace UrbanoMetraj.BoQ.UI
             var grp5 = new GroupBox
             {
                 Text = "Seviye Ayarları",
-                Left = 10, Top = 706, Width = 460, Height = 120
+                Left = 10, Top = 748, Width = 460, Height = 120
             };
 
             var lblKaziSeviyesi = new Label

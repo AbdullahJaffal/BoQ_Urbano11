@@ -107,6 +107,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs
 
             // ── Block user interaction while the dialog runs ──────────────────
             InputBlocker.Show();
+            InputBlockerWatchdog.Arm(45000);   // safety valve — see InputBlockerWatchdog
 
             // ── Queue the Urbano export command; the STA thread will find the ─
             // dialog that appears, fill the path, click "Dışa aktar", and then ─

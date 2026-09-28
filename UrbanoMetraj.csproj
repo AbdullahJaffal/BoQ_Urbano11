@@ -143,6 +143,7 @@
     <Compile Include="BoQ\UI\RibbonSetup.cs" />
     <Compile Include="BoQ\UI\RibbonIcons.cs" />
     <Compile Include="BoQ\UI\InputBlocker.cs" />
+    <Compile Include="BoQ\UI\InputBlockerWatchdog.cs" />
     <!-- ═══ Network Panel (UrbanoLock UT_NETWORK_PANEL clone) ═════════════════ -->
     <Compile Include="BoQ\UI\NetworkPanel\UrbanoLockBridge.cs" />
     <Compile Include="BoQ\UI\NetworkPanel\NetworkSessionManager.cs" />
@@ -233,6 +234,8 @@
     <Compile Include="BoQ\SmartAssembly\UI\ViewModels\SmartAssemblyMainVm.cs" />
     <!-- UI – Converters -->
     <Compile Include="BoQ\SmartAssembly\UI\Converters\NullToVisibilityConverter.cs" />
+    <!-- UI – Behaviors -->
+    <Compile Include="BoQ\SmartAssembly\UI\Behaviors\GridBulk.cs" />
     <!-- UI – Views (XAML code-behind) -->
     <Compile Include="BoQ\SmartAssembly\UI\Views\SmartAssemblyWindow.xaml.cs">
       <DependentUpon>SmartAssemblyWindow.xaml</DependentUpon>

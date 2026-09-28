@@ -75,14 +75,25 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Models
         /// <summary>Filter: only these manhole-excavation (baca kazı) rule NAMES apply. Empty = all (soil-filtered).</summary>
         public List<string> ManholeExcavRuleNames { get; set; } = new List<string>();
 
+        // ── Network kind ──────────────────────────────────────────────────────
+        /// <summary>
+        /// True = pressure / non-gravity network (BASINÇLI). Such networks have no manholes:
+        /// the whole manhole pipeline (depth calc, precast piece stacking, pipe↔manhole linking,
+        /// manhole rows/sheet and manhole-linking warnings) is SKIPPED for this network, while the
+        /// pipe-trench geometry (excavation/bedding/surround/backfill) is computed unchanged — it is
+        /// already pipe-level (from each node's terrain + pipe invert), independent of any manhole.
+        /// Manual per-network flag (decision 2026-07-23). VANTUZ/fittings at the nodes are deferred.
+        /// </summary>
+        public bool IsBasincli { get; set; }
+
         // ── Manholes (network default) ────────────────────────────────────────
         /// <summary>References SmartAssembly.Models.ComponentFamily.Id (Guid.Empty = not chosen).</summary>
         public Guid ManholeFamilyId { get; set; }
 
         // ── Manhole connection rules (project copy of "baca seçim kuralları") ──
         // Per-network, imported from the catalog's MasterPipeRules then editable for this project.
-        // Output is a manhole DIAMETER resolved inside this network's family (decision 2026-07-11),
-        // hence a lean numeric model rather than the base-referencing PipeRangeRule.
+        // Output is a specific Taban (by component Id) of this network's family — same as the
+        // catalog's base-referencing PipeRangeRule (decision 2026-09-25; was a bare diameter).
         public List<ConnectionRule> ConnectionRules { get; set; } = new List<ConnectionRule>();
 
         // ── Piece exclusions ("remove pieces from use") — one row per (family, diameter) ──
@@ -95,8 +106,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Models
     }
 
     /// <summary>
-    /// One "baca seçim" rule: a connected-pipe diameter band mapped, per depth tier, to a manhole
-    /// diameter. The diameter is later resolved to a real Taban inside the network's chosen family.
+    /// One "baca seçim" rule: a connected-pipe diameter band mapped, per depth tier, to a Taban of
+    /// the network's chosen family.
     /// </summary>
     public class ConnectionRule
     {
@@ -109,14 +120,15 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Models
         public List<ConnDepthTier> Tiers { get; set; } = new List<ConnDepthTier>();
     }
 
-    /// <summary>A depth band within a <see cref="ConnectionRule"/> → target manhole diameter.</summary>
+    /// <summary>A depth band within a <see cref="ConnectionRule"/> → the Taban to use.</summary>
     public class ConnDepthTier
     {
         public double MinDepthM { get; set; }
         public double MaxDepthM { get; set; }
 
-        /// <summary>Target manhole (Taban top-opening) diameter in mm, resolved within the family.</summary>
-        public double ManholeDiameterMm { get; set; }
+        /// <summary>The chosen Taban — a BottomElementComponent.Id of the network's manhole family
+        /// (Guid.Empty = not chosen). The ring diameter follows its TopOpeningDiameterMm.</summary>
+        public Guid TabanId { get; set; }
 
         public bool   IsCastInSitu { get; set; }
         public string Notes        { get; set; } = "";
@@ -138,19 +150,18 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Models
     }
 
     /// <summary>
-    /// A user-added "remove pieces from use" row, scoped to one (family, manhole diameter) — the
-    /// Taban the user picked. Its <see cref="Roles"/> hold the per-role height restrictions. The
-    /// candidate (family, diameter) list comes from the network's main manhole family PLUS the
-    /// families used by this network's manhole exceptions; each pair may appear at most once
-    /// (decision 2026-07-11).
+    /// A user-added "remove pieces from use" row, scoped to one (family, Taban). Its
+    /// <see cref="Roles"/> hold the per-role height restrictions. The candidate (family, Taban) list
+    /// comes from the network's main manhole family PLUS the families used by this network's manhole
+    /// exceptions; each pair may appear at most once (decision 2026-07-11; keyed by Taban since 2026-09-25).
     /// </summary>
     public class PieceExclusionRow
     {
         /// <summary>References SmartAssembly.Models.ComponentFamily.Id.</summary>
         public Guid   ManholeFamilyId   { get; set; }
 
-        /// <summary>The Taban top-opening diameter this row applies to (mm).</summary>
-        public double ManholeDiameterMm { get; set; }
+        /// <summary>The Taban (BottomElementComponent.Id) this row applies to.</summary>
+        public Guid TabanId { get; set; }
 
         public List<PieceExclusion> Roles { get; set; } = new List<PieceExclusion>();
     }
@@ -225,18 +236,26 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Models
     }
 
     /// <summary>
-    /// Overrides a manhole's resolved family AND diameter for one drawing entity. Unlike pipes (whose
-    /// diameter always comes from Urbano's drawing), a manhole's diameter comes from the connection
+    /// Overrides a manhole's resolved family AND Taban for one drawing entity. Unlike pipes (whose
+    /// diameter always comes from Urbano's drawing), a manhole's Taban comes from the connection
     /// rules — which are scoped to the network's DEFAULT family — so an exception must pin its own
-    /// diameter, otherwise the default-family diameter won't exist in the exception family.
+    /// Taban, otherwise the default-family Taban won't exist in the exception family.
     /// </summary>
     public sealed class ManholeFamilyException : ExceptionBase
     {
         public Guid   ManholeFamilyId   { get; set; }
 
-        /// <summary>The Taban top-opening diameter (mm) to use for this manhole, chosen from the
-        /// exception family's diameters. 0 = fall back to the connection-rule diameter (legacy).</summary>
-        public double ManholeDiameterMm { get; set; }
+        /// <summary>The Taban (BottomElementComponent.Id of the exception family) to use for this
+        /// manhole. Guid.Empty = not chosen (falls back to the connection-rule Taban).</summary>
+        public Guid   TabanId           { get; set; }
+
+        /// <summary>
+        /// When true, this manhole is forced to CAST-IN-PLACE (Yerinde Döküm) regardless of the
+        /// network's pre-cast family — no pre-cast stacking, its own concrete-volume BOM line.
+        /// ManholeFamilyId/TabanId are then ignored. Resolution: ResolveFamilyAndTabanRules
+        /// returns null family/taban so ProcessManhole leaves StackPreCast null (cast-in-place path).
+        /// </summary>
+        public bool   IsCastInPlace     { get; set; }
 
         public string OverrideLabel     { get; set; } = "";
     }

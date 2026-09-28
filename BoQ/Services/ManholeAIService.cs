@@ -170,9 +170,12 @@ namespace UrbanoMetraj.BoQ.Services
             foreach (var sys in report.Systems)
                 foreach (var mh in sys.Manholes)
                 {
-                    ProcessManhole(mh, report.SectionDebug, settings.RingFillMode, settings.BacaAltiParcaEklensin, settings.BacaKaziDisCapKullan, ref excavUnresolvedCount, ref steppedIgnoredCount);
-                    if (mh.StackPreCast == null) unresolvedCount++;
-                    else if (mh.StackPreCast.ConstraintViolated)
+                    ProcessManhole(mh, report.SectionDebug, settings.RingFillMode, settings.BacaAltiParcaEklensin, settings.BacaKaziDisCapKullan, settings.MinAltiYerindeDokum, ref excavUnresolvedCount, ref steppedIgnoredCount);
+                    // A ForcedCastInPlace manhole (Yerinde Döküm exception / cast-in-situ tier /
+                    // Min-altı setting) has StackPreCast == null BY DESIGN — it is not a resolution
+                    // failure, so it must not raise the "eşleşme bulunamadı" warning.
+                    if (mh.StackPreCast == null && !mh.ForcedCastInPlace) unresolvedCount++;
+                    else if (mh.StackPreCast != null && mh.StackPreCast.ConstraintViolated)
                     {
                         string reason = mh.StackPreCast.ConstraintViolationReason ?? "bilinmeyen neden";
                         // Group by CATEGORY, not the exact string — the residual-
@@ -198,24 +201,36 @@ namespace UrbanoMetraj.BoQ.Services
                 }
 
             if (unresolvedCount > 0)
-                report.DiscoveryNotes.Add(
-                    $"[WARN] {unresolvedCount} baca için Baca-Boru Bağlantı Kuralı/Taban eşleşmesi bulunamadı — çap ve Prefabrik Malzeme Listesi eksik kalacak.");
+                report.AddNote(NoteSeverity.Warning,
+                    $"{unresolvedCount} baca için Baca-Boru Bağlantı Kuralı/Taban eşleşmesi bulunamadı — çap ve Prefabrik Malzeme Listesi eksik kalacak.");
             if (excavUnresolvedCount > 0)
-                report.DiscoveryNotes.Add(
-                    $"[WARN] {excavUnresolvedCount} baca için Baca Kazı Kataloğu'nda uygun kural/derinlik kademesi bulunamadı — kazı hacmi 0 kalacak (sadece ham derinlik gösterilir).");
+                report.AddNote(NoteSeverity.Warning,
+                    $"{excavUnresolvedCount} baca için Baca Kazı Kataloğu'nda uygun kural/derinlik kademesi bulunamadı — kazı hacmi 0 kalacak (sadece ham derinlik gösterilir).");
             if (steppedIgnoredCount > 0)
-                report.DiscoveryNotes.Add(
-                    $"[WARN] {steppedIgnoredCount} baca için 'Basamaklı Kazı' seçiliydi — bu özellik henüz desteklenmiyor, düz şevli hesap kullanıldı.");
+                report.AddNote(NoteSeverity.Info,
+                    $"{steppedIgnoredCount} baca için 'Basamaklı Kazı' seçiliydi — bu özellik henüz desteklenmiyor, düz şevli hesap kullanıldı. (Hesap geçerli.)");
             foreach (var kv in constraintViolationsByReason)
-                report.DiscoveryNotes.Add(
-                    $"[WARN] Parça Kısıtları (Min/Maks) — {kv.Key}: {string.Join(", ", kv.Value)} — Prefabrik Malzeme Listesi eksik/hatalı olabilir.");
+            {
+                // The residual-gap category is NOT a failure: a Maks piece cap left a gap smaller than
+                // one extra piece could close without overshooting; the leftover void is simply ignored
+                // and the material list is complete. Grade it Info with reassuring text so it no longer
+                // reads like the manhole exception / catalog was mishandled. Everything else (missing
+                // Konik/Kapak, Min not met) genuinely affects the BOM → Warning.
+                bool isResidualGap = kv.Key.Contains("Hedef derinliğe");
+                if (isResidualGap)
+                    report.AddNote(NoteSeverity.Info,
+                        $"Maks parça sınırı nedeniyle bazı bacalarda küçük bir boşluk kaldı ve yok sayıldı — hesap geçerli, malzeme listesi eksiksiz: {string.Join(", ", kv.Value)}");
+                else
+                    report.AddNote(NoteSeverity.Warning,
+                        $"Parça Kısıtları (Min/Maks) — {kv.Key}: {string.Join(", ", kv.Value)} — Prefabrik Malzeme Listesi eksik/hatalı olabilir.");
+            }
 
             // RULES mode: replace the generic "no match" note above with the actual per-cause reasons,
             // so the user can tell an unconfigured network from a Baca Çapı ↔ Taban mismatch.
             if (_rulesResolveFails.Count > 0)
                 foreach (var g in _rulesResolveFails.GroupBy(x => x.Reason))
-                    report.DiscoveryNotes.Add(
-                        $"[WARN] Kurallar modu — {g.Key}: {string.Join(", ", g.Select(x => x.Node))}");
+                    report.AddNote(NoteSeverity.Warning,
+                        $"Kurallar modu — {g.Key}: {string.Join(", ", g.Select(x => x.Node))}");
         }
 
         // =====================================================================
@@ -242,10 +257,24 @@ namespace UrbanoMetraj.BoQ.Services
                 var group = new SystemBomGroup { SystemName = sys.SystemName };
                 var manholes = sys.Manholes;
 
-                if (isPreCast)
-                    BuildPreCastBom(manholes, group.Lines);
-                else
+                if (!isPreCast)
+                {
+                    // Cast-in-place project: every manhole is poured concrete.
                     BuildCipBom(manholes, group.Lines);
+                }
+                else
+                {
+                    // Pre-cast project with per-manhole cast-in-place overrides (Yerinde Döküm
+                    // exception, cast-in-situ tier, or the "Min altı Yerinde Döküm" setting): route
+                    // the FORCED cast-in-place manholes to the concrete BOM and the rest to the
+                    // pre-cast BOM. A manhole that is StackPreCast-null but NOT forced is a genuine
+                    // catalog miss and stays inside BuildPreCastBom, which flags it. Both lists feed
+                    // the same system group → one mixed BOM.
+                    var cip = manholes.Where(m => m.ForcedCastInPlace).ToList();
+                    var pre = manholes.Where(m => !m.ForcedCastInPlace).ToList();
+                    if (pre.Count > 0) BuildPreCastBom(pre, group.Lines);
+                    if (cip.Count > 0) BuildCipBom(cip, group.Lines);
+                }
 
                 groups.Add(group);
             }
@@ -263,6 +292,7 @@ namespace UrbanoMetraj.BoQ.Services
             RingFillMode           ringFillMode,
             bool                   ekleTemelAltiParca,
             bool                   pitWidthUsesOuter,
+            bool                   minAltiYerindeDokum,
             ref int                excavUnresolvedCount,
             ref int                steppedIgnoredCount)
         {
@@ -316,15 +346,25 @@ namespace UrbanoMetraj.BoQ.Services
 
             // ── Stacking — both scenarios cached simultaneously ───────────────
             // RULES mode: restrict the shaft pieces to the heights the user left enabled in
-            // "Kullanımdan Parça Çıkar" for this (family, diameter). TypeMapping mode is unchanged.
+            // "Kullanımdan Parça Çıkar" for this (family, Taban). TypeMapping mode is unchanged.
             var stackFamily = family;
             if (ProjectRulesStore.IsRulesMode && family != null && taban != null)
-                stackFamily = RulesStackFamily(family, taban.TopOpeningDiameterMm,
+                stackFamily = RulesStackFamily(family, taban.Id,
                                                ProjectRulesStore.FindNetwork(mh.SystemName));
 
             mh.StackPreCast = (family != null && taban != null)
                 ? ComputeFamilyStack(mh.Depth, mh.Diameter, stackFamily, taban, matchedTier, ringFillMode)
                 : null;
+
+            // "Min altı Yerinde Döküm" (user directive 2026-07-25): when the manhole is too shallow
+            // to build even the smallest mandatory pre-cast stack (DepthInsufficient), drop the
+            // pre-cast result so the cast-in-place path (StackCastInPlace) takes over — instead of
+            // shipping a "derinlik yetersiz" constraint-violation warning. Opt-in, off by default.
+            if (minAltiYerindeDokum && mh.StackPreCast != null && mh.StackPreCast.DepthInsufficient)
+            {
+                mh.StackPreCast      = null;
+                mh.ForcedCastInPlace = true;
+            }
 
             // Baca Altı Beton Parçası (user directive 2026-07-07): appended to the
             // BOM parts list AFTER the ring-count/height-budget stacking above has
@@ -497,11 +537,11 @@ namespace UrbanoMetraj.BoQ.Services
 
         /// <summary>
         /// RULES-mode resolution: manhole family = the pipe's network default (or a per-network
-        /// manhole exception keyed by the node's AG_GUID); the diameter comes from the network's
-        /// connection rules (governing pipe Ø + manhole depth → ManholeDiameterMm), and the Taban is
-        /// the family's base at that top-opening Ø. A synthetic <see cref="DepthTierRule"/> carries the
-        /// tier's min/max ComponentConstraints so <c>ComputeFamilyStack</c> runs unchanged. The rule's
-        /// diameter is authoritative — the manhole's own dimensions are backfilled from the Taban.
+        /// manhole exception keyed by the node's AG_GUID); the Taban is the one chosen (by Id) in the
+        /// network's connection rules (governing pipe Ø + manhole depth → tier.TabanId), or the one
+        /// pinned by the exception. A synthetic <see cref="DepthTierRule"/> carries the tier's min/max
+        /// ComponentConstraints so <c>ComputeFamilyStack</c> runs unchanged. The rule's Taban is
+        /// authoritative — the manhole's own dimensions are backfilled from it.
         /// </summary>
         private static void ResolveFamilyAndTabanRules(
             ManholeItem mh, List<SectionDebugRow> inlets, List<SectionDebugRow> outlets,
@@ -512,16 +552,19 @@ namespace UrbanoMetraj.BoQ.Services
             var netRule = ProjectRulesStore.FindNetwork(mh.SystemName);
             if (netRule == null) { RulesFail(mh, "bu ağ için kural tanımlı değil"); return; }
 
-            // Family (+ diameter) from a manhole exception (by node AG_GUID) override the network
-            // default. A manhole's diameter comes from the rules, not Urbano — so the exception must
-            // pin its own diameter (the connection-rule diameter is for the default family).
+            // Family (+ Taban) from a manhole exception (by node AG_GUID) override the network
+            // default. A manhole's Taban comes from the rules, not Urbano — so the exception must
+            // pin its own Taban (the connection-rule Taban belongs to the default family).
             Guid famId = netRule.ManholeFamilyId;
-            double exDia = 0;
+            Guid exTaban = Guid.Empty;
             var mhEx = netRule.Exceptions?.FindManhole(mh.AgGuid);
+            // A "Yerinde Döküm" manhole exception forces cast-in-place: leave family/taban null so
+            // ProcessManhole keeps StackPreCast null and the cast-in-place path is used.
+            if (mhEx != null && mhEx.IsCastInPlace) { mh.ForcedCastInPlace = true; return; }
             if (mhEx != null && mhEx.ManholeFamilyId != Guid.Empty)
             {
-                famId = mhEx.ManholeFamilyId;
-                exDia = mhEx.ManholeDiameterMm;
+                famId   = mhEx.ManholeFamilyId;
+                exTaban = mhEx.TabanId;
             }
             if (famId == Guid.Empty) { RulesFail(mh, "Baca ailesi seçilmemiş"); return; }
 
@@ -550,24 +593,20 @@ namespace UrbanoMetraj.BoQ.Services
                 .First();
             var connTier = best.Tier;
 
-            // A precast exception diameter forces precast even on a cast-in-situ tier; otherwise a
+            // A precast exception Taban forces precast even on a cast-in-situ tier; otherwise a
             // cast-in-situ tier → no precast Taban (leave nulls so the cast-in-place path is used).
-            if (exDia <= 0 && connTier.IsCastInSitu) return;
+            if (exTaban == Guid.Empty && connTier.IsCastInSitu) { mh.ForcedCastInPlace = true; return; }
 
-            // Exception pins the diameter; otherwise it comes from the connection-rule tier.
-            double targetDia = exDia > 0 ? exDia : connTier.ManholeDiameterMm;
-            if (targetDia <= 0) { RulesFail(mh, "eşleşen katmanda Baca Çapı seçilmemiş"); return; }
+            // Exception pins the Taban; otherwise it is the one chosen in the connection-rule tier.
+            Guid tabanId = exTaban != Guid.Empty ? exTaban : connTier.TabanId;
+            if (tabanId == Guid.Empty) { RulesFail(mh, "eşleşen katmanda Taban seçilmemiş"); return; }
 
-            // Taban in the family at that top-opening Ø (prefer the drawn shape when several match).
-            var bases = fam.Components.OfType<BottomElementComponent>()
-                .Where(b => Math.Abs(b.TopOpeningDiameterMm - targetDia) < 1e-6)
-                .ToList();
-            if (bases.Count == 0)
+            var baseComp = fam.Components.OfType<BottomElementComponent>().FirstOrDefault(b => b.Id == tabanId);
+            if (baseComp == null)
             {
-                RulesFail(mh, $"ailede Ø{targetDia:0} Taban yok (kuraldaki Baca Çapı aileyle uyuşmuyor)");
+                RulesFail(mh, $"seçilen Taban '{fam.Name}' ailesinde yok (kuraldaki Taban aileyle uyuşmuyor)");
                 return;
             }
-            var baseComp = bases.FirstOrDefault(b => b.Footprint?.Shape == mh.DrawnShape) ?? bases[0];
 
             family = fam;
             taban  = baseComp;
@@ -602,13 +641,13 @@ namespace UrbanoMetraj.BoQ.Services
         /// <summary>
         /// RULES mode: returns a copy of <paramref name="family"/> whose Gövde/Koni/Boyun/Kapak pieces
         /// are restricted to the heights allowed by the "Kullanımdan Parça Çıkar" row for this
-        /// (family, diameter). No matching row (or no restriction) → the family is returned unchanged.
+        /// (family, Taban). No matching row (or no restriction) → the family is returned unchanged.
         /// Only the shaft pieces are filtered; the Taban is passed to the stacker separately.
         /// </summary>
-        private static ComponentFamily RulesStackFamily(ComponentFamily family, double diameterMm, NetworkRule netRule)
+        private static ComponentFamily RulesStackFamily(ComponentFamily family, Guid tabanId, NetworkRule netRule)
         {
             var row = netRule?.PieceExclusionRows?.FirstOrDefault(
-                r => r.ManholeFamilyId == family.Id && Math.Abs(r.ManholeDiameterMm - diameterMm) < 1e-6);
+                r => r.ManholeFamilyId == family.Id && r.TabanId == tabanId);
             if (row == null || row.Roles == null || row.Roles.Count == 0) return family;
 
             var filtered = new ComponentFamily { Id = family.Id, Name = family.Name, Malzeme = family.Malzeme };
@@ -723,7 +762,11 @@ namespace UrbanoMetraj.BoQ.Services
             bool ekleTemelAltiParca, bool pitWidthUsesOuter,
             ref int excavUnresolvedCount, ref int steppedIgnoredCount)
         {
-            if (taban == null) { excavUnresolvedCount++; return; }
+            // No Taban → can't resolve a pre-cast excavation pit. For an intentionally cast-in-place
+            // manhole (ForcedCastInPlace set upstream) this is expected, not a failure: leave the
+            // excavation at 0 silently instead of raising the "uygun kural bulunamadı" warning.
+            // (Cast-in-place excavation volume is a separate, deferred feature.)
+            if (taban == null) { if (!mh.ForcedCastInPlace) excavUnresolvedCount++; return; }
 
             var rules = ManholeExcavationCatalogStore.Current;
             if (rules == null || rules.Count == 0) { excavUnresolvedCount++; return; }
@@ -940,6 +983,7 @@ namespace UrbanoMetraj.BoQ.Services
             }
 
             stack.ConstraintViolated = true;
+            stack.DepthInsufficient  = true;
             stack.ConstraintViolationReason =
                 "Zorunlu Min sayısına en kısa Konik ile bile ulaşılamadı — derinlik yetersiz";
             return stack;
