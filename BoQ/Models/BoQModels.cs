@@ -883,6 +883,11 @@ namespace UrbanoMetraj.BoQ.Models
         public int    Count          { get; set; }
         /// <summary>True if this part was selected by the greedy ring algorithm.</summary>
         public bool   IsVariableRing { get; set; }
+        /// <summary>True only for a "değişken" (site-fitted, variable-height) piece whose
+        /// HeightM was computed to absorb the remaining depth. NOT the same as
+        /// IsVariableRing, which is also true for every fixed-size Gövde/Boyun ring the
+        /// greedy fill picked. Drives the height-band rows in the Metraj Keşif Tablosu.</summary>
+        public bool   IsDegisken     { get; set; }
 
         // ── From our ComponentFamily catalog (proves the stack is catalog-driven) ──
         public string PozNo               { get; set; }

@@ -830,6 +830,16 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             }
 
+            // Fourth trailing block: IsDegisken per pre-cast part, same manhole/part
+            // order as the PozNo block. Distinguishes a true değişken piece from a
+            // fixed-size ring the greedy fill picked (both carry IsVariableRing).
+            foreach (var m in mhs)
+            {
+                if (m.StackPreCast?.Parts == null) continue;
+                foreach (var p in m.StackPreCast.Parts)
+                    tvs.Add(I16(p.IsDegisken ? (short)1 : (short)0));
+            }
+
             MakeXRecord(tr, netDict, K_MANHOLE_STACKS, tvs.ToArray());
         }
 
@@ -951,6 +961,12 @@ namespace UrbanoMetraj.BoQ.Services
                         };
                 }
             }
+
+            // Fourth trailing IsDegisken block (absent in older DWGs — ReadI16 returns 0
+            // past the end of tvs, so parts stay non-değişken until the next HESAPLA).
+            foreach (var mh in pcOrder)
+                foreach (var p in mh.StackPreCast.Parts)
+                    p.IsDegisken = ReadI16(tvs, ref i) == 1;
         }
 
         private static void WritePipeMetadata(

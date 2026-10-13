@@ -195,6 +195,9 @@ namespace UrbanoMetraj.BoQ.Services
                 {
                     sdr.VExcav    = System.Math.Max(0, sdr.VExcav    - sdr.ManholeExcavDeducted);
                     sdr.VBackfill = System.Math.Max(0, sdr.VBackfill - sdr.ManholeBackfillDeducted);
+                    // Keep the backfill sub-layer splits summing to the deducted total
+                    // (RecomputeRow split the pre-deduction VBackfill).
+                    ApplyRatios(sdr.BackfillLayerSplits, sdr.VBackfill);
                 }
             }
 

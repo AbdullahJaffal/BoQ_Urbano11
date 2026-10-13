@@ -609,8 +609,13 @@ namespace UrbanoMetraj.BoQ.Services
                     double volHighD = EffectiveVolume(loHigh, upHigh);
                     double volLowD  = EffectiveVolume(loLow,  upLow);
 
-                    double deductedHigh = Math.Max(0, mHigh.Mh.BackfillVolume - volHighD);
-                    double deductedLow  = Math.Max(0, mLow.Mh.BackfillVolume  - volLowD);
+                    // Geometric overlap = gross Dolgu-basis pit − its post-split volume,
+                    // exactly mirroring the Kazı pass (ExcavationVolume − volHigh).
+                    // NOT BackfillVolume − vol: BackfillVolume is already NET of
+                    // Structure/SubBase/pipe bedding+surround, so that mixed net−gross
+                    // difference under-deducted the overlap by those volumes per pair.
+                    double deductedHigh = Math.Max(0, mHigh.Mh.DolguBasisVolume - volHighD);
+                    double deductedLow  = Math.Max(0, mLow.Mh.DolguBasisVolume  - volLowD);
                     mHigh.Mh.ManholeVsManholeBackfillDeducted += deductedHigh;
                     mLow.Mh.ManholeVsManholeBackfillDeducted  += deductedLow;
 

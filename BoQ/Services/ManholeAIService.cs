@@ -1277,6 +1277,7 @@ namespace UrbanoMetraj.BoQ.Services
                 HeightM           = heightM,
                 Count             = count,
                 IsVariableRing    = isVariableRing,
+                IsDegisken        = isDegisken,
                 PozNo             = component.PozNo,
                 Aciklama          = component.Aciklama,
                 UnitMaterialVolume = unitMaterial,
