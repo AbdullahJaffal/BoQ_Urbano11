@@ -534,6 +534,19 @@ namespace UrbanoMetraj.BoQ.UI
                 (BacaKaziHesapla && BacaBacaKaziHesapla) ? $"{_report.TotalManholeVsManholeBackfillDeducted:N3}" : "0,000");
             Add(grid, "Çakışmadan düşülen kazı (m³)",  $"{_report.TotalOverlapExcavDeducted:N3}");
             Add(grid, "Çakışmadan düşülen dolgu (m³)", $"{_report.TotalOverlapBackfillDeducted:N3}");
+
+            // ── Kontrol: when Kazı and Dolgu share one datum, kazı − dolgu should equal the
+            // volume occupied by the pipes + manhole structures (a large gap = a clash bug).
+            double kontrolKazi  = _report.TotalExcavationVolume + (BacaKaziHesapla ? netManholeExcav : 0);
+            double kontrolDolgu = _report.TotalBeddingVolume + _report.TotalSurroundVolume + _report.TotalBackfillVolume
+                                + (BacaKaziHesapla ? _report.TotalManholeSubBaseVolume + netManholeBackfill : 0);
+            double govdeHacmi   = (_report.SectionDebug?.Sum(s => s.PipeArea * s.Length2D) ?? 0)
+                                + (BacaKaziHesapla
+                                    ? _report.Systems.SelectMany(s => s.Manholes).Sum(m => m.StructureVolume) : 0);
+            Add(grid, "Kontrol — toplam kazı, boru + baca (m³)",  $"{kontrolKazi:N3}");
+            Add(grid, "Kontrol — toplam dolgu, boru + baca (m³)", $"{kontrolDolgu:N3}");
+            Add(grid, "Kontrol — kazı − dolgu (m³)",              $"{kontrolKazi - kontrolDolgu:N3}");
+            Add(grid, "Kontrol — boru gövdesi + baca yapısı (≈ m³)", $"{govdeHacmi:N3}");
             Add(grid, "İstasyon verisi",
                 $"{_report.SectionDebug?.Sum(s => s.Stations?.Count ?? 0) ?? 0} istasyon / " +
                 $"{_report.SectionDebug?.Count ?? 0} kesit");

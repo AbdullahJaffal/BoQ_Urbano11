@@ -455,6 +455,10 @@ namespace UrbanoMetraj.BoQ
                 // ── Phase 8c: Boundary station duplication (parallel pairs only) ──
                 InjectBoundaryDuplicates(allStations, perPipeZones, rows, pairZones);
 
+                // ── Phase 8e: Cross-layer clash losses (sand/pipe vs other layers) ──
+                // Applied after 8c so the out-of-zone GrossClone boundary stations stay gross.
+                FinalizeCrossLayerLosses(allStations);
+
                 // ── Phase 9: Per-pipe integration (out-of-zone + parallel in-zone)
                 // Bisector in-zone segments are skipped (handled in Phase 9b).
                 var results = new List<SimplifiedSectionResult>(rows.Count);
@@ -1001,6 +1005,8 @@ namespace UrbanoMetraj.BoQ
                     new[] {  hwDolgu, zTopDolgu }, new[] { -hwDolgu, zTopDolgu }
                 };
 
+                st.PipePoly = PipePolyAt(row.PipeOuterDiamM, outerPipeBtm, 1.0);
+
                 st.AreaExcav    = Math.Round(ClipperGeo.Area(st.ExcavPoly),    3);
                 st.AreaBedding  = Math.Round(ClipperGeo.Area(st.BeddingPoly),  3);
                 st.AreaSurround = Math.Round(Math.Max(0, ClipperGeo.Area(st.SurroundPoly) - row.PipeArea), 3);
@@ -1237,6 +1243,8 @@ namespace UrbanoMetraj.BoQ
                         sB.AreaBackfillSP     = Math.Max(0, bGrossB - ClipperGeo.Area(sB.BackfillSPLosePoly));
                     }
 
+                    ApplyCrossLayerLosses(sA, sB, uBc);
+
                     sA.OtherInvertZ = sB.InvertZ;
                     sB.OtherInvertZ = sA.InvertZ;
 
@@ -1314,6 +1322,8 @@ namespace UrbanoMetraj.BoQ
             st.BackfillPoly = backfillDegenerate ? new List<double[]>() : new List<double[]> {
                 new[] {-hwSurr,  zSurrTop }, new[] {hwSurr,  zSurrTop },
                 new[] {hwDolgu, zTopDolgu}, new[] {-hwDolgu, zTopDolgu} };
+
+            st.PipePoly = PipePolyAt(row.PipeOuterDiamM, outerPipeBtm, cosHalf);
 
             st.AreaExcav    = Math.Round(ClipperGeo.Area(st.ExcavPoly),    3);
             st.AreaBedding  = Math.Round(ClipperGeo.Area(st.BeddingPoly),  3);
@@ -1565,6 +1575,8 @@ namespace UrbanoMetraj.BoQ
                             - ClipperGeo.Area(sB.BackfillSPLosePoly));
                     }
 
+                    ApplyCrossLayerLosses(sA, sB, uBc);
+
                     sA.OtherInvertZ = sB.InvertZ;
                     sB.OtherInvertZ = sA.InvertZ;
                 }
@@ -1758,13 +1770,18 @@ namespace UrbanoMetraj.BoQ
                 res.VBedding  += (s0.AreaBedding  + s1.AreaBedding)  * 0.5 * dXY;
                 res.VSurround += (s0.AreaSurround + s1.AreaSurround) * 0.5 * dXY;
 
+                // Backfill displaced by the other pipe's sand/pipe body (Phase 8e) —
+                // scenario-independent, so it comes off KU/KL/SP alike (never Gross).
+                double vBfSand = (s0.BackfillSandLoss + s1.BackfillSandLoss) * 0.5 * dXY;
+
                 bool inZone = !double.IsNaN(s0.OtherInvertZ) &&
                               !double.IsNaN(s1.OtherInvertZ);
 
                 // Bisector-zone excav/backfill is handled entirely by IntegrateBisectorZones
                 if (inZone && s0.IsBisectorZone && s1.IsBisectorZone)
                 {
-                    // skip
+                    // skip (sand loss for these segments is applied in IntegrateBisectorZones)
+                    vBfSand = 0;
                 }
                 else if (!inZone)
                 {
@@ -1800,6 +1817,10 @@ namespace UrbanoMetraj.BoQ
                     res.VBackfillSP += (s0.AreaBackfillSP + s1.AreaBackfillSP) * 0.5 * dXY;
                     res.VBackfillGross += (s0.AreaBackfill + s1.AreaBackfill) * 0.5 * dXY;
                 }
+
+                res.VBackfillKU = Math.Max(0, res.VBackfillKU - vBfSand);
+                res.VBackfillKL = Math.Max(0, res.VBackfillKL - vBfSand);
+                res.VBackfillSP = Math.Max(0, res.VBackfillSP - vBfSand);
 
                 res.SegmentCount++;
             }
@@ -1885,6 +1906,12 @@ namespace UrbanoMetraj.BoQ
                     resA.VBackfillSP += bvA - bvOverlap * 0.5;
                     resB.VBackfillSP += bvB - bvOverlap * 0.5;
                     resA.VBackfillGross += bvA;  resB.VBackfillGross += bvB;
+
+                    // Backfill displaced by the other pipe's sand/pipe body (Phase 8e).
+                    double sandA = (sA0.BackfillSandLoss + sA1.BackfillSandLoss) * 0.5 * dXY;
+                    double sandB = (sB0.BackfillSandLoss + sB1.BackfillSandLoss) * 0.5 * dXY;
+                    resA.VBackfillKU -= sandA; resA.VBackfillKL -= sandA; resA.VBackfillSP -= sandA;
+                    resB.VBackfillKU -= sandB; resB.VBackfillKL -= sandB; resB.VBackfillSP -= sandB;
                 }
             }
         }
@@ -2129,6 +2156,123 @@ namespace UrbanoMetraj.BoQ
         }
 
         // =====================================================================
+        // Phase 8e — Cross-layer clash losses
+        //
+        // The pair processing above resolves only SAME-layer overlaps
+        // (Excav∩Excav, Backfill∩Backfill). Where one pipe's Yataklama/Gömlekleme
+        // or pipe body lies inside the other pipe's trench, that volume was counted
+        // twice (as this pipe's sand AND as the other's backfill/sand), so
+        // Σfill exceeded Σexcavation (BAKU, 2026-10-13). Rules — every point of the
+        // overlap ends up counted once (zero inside a pipe body):
+        //   • sand/pipe(other) ∩ backfill(self)  → self's backfill loses it (sand wins)
+        //   • sand(upper) ∩ sand/pipe(lower)     → the UPPER pipe's sand loses it
+        //   • sand(lower) ∩ pipe(upper)          → the lower pipe's sand loses it
+        //   • backfill ∩ backfill                → unchanged (KU/KL/SP scenario)
+        // =====================================================================
+
+        private static List<double[]> PipePolyAt(double odM, double outerPipeBtm, double cosHalf)
+        {
+            var ring = ClipperGeo.PipeBody(odM, outerPipeBtm, 32);
+            if (ring == null) return null;
+            if (cosHalf > 1e-9 && Math.Abs(cosHalf - 1.0) > 1e-12)
+                foreach (var v in ring) v[0] /= cosHalf;   // bisector frame: widths scale by 1/cos(θ/2)
+            return ring;
+        }
+
+        private static bool HasArea(List<double[]> ring) => ring != null && ring.Count >= 3;
+
+        private static List<List<double[]>> Region(params List<double[]>[] rings)
+            => rings.Where(HasArea).ToList();
+
+        private static List<List<double[]>> Accumulate(
+            List<List<double[]>> acc, List<List<double[]>> add)
+        {
+            if (add == null || add.Count == 0 || ClipperGeo.Area(add) <= 1e-9) return acc;
+            return acc == null ? add : ClipperGeo.Union(acc, add);
+        }
+
+        private static void ApplyCrossLayerLosses(SimplifiedStation sA, SimplifiedStation sB, double uBc)
+        {
+            if (sA.ExcavPoly == null || sB.ExcavPoly == null) return;
+
+            // Everything in A's frame (B shifted by its lateral offset uBc).
+            List<double[]> R(List<double[]> p)  => HasArea(p) ? RoundPolyTo1mm(p) : null;
+            List<double[]> RB(List<double[]> p) => HasArea(p) ? RoundPolyTo1mm(TranslatePoly(p, uBc)) : null;
+
+            var aBed = R(sA.BeddingPoly);   var aSur  = R(sA.SurroundPoly);
+            var aBf  = R(sA.BackfillPoly);  var aPipe = R(sA.PipePoly);
+            var bBed = RB(sB.BeddingPoly);  var bSur  = RB(sB.SurroundPoly);
+            var bBf  = RB(sB.BackfillPoly); var bPipe = RB(sB.PipePoly);
+
+            // SurroundPoly spans the outer pipe bottom → OD+sand at full width, so it
+            // already contains the pipe body: sand ∪ pipe of one pipe = Bedding ∪ Surround.
+            var aSandPipe = Region(aBed, aSur);
+            var bSandPipe = Region(bBed, bSur);
+
+            // ── Backfill under the other pipe's sand/pipe → backfill loses it ──
+            if (HasArea(aBf) && bSandPipe.Count > 0)
+                sA.BackfillSandLossPoly = Accumulate(sA.BackfillSandLossPoly,
+                    ClipperGeo.Intersect(Region(aBf), bSandPipe));
+            if (HasArea(bBf) && aSandPipe.Count > 0)
+                sB.BackfillSandLossPoly = Accumulate(sB.BackfillSandLossPoly,
+                    TranslatePolyList(ClipperGeo.Intersect(Region(bBf), aSandPipe), -uBc));
+
+            // ── Sand vs sand / pipe ──
+            bool aIsUpper = sA.InvertZ >= sB.InvertZ;
+            var upBed  = aIsUpper ? aBed  : bBed;   var upSur = aIsUpper ? aSur : bSur;
+            var upPipe = aIsUpper ? aPipe : bPipe;
+            var loBed  = aIsUpper ? bBed  : aBed;   var loSur = aIsUpper ? bSur : aSur;
+            var loSandPipe   = aIsUpper ? bSandPipe : aSandPipe;
+            var upPipeRegion = Region(upPipe);
+
+            // Upper sand inside the lower pipe's sand or body → upper loses it
+            // (its own pipe body is not sand, so it is cut out of the lost region).
+            List<List<double[]>> UpperLoss(List<double[]> x)
+            {
+                if (!HasArea(x) || loSandPipe.Count == 0) return null;
+                var r = ClipperGeo.Intersect(Region(x), loSandPipe);
+                return upPipeRegion.Count > 0 ? ClipperGeo.Difference(r, upPipeRegion) : r;
+            }
+            // Lower sand occupied by the upper pipe's body → lower loses it.
+            List<List<double[]>> LowerLoss(List<double[]> x)
+                => HasArea(x) && upPipeRegion.Count > 0 ? ClipperGeo.Intersect(Region(x), upPipeRegion) : null;
+
+            var upBedLoss = UpperLoss(upBed); var upSurLoss = UpperLoss(upSur);
+            var loBedLoss = LowerLoss(loBed); var loSurLoss = LowerLoss(loSur);
+
+            var aBedLoss = aIsUpper ? upBedLoss : loBedLoss;
+            var aSurLoss = aIsUpper ? upSurLoss : loSurLoss;
+            var bBedLoss = aIsUpper ? loBedLoss : upBedLoss;
+            var bSurLoss = aIsUpper ? loSurLoss : upSurLoss;
+
+            sA.BeddingLossPoly  = Accumulate(sA.BeddingLossPoly,  aBedLoss);
+            sA.SurroundLossPoly = Accumulate(sA.SurroundLossPoly, aSurLoss);
+            if (bBedLoss != null)
+                sB.BeddingLossPoly  = Accumulate(sB.BeddingLossPoly,  TranslatePolyList(bBedLoss, -uBc));
+            if (bSurLoss != null)
+                sB.SurroundLossPoly = Accumulate(sB.SurroundLossPoly, TranslatePolyList(bSurLoss, -uBc));
+        }
+
+        // Turns the accumulated loss regions into areas: Yataklama/Gömlekleme are
+        // reduced in place (they have no KU/KL/SP scenarios); the backfill loss is kept
+        // separately and subtracted from every scenario (never Gross) at integration.
+        private static void FinalizeCrossLayerLosses(List<List<SimplifiedStation>> allStations)
+        {
+            var seen = new HashSet<SimplifiedStation>();
+            foreach (var list in allStations)
+                foreach (var st in list)
+                {
+                    if (!seen.Add(st)) continue;
+                    if (st.BeddingLossPoly != null)
+                        st.AreaBedding  = Math.Max(0, st.AreaBedding  - ClipperGeo.Area(st.BeddingLossPoly));
+                    if (st.SurroundLossPoly != null)
+                        st.AreaSurround = Math.Max(0, st.AreaSurround - ClipperGeo.Area(st.SurroundLossPoly));
+                    st.BackfillSandLoss = st.BackfillSandLossPoly != null
+                        ? Math.Min(st.AreaBackfill, ClipperGeo.Area(st.BackfillSandLossPoly)) : 0;
+                }
+        }
+
+        // =====================================================================
         // Internal data models
         // =====================================================================
 
@@ -2162,6 +2306,17 @@ namespace UrbanoMetraj.BoQ
             public List<List<double[]>> BackfillDeductPoly;
             public List<List<double[]>> ExcavSPLosePoly;
             public List<List<double[]>> BackfillSPLosePoly;
+
+            // ── Cross-layer clash (Phase 8e) ─────────────────────────────────
+            // Pipe body (outer diameter) in this station's frame.
+            public List<double[]> PipePoly;
+            // Accumulated (union) regions this pipe loses to a clashing pipe, own frame:
+            //   BackfillSandLossPoly — own backfill under the other pipe's sand/pipe body;
+            //   BeddingLossPoly / SurroundLossPoly — own sand already owned by the other pipe
+            //   (sand∩sand → the LOWER pipe keeps it) or occupied by the other pipe's body.
+            public List<List<double[]>> BackfillSandLossPoly, BeddingLossPoly, SurroundLossPoly;
+            // Area of BackfillSandLossPoly, set by FinalizeCrossLayerLosses.
+            public double BackfillSandLoss;
         }
 
         private sealed class SimplifiedSectionResult

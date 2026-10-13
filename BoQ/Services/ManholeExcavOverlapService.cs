@@ -515,8 +515,8 @@ namespace UrbanoMetraj.BoQ.Services
                     mLow.Mh.GeoLower  = loLow;  mLow.Mh.GeoUpper  = upLow;
 
                     // Volumes
-                    double volHigh = EffectiveVolume(loHigh, upHigh);
-                    double volLow  = EffectiveVolume(loLow,  upLow);
+                    double volHigh = EffectiveVolume(loHigh, upHigh) + SlabAboveVolume(mHigh, zTopEff);
+                    double volLow  = EffectiveVolume(loLow,  upLow)  + SlabAboveVolume(mLow,  zTopEff);
 
                     // Bacalar Arası Kazı Çakışması (user directive 2026-07-07): accumulate
                     // this pair's contribution — additive across every neighbour a manhole
@@ -606,8 +606,8 @@ namespace UrbanoMetraj.BoQ.Services
                     var (loHigh, upHigh) = BuildGeoSegments(mHigh, mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: true);
                     var (loLow,  upLow)  = BuildGeoSegments(mLow,  mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: false);
 
-                    double volHighD = EffectiveVolume(loHigh, upHigh);
-                    double volLowD  = EffectiveVolume(loLow,  upLow);
+                    double volHighD = EffectiveVolume(loHigh, upHigh) + SlabAboveVolume(mHigh, zTopEff);
+                    double volLowD  = EffectiveVolume(loLow,  upLow)  + SlabAboveVolume(mLow,  zTopEff);
 
                     // Geometric overlap = gross Dolgu-basis pit − its post-split volume,
                     // exactly mirroring the Kazı pass (ExcavationVolume − volHigh).
@@ -840,6 +840,18 @@ namespace UrbanoMetraj.BoQ.Services
         /// Effective excavation volume = lower segment (full raw) + upper segment
         /// (exclusive zone + this manhole's Inside share).
         /// </summary>
+        // The pair's segments stop at zTopEff = min(ZTop) — above the shallower pit's
+        // top there is no neighbour, so the taller pit keeps that slab whole. Without
+        // adding it back, "gross − effective" counted the slab as overlap (deducted).
+        private static double SlabAboveVolume(MhInfo self, double zTopEff)
+        {
+            double h = self.ZTop - zTopEff;
+            if (h <= 1e-6) return 0;
+            double Side(double z) => self.BaseSideM + 2.0 * (z - self.ZBottom) * self.SlopeRatio;
+            double s0 = Side(zTopEff), s1 = Side(self.ZTop), sm = Side((zTopEff + self.ZTop) * 0.5);
+            return (h / 6.0) * (s0 * s0 + 4.0 * sm * sm + s1 * s1);
+        }
+
         private static double EffectiveVolume(ManholeGeoSegment lower, ManholeGeoSegment upper)
         {
             return SegmentVolume(lower, includeInside: false) +
