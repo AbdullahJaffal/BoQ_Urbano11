@@ -482,6 +482,10 @@ namespace UrbanoMetraj.BoQ
                     rows[i].VExcavSP    = r.VExcavSP;
                     rows[i].VBedding    = r.VBedding;
                     rows[i].VSurround   = r.VSurround;
+                    rows[i].VBeddingNet    = r.VBedding;
+                    rows[i].VSurroundNet   = r.VSurround;
+                    rows[i].VBeddingGross  = r.VBeddingGross;
+                    rows[i].VSurroundGross = r.VSurroundGross;
                     rows[i].VBackfillKU    = r.VBackfillKU;
                     rows[i].VBackfillKL    = r.VBackfillKL;
                     rows[i].VBackfillSP    = r.VBackfillSP;
@@ -1769,6 +1773,8 @@ namespace UrbanoMetraj.BoQ
 
                 res.VBedding  += (s0.AreaBedding  + s1.AreaBedding)  * 0.5 * dXY;
                 res.VSurround += (s0.AreaSurround + s1.AreaSurround) * 0.5 * dXY;
+                res.VBeddingGross  += (s0.AreaBeddingGross  + s1.AreaBeddingGross)  * 0.5 * dXY;
+                res.VSurroundGross += (s0.AreaSurroundGross + s1.AreaSurroundGross) * 0.5 * dXY;
 
                 // Backfill displaced by the other pipe's sand/pipe body (Phase 8e) —
                 // scenario-independent, so it comes off KU/KL/SP alike (never Gross).
@@ -2263,6 +2269,8 @@ namespace UrbanoMetraj.BoQ
                 foreach (var st in list)
                 {
                     if (!seen.Add(st)) continue;
+                    st.AreaBeddingGross  = st.AreaBedding;    // pre-loss, for the "Ignore" state
+                    st.AreaSurroundGross = st.AreaSurround;
                     if (st.BeddingLossPoly != null)
                         st.AreaBedding  = Math.Max(0, st.AreaBedding  - ClipperGeo.Area(st.BeddingLossPoly));
                     if (st.SurroundLossPoly != null)
@@ -2317,6 +2325,8 @@ namespace UrbanoMetraj.BoQ
             public List<List<double[]>> BackfillSandLossPoly, BeddingLossPoly, SurroundLossPoly;
             // Area of BackfillSandLossPoly, set by FinalizeCrossLayerLosses.
             public double BackfillSandLoss;
+            // Yataklama/Gömlekleme areas BEFORE the cross-layer losses (FinalizeCrossLayerLosses).
+            public double AreaBeddingGross, AreaSurroundGross;
         }
 
         private sealed class SimplifiedSectionResult
@@ -2329,6 +2339,7 @@ namespace UrbanoMetraj.BoQ
 
             public double VExcavKU,    VExcavKL,    VExcavSP,    VExcavGross;
             public double VBedding,    VSurround;
+            public double VBeddingGross, VSurroundGross;
             public double VBackfillKU, VBackfillKL, VBackfillSP, VBackfillGross;
         }
     }

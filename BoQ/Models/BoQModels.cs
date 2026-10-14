@@ -670,6 +670,14 @@ namespace UrbanoMetraj.BoQ.Models
         public double VBackfillKL  { get; set; }
         public double VBackfillSP  { get; set; }
         public double VBackfillGross { get; set; }
+        // Yataklama/Gömlekleme have no KU/KL/SP scenarios: Net = after the pipe↔pipe
+        // cross-layer clash losses (V2 Phase 8e), Gross = without them. The aggregator
+        // shows Gross when the Dolgu overlap method is "Ignore", Net otherwise, so
+        // Ignore stays a pure gross state like Kazı/Geri Dolgu.
+        public double VBeddingNet    { get; set; }
+        public double VSurroundNet   { get; set; }
+        public double VBeddingGross  { get; set; }
+        public double VSurroundGross { get; set; }
         public bool   HasV2Volumes  { get; set; }
 
         // ── Clash detection ───────────────────────────────────────────────────

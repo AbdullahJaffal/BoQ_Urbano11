@@ -1006,8 +1006,10 @@ namespace UrbanoMetraj.BoQ.Services
             MakeXRecord(tr, pipeDict, K_V2_VOLUMES,
                 I16(1),
                 Dbl(s.VExcavKU),      Dbl(s.VExcavKL),      Dbl(s.VExcavSP),    Dbl(s.VExcavGross),
-                Dbl(s.VBedding),      Dbl(s.VSurround),
-                Dbl(s.VBackfillKU),   Dbl(s.VBackfillKL),   Dbl(s.VBackfillSP), Dbl(s.VBackfillGross));
+                Dbl(s.VBeddingNet),   Dbl(s.VSurroundNet),
+                Dbl(s.VBackfillKU),   Dbl(s.VBackfillKL),   Dbl(s.VBackfillSP), Dbl(s.VBackfillGross),
+                // Appended: Yataklama/Gömlekleme without the cross-layer clash losses.
+                Dbl(s.VBeddingGross), Dbl(s.VSurroundGross));
         }
 
         private static void ReadV2Volumes(Transaction tr, DBDictionary pipeDict, SectionDebugRow sdr)
@@ -1027,6 +1029,11 @@ namespace UrbanoMetraj.BoQ.Services
             sdr.VBackfillKL     = ReadDbl(tvs, ref i);
             sdr.VBackfillSP     = ReadDbl(tvs, ref i);
             sdr.VBackfillGross  = i < tvs.Length ? ReadDbl(tvs, ref i) : Math.Max(sdr.VBackfillKU, sdr.VBackfillKL);
+            sdr.VBeddingNet     = sdr.VBedding;
+            sdr.VSurroundNet    = sdr.VSurround;
+            // Older DWGs: no gross pair → gross = net (they had no cross-layer losses).
+            sdr.VBeddingGross   = i < tvs.Length ? ReadDbl(tvs, ref i) : sdr.VBeddingNet;
+            sdr.VSurroundGross  = i < tvs.Length ? ReadDbl(tvs, ref i) : sdr.VSurroundNet;
         }
 
         // Phase 2b — PipeTrenchCatalog per-sub-layer ratios (LayerName/MaterialType/

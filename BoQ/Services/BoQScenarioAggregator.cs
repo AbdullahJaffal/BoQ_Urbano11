@@ -56,6 +56,9 @@ namespace UrbanoMetraj.BoQ.Services
                 }
 
                 // Dolgu (bedding / surround / backfill)
+                // Yataklama/Gömlekleme: gross under "Ignore", clash-resolved otherwise.
+                sdr.VBedding  = dolgu == TiePreference.Ignore ? sdr.VBeddingGross  : sdr.VBeddingNet;
+                sdr.VSurround = dolgu == TiePreference.Ignore ? sdr.VSurroundGross : sdr.VSurroundNet;
                 if (dolgu == TiePreference.Ignore)
                 {
                     sdr.VBackfill               = sdr.VBackfillGross;
