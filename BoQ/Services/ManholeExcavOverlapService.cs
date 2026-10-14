@@ -925,6 +925,133 @@ namespace UrbanoMetraj.BoQ.Services
         }
 
         // =====================================================================
+        // Diagnostic (read-only) — pipe-in-pit consistency, UT_BOQ_PIT_DIAG
+        // =====================================================================
+
+        /// <summary>One pipe end inside one manhole pit — every volume re-derived with the
+        /// exact geometry Compute() uses, plus a split of the trench volume by Z-zone.</summary>
+        public sealed class PitDiagRow
+        {
+            public string System, Manhole, Pipe;
+            public double ZPitBottom, ZTop, Invert, BedBottom, TrenchBottomReal, SandTop;
+            public double T;          // trench ∩ pit, as Compute (→ pipe ManholeExcavDeducted)
+            public double F;          // backfill zone, as Compute (→ pipe ManholeBackfillDeducted)
+            public double BedK, SurK; // bedding/surround rects, Kazı range (as Compute)
+            public double BedD, SurD; // bedding/surround rects, Dolgu range (→ subtracted from manhole fill)
+            public double TBelowReal; // T slice below the REAL trench bottom (invert − wall − bedH)
+            public double TWallBand;  // T slice between real trench bottom and Compute's bed bottom (invert − bedH)
+            public double TSand;      // T slice over the bedding+surround zone
+            public double TBf;        // T slice over the backfill zone
+            public double TFine;      // T with a 24-interval composite Simpson (integration-error check)
+        }
+
+        /// <summary>
+        /// Re-derives, WITHOUT changing the report, every pipe-in-pit volume Compute()
+        /// produces and splits the pipe's trench volume T into Z-zones. Identity being
+        /// tested: T = F + (bedding + surround) — anything else in T has no fill
+        /// counterpart and lowers Σkazı − Σdolgu.
+        /// </summary>
+        public static List<PitDiagRow> DiagnosePipeInPit(BoQReport report)
+        {
+            var rows = new List<PitDiagRow>();
+            if (report?.Systems == null || report.SectionDebug == null) return rows;
+
+            var outlets = report.SectionDebug.Where(s => s.StartNodeName != null)
+                .GroupBy(s => s.StartNodeName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+            var inlets = report.SectionDebug.Where(s => s.EndNodeName != null)
+                .GroupBy(s => s.EndNodeName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var sys in report.Systems)
+                foreach (var mh in sys.Manholes)
+                {
+                    if (mh.ExcavationDepth <= 1e-6) continue;
+                    double zTop = mh.ZKazi, zBottom = zTop - mh.ExcavationDepth;
+                    double Hmh = zTop - zBottom;
+                    if (Hmh <= 1e-6) continue;
+                    double rot = ComputeRotationAngle(mh, outlets, inlets);
+
+                    bool   dolguValid   = !mh.DolguInvalid && mh.DolguFinalDepth > 1e-6;
+                    double zTopDolgu    = mh.ZDolgu;
+                    double zBottomDolgu = zTopDolgu - mh.DolguFinalDepth;
+
+                    var pipes = new List<(SectionDebugRow sdr, double inv, double dx, double dy)>();
+                    if (outlets.TryGetValue(mh.NodeName ?? "", out var outList))
+                        foreach (var s in outList)
+                        {
+                            double dx = s.EndX - s.StartX, dy = s.EndY - s.StartY, len = Math.Sqrt(dx * dx + dy * dy);
+                            if (len >= 1e-6) pipes.Add((s, s.InvertStart, dx / len, dy / len));
+                        }
+                    if (inlets.TryGetValue(mh.NodeName ?? "", out var inList))
+                        foreach (var s in inList)
+                        {
+                            double dx = s.StartX - s.EndX, dy = s.StartY - s.EndY, len = Math.Sqrt(dx * dx + dy * dy);
+                            if (len >= 1e-6) pipes.Add((s, s.InvertEnd, dx / len, dy / len));
+                        }
+
+                    foreach (var (sdr, inv, dirX, dirY) in pipes)
+                    {
+                        // Area of (pit square with the given base level) ∩ (trench rect) at z.
+                        double A(double z, double pitBottom, double slope) =>
+                            AreaOfIntersect(
+                                ManholeSquareAt(mh.X, mh.Y, pitBottom, z, rot, mh.ExcavBaseSideM, mh.ExcavSlopeRatio),
+                                TrenchRectAt(mh.X, mh.Y, z, inv, sdr.TrWidth, slope, dirX, dirY));
+                        double Simp(double z0, double z1, double pitBottom, double slope)
+                        {
+                            if (z1 - z0 <= 1e-6) return 0;
+                            return ((z1 - z0) / 6.0) * (A(z0, pitBottom, slope) + 4.0 * A((z0 + z1) * 0.5, pitBottom, slope) + A(z1, pitBottom, slope));
+                        }
+                        double Clip(double lo, double hi, double rLo, double rHi, double pitBottom, double slope)
+                            => Simp(Math.Max(rLo, lo), Math.Min(rHi, hi), pitBottom, slope);
+
+                        double wall      = Math.Max(0, (sdr.PipeOuterDiamM - sdr.DiameterMm / 1000.0) / 2.0);
+                        double bedBot    = inv - sdr.TrBedHeight;                       // Compute's bedding bottom
+                        double realBot   = inv - wall - sdr.TrBedHeight;                // real trench bottom
+                        double sandTop   = inv + sdr.PipeOuterDiamM + sdr.TrSandOverPipe; // Compute's surround top
+
+                        var r = new PitDiagRow
+                        {
+                            System = sys.SystemName, Manhole = mh.NodeName,
+                            Pipe = $"{sdr.StartNodeName}->{sdr.EndNodeName}",
+                            ZPitBottom = zBottom, ZTop = zTop, Invert = inv,
+                            BedBottom = bedBot, TrenchBottomReal = realBot, SandTop = sandTop,
+                        };
+
+                        // Exactly as Compute():
+                        r.T    = Simp(zBottom, zTop, zBottom, sdr.SlopeRatio);
+                        r.BedK = Clip(bedBot, inv,     zBottom, zTop, zBottom, 0.0);
+                        r.SurK = Clip(inv,    sandTop, zBottom, zTop, zBottom, 0.0);
+                        r.F    = Clip(Math.Max(zBottom, sandTop), zTop, zBottom, zTop, zBottom, sdr.SlopeRatio);
+                        if (dolguValid)
+                        {
+                            r.BedD = Clip(bedBot, inv,     zBottomDolgu, zTopDolgu, zBottomDolgu, 0.0);
+                            r.SurD = Clip(inv,    sandTop, zBottomDolgu, zTopDolgu, zBottomDolgu, 0.0);
+                        }
+
+                        // T split by zone (same integrand as T, each zone its own Simpson):
+                        r.TBelowReal = Clip(zBottom, realBot, zBottom, zTop, zBottom, sdr.SlopeRatio);
+                        r.TWallBand  = Clip(realBot, bedBot,  zBottom, zTop, zBottom, sdr.SlopeRatio);
+                        r.TSand      = Clip(bedBot,  sandTop, zBottom, zTop, zBottom, sdr.SlopeRatio);
+                        r.TBf        = Clip(sandTop, zTop,    zBottom, zTop, zBottom, sdr.SlopeRatio);
+
+                        // Fine composite Simpson of T (24 intervals).
+                        const int N = 24;
+                        double h = Hmh / N, acc = 0;
+                        for (int k = 0; k <= N; k++)
+                        {
+                            double w = (k == 0 || k == N) ? 1 : (k % 2 == 1 ? 4 : 2);
+                            acc += w * A(zBottom + k * h, zBottom, sdr.SlopeRatio);
+                        }
+                        r.TFine = acc * h / 3.0;
+
+                        rows.Add(r);
+                    }
+                }
+            return rows;
+        }
+
+        // =====================================================================
         // Rotation angle
         // =====================================================================
 
