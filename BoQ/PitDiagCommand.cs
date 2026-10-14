@@ -50,11 +50,6 @@ namespace UrbanoMetraj.BoQ
                 double sSK   = rows.Sum(r => r.BedK + r.SurK), sSD = rows.Sum(r => r.BedD + r.SurD);
                 double resid = sT - sF - sSD;
 
-                double c1 = rows.Sum(r => r.TBelowReal);
-                double c2 = rows.Sum(r => r.TWallBand);
-                double c3 = rows.Sum(r => r.TSand - r.BedK - r.SurK);
-                double c4 = rows.Sum(r => r.TBf - r.F);
-                double c5 = rows.Sum(r => r.T - r.TBelowReal - r.TWallBand - r.TSand - r.TBf);
                 double c6 = sSK - sSD;
 
                 double computeT = report.SectionDebug.Sum(s => s.ManholeExcavDeducted);
@@ -70,16 +65,9 @@ namespace UrbanoMetraj.BoQ
                 sb.Append($"\n  F  boru geri dolgusundan dusulen    : {sF,12:F3}   (Compute: {computeF:F3})");
                 sb.Append($"\n  S  baca dolgusundan dusulen kum (D) : {sSD,12:F3}");
                 sb.Append($"\n  FARK = T - F - S                    : {resid,12:F3}   (0 olmali)");
-                sb.Append("\n  ---- FARKIN DAGILIMI ----");
-                sb.Append($"\n  1 Gercek hendek tabaninin altindaki T : {c1,12:F3}");
-                sb.Append($"\n  2 Boru et kalinligi bandi (T)         : {c2,12:F3}");
-                sb.Append($"\n  3 Kum bolgesi genislik farki (T - S)  : {c3,12:F3}");
-                sb.Append($"\n  4 Geri dolgu bolgesi (T - F)          : {c4,12:F3}");
-                sb.Append($"\n  5 Simpson bolge bolme farki           : {c5,12:F3}");
-                sb.Append($"\n  6 Kum Kazi/Dolgu bazi farki           : {c6,12:F3}");
-                sb.Append($"\n    Toplam 1..6                         : {c1 + c2 + c3 + c4 + c5 + c6,12:F3}");
+                sb.Append($"\n  Kum Kazi/Dolgu bazi farki           : {c6,12:F3}");
                 sb.Append("\n  ---- EK BILGI ----");
-                sb.Append($"\n  T 3-dilim Simpson - 24-aralik Simpson : {rows.Sum(r => r.T - r.TFine),12:F3}");
+                sb.Append($"\n  T bolge Simpson - 24-aralik Simpson   : {rows.Sum(r => r.T - r.TFine),12:F3}");
                 sb.Append($"\n  Baca: Kazi hacmi - Dolgu bazi hacmi   : {kdBasis,12:F3}");
                 sb.Append($"\n  Baca yapi hacmi (StructureVolume)     : {struc,12:F3}");
 
@@ -103,13 +91,13 @@ namespace UrbanoMetraj.BoQ
 
             var sb = new StringBuilder();
             sb.AppendLine(string.Join(sep, "Sistem", "Baca", "Boru", "ZBacaTaban", "ZUst", "Akar",
-                "KumTabani", "GercekHendekTabani", "KumUstu", "T", "F", "BedK", "SurK", "BedD", "SurD",
-                "T_GercekTabanAlti", "T_EtBandi", "T_Kum", "T_GeriDolgu", "T_Ince", "FARK_T-F-S"));
+                "BoruDisAlt", "HendekTabani", "KumUstu", "T", "F", "BedK", "SurK", "BedD", "SurD",
+                "T_Ince", "FARK_T-F-S"));
             foreach (var r in rows)
                 sb.AppendLine(string.Join(sep, r.System, r.Manhole, r.Pipe,
-                    N(r.ZPitBottom), N(r.ZTop), N(r.Invert), N(r.BedBottom), N(r.TrenchBottomReal), N(r.SandTop),
+                    N(r.ZPitBottom), N(r.ZTop), N(r.Invert), N(r.OuterBottom), N(r.TrenchBottom), N(r.SandTop),
                     N(r.T), N(r.F), N(r.BedK), N(r.SurK), N(r.BedD), N(r.SurD),
-                    N(r.TBelowReal), N(r.TWallBand), N(r.TSand), N(r.TBf), N(r.TFine),
+                    N(r.TFine),
                     N(r.T - r.F - r.BedD - r.SurD)));
             File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
         }
