@@ -152,12 +152,21 @@ namespace UrbanoMetraj.BoQ.Services
         private static void RulesFail(ManholeItem mh, string reason)
             => _rulesResolveFails.Add((mh.NodeName, reason));
 
+        // Catalog pieces whose Dış Hacim / Malzeme Hacmi were 0 (reset each Process run):
+        // estimated from geometry, or not estimable (with the reason).
+        private static readonly SortedSet<string> _estimatedVolumeParts =
+            new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly SortedDictionary<string, string> _unestimableVolumeParts =
+            new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         public static void Process(
             BoQReport   report,
             BoQSettings settings)
         {
             if (report == null) return;
             _rulesResolveFails.Clear();
+            _estimatedVolumeParts.Clear();
+            _unestimableVolumeParts.Clear();
 
             int unresolvedCount     = 0;
             int excavUnresolvedCount = 0;
@@ -231,6 +240,17 @@ namespace UrbanoMetraj.BoQ.Services
                 foreach (var g in _rulesResolveFails.GroupBy(x => x.Reason))
                     report.AddNote(NoteSeverity.Warning,
                         $"Kurallar modu — {g.Key}: {string.Join(", ", g.Select(x => x.Node))}");
+
+            if (_estimatedVolumeParts.Count > 0)
+                report.AddNote(NoteSeverity.Warning,
+                    "Baca Parça Kataloğu'nda Dış Hacim / Malzeme Hacmi girilmemiş (0) parçalar: " +
+                    string.Join(", ", _estimatedVolumeParts) +
+                    " — hesabın doğru kalması için bu hacimler parçanın geometrisinden YAKLAŞIK olarak " +
+                    "hesaplandı (dış çap = iç çap + 2 × et kalınlığı; konik için kesik koni). Kesin değer için kataloğa girin.");
+            if (_unestimableVolumeParts.Count > 0)
+                report.AddNote(NoteSeverity.Warning,
+                    "Hacmi 0 olan ve geometrisinden hesaplanamayan parçalar (hacim 0 alındı, baca geri dolgusu fazla çıkar): " +
+                    string.Join("; ", _unestimableVolumeParts.Select(kv => $"{kv.Key} ({kv.Value})")));
         }
 
         // =====================================================================
@@ -1255,20 +1275,40 @@ namespace UrbanoMetraj.BoQ.Services
         {
             double unitMaterial, unitExternal;
             var bottom = component as BottomElementComponent;
+
+            // Catalog volumes; any value left at 0 is replaced by a geometric estimate
+            // (user directive 2026-10-15) and reported once per piece in Process().
+            double ext  = component.ExternalVolume, mat = component.MaterialVolume;
+            double fExt = bottom?.FloorExternalVolume ?? 0, fMat = bottom?.FloorMaterialVolume ?? 0;
+            bool needFloor = isDegisken && bottom != null && (fExt <= 0 || fMat <= 0);
+            if (ext <= 0 || mat <= 0 || needFloor)
+            {
+                if (TryEstimatePieceVolumes(component, isDegisken,
+                        out double eExt, out double eMat, out double eFExt, out double eFMat, out string problem))
+                {
+                    if (ext <= 0) ext = eExt;
+                    if (mat <= 0) mat = eMat;
+                    if (needFloor) { if (fExt <= 0) fExt = eFExt; if (fMat <= 0) fMat = eFMat; }
+                    if (eExt > 0 || eMat > 0) _estimatedVolumeParts.Add(component.Name ?? "?");
+                }
+                else
+                    _unestimableVolumeParts[component.Name ?? "?"] = problem;
+            }
+
             if (isDegisken && bottom != null)
             {
-                unitMaterial = component.MaterialVolume * heightM + bottom.FloorMaterialVolume;
-                unitExternal = component.ExternalVolume * heightM + bottom.FloorExternalVolume;
+                unitMaterial = mat * heightM + fMat;
+                unitExternal = ext * heightM + fExt;
             }
             else if (isDegisken)
             {
-                unitMaterial = component.MaterialVolume * heightM;
-                unitExternal = component.ExternalVolume * heightM;
+                unitMaterial = mat * heightM;
+                unitExternal = ext * heightM;
             }
             else
             {
-                unitMaterial = component.MaterialVolume;
-                unitExternal = component.ExternalVolume;
+                unitMaterial = mat;
+                unitExternal = ext;
             }
 
             return new StackedPart
@@ -1285,6 +1325,94 @@ namespace UrbanoMetraj.BoQ.Services
                 WallThicknessMm    = ResolveWallThicknessMm(component),
                 Role               = component.Role
             };
+        }
+
+        /// <summary>
+        /// Approximate volumes of one catalog piece from its own geometry, used only when the
+        /// catalog leaves Dış Hacim / Malzeme Hacmi at 0. Fixed piece → whole-piece volumes at
+        /// EffectiveHeight; değişken (perMetre) → rates per 1 m height (+ Taban floor slab).
+        ///   Gövde / Boyun : outer Ø = inner Ø + 2·et → cylinder; material = outer − inner.
+        ///   Konik         : outer/inner truncated cones (bottom/top inner Ø + 2·et).
+        ///   Taban         : footprint (inner) + 2·et on every side; wall over EffectiveHeight
+        ///                   + full-plan slab of TabanKalınlığı.
+        ///   Kapak         : clear-opening cylinder × height.  Temel altı: Boy × En × height.
+        /// Returns false (with the reason) when the geometry is missing or implausible.
+        /// </summary>
+        private static bool TryEstimatePieceVolumes(
+            ManholeComponent c, bool perMetre,
+            out double ext, out double mat, out double floorExt, out double floorMat, out string problem)
+        {
+            ext = mat = floorExt = floorMat = 0; problem = null;
+            double h = perMetre ? 1.0 : c.EffectiveHeight / 1000.0;
+            double Circle(double d) => Math.PI * d * d / 4.0;
+            double Cone(double r1, double r2) => Math.PI / 3.0 * (r1 * r1 + r1 * r2 + r2 * r2);   // per 1 m height
+
+            bool Ring(double dinMm, double tMm, out double e, out double m, out string why)
+            {
+                e = m = 0; why = null;
+                if (dinMm <= 0) { why = "iç çap girilmemiş"; return false; }
+                if (tMm <= 0)   { why = "et kalınlığı girilmemiş"; return false; }
+                if (tMm > dinMm / 2.0) { why = $"et kalınlığı şüpheli: {tMm:0} mm, iç çap {dinMm:0} mm"; return false; }
+                double din = dinMm / 1000.0, dout = din + 2.0 * tMm / 1000.0;
+                e = Circle(dout) * h; m = (Circle(dout) - Circle(din)) * h;
+                return true;
+            }
+
+            switch (c)
+            {
+                case MiddleElementComponent g:
+                    return Ring(g.InnerDiameterMm, g.WallThicknessMm, out ext, out mat, out problem);
+                case AdjusterComponent a:
+                    return Ring(a.InnerDiameterMm, a.WallThicknessMm, out ext, out mat, out problem);
+                case ReducerComponent r:
+                {
+                    double t = r.WallThicknessMm;
+                    if (r.BottomInnerDiameterMm <= 0 || r.TopInnerDiameterMm <= 0) { problem = "alt/üst iç çap girilmemiş"; return false; }
+                    if (t <= 0) { problem = "et kalınlığı girilmemiş"; return false; }
+                    if (t > Math.Min(r.BottomInnerDiameterMm, r.TopInnerDiameterMm) / 2.0)
+                    { problem = $"et kalınlığı şüpheli: {t:0} mm"; return false; }
+                    double a1 = r.BottomInnerDiameterMm / 2000.0, a2 = r.TopInnerDiameterMm / 2000.0, tm = t / 1000.0;
+                    ext = Cone(a1 + tm, a2 + tm) * h;
+                    mat = ext - Cone(a1, a2) * h;
+                    return true;
+                }
+                case BottomElementComponent b:
+                {
+                    if (c.EffectiveHeight <= 0 && b.TabanKalinligiMm <= 0) return true;   // e.g. "Bacasız Taban"
+                    double t = Math.Max(0, b.WallThicknessMm) / 1000.0, slab = Math.Max(0, b.TabanKalinligiMm) / 1000.0;
+                    var fp = b.Footprint ?? new Footprint();
+                    double aIn, aOut;
+                    if (fp.Shape == FootprintShape.Circular && fp.DiameterMm > 0)
+                    { double d = fp.DiameterMm / 1000.0; aIn = Circle(d); aOut = Circle(d + 2 * t); }
+                    else if (fp.Shape == FootprintShape.Square && fp.SideMm > 0)
+                    { double sd = fp.SideMm / 1000.0; aIn = sd * sd; aOut = (sd + 2 * t) * (sd + 2 * t); }
+                    else if (fp.LengthMm > 0 && fp.WidthMm > 0)
+                    { double l = fp.LengthMm / 1000.0, w = fp.WidthMm / 1000.0; aIn = l * w; aOut = (l + 2 * t) * (w + 2 * t); }
+                    else { problem = "taban ölçüsü (Footprint) girilmemiş"; return false; }
+                    if (perMetre)
+                    {
+                        ext = aOut; mat = aOut - aIn;
+                        floorExt = aOut * slab; floorMat = aOut * slab;
+                    }
+                    else
+                    {
+                        ext = aOut * (h + slab);
+                        mat = aOut * slab + (aOut - aIn) * h;
+                    }
+                    return true;
+                }
+                case CoverComponent k:
+                    if (k.ClearOpeningMm <= 0) { problem = "net açıklık girilmemiş"; return false; }
+                    ext = mat = Circle(k.ClearOpeningMm / 1000.0) * h;
+                    return true;
+                case TemelAltiParcaComponent ta:
+                    if (ta.Boy <= 0 || ta.En <= 0) { problem = "Boy/En girilmemiş"; return false; }
+                    ext = mat = ta.Boy / 1000.0 * ta.En / 1000.0 * h;
+                    return true;
+                default:
+                    problem = "geometri tanımsız";
+                    return false;
+            }
         }
 
         // "değişken" (variable-height) pieces are appended to stack.Parts after ALL fixed

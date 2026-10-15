@@ -854,6 +854,9 @@ namespace UrbanoMetraj.BoQ.Services
             if (tplMain == null) return result;
 
             int missingCatalogCount = 0, missingTrenchRuleCount = 0, unlinkedPipeCount = 0;
+            // Pipe wall thickness: Urbano's exported catalog vs our Akıllı Montaj pipe catalog
+            // (key = Urbano item + our PipeDefinition) → (urbano mm, ours mm, section count).
+            var wallMismatch = new Dictionary<string, (string Urb, string Ours, double UrbMm, double OurMm, int Count)>();
 
             foreach (var sEl in tplMain.Descendants("ss").Elements("s"))
             {
@@ -888,10 +891,20 @@ namespace UrbanoMetraj.BoQ.Services
                 double odMm    = 0;
                 int    nomMm   = 0;
                 string material= "?";
+                double urbWallMm = double.NaN;   // NaN = Urbano gives no usable wall
+                string urbItemName = "";
 
                 var pipeProps = CatLookup(catDict, pprGuid);
                 if (pipeProps != null)
                 {
+                    // Urbano's own wall: PIPE_T, else (PIPE_DV − PIPE_DU)/2 (DV = outer, DU = inner).
+                    double urbT  = DecodeFloatProp(GetProp(pipeProps, "PIPE_T"));
+                    double urbDv = DecodeFloatProp(GetProp(pipeProps, "PIPE_DV"));
+                    double urbDu = DecodeFloatProp(GetProp(pipeProps, "PIPE_DU"));
+                    if (urbT > 0)                     urbWallMm = urbT;
+                    else if (urbDv > 0 && urbDu > 0)  urbWallMm = Math.Max(0, (urbDv - urbDu) / 2.0);
+                    urbItemName = DecodeStrProp(GetProp(pipeProps, "CATALOGITEM_NAME"));
+
                     // PIPE_DV = outer diameter (primary); PIPE_DU = fallback
                     odMm = DecodeFloatProp(GetProp(pipeProps, "PIPE_DV"));
                     if (odMm <= 0)
@@ -940,6 +953,7 @@ namespace UrbanoMetraj.BoQ.Services
                 // consistent in our catalog).
                 string linkedPozNo = "", linkedSinif = "", linkedAciklama = "";
                 Guid   linkedPipeFamilyId = Guid.Empty;
+                PipeDefinition matchedDef = null;   // our catalog pipe actually used (for the wall check)
 
                 if (ProjectRulesStore.IsRulesMode)
                 {
@@ -964,6 +978,7 @@ namespace UrbanoMetraj.BoQ.Services
                         ? FindPipeInFamily(famId, sinif, nomMm) : null;
                     if (rp != null)
                     {
+                        matchedDef         = rp;
                         linkedPozNo        = rp.PozNo    ?? "";
                         linkedSinif        = rp.Sinif    ?? "";
                         linkedAciklama     = rp.Aciklama ?? "";
@@ -983,6 +998,7 @@ namespace UrbanoMetraj.BoQ.Services
                         var linkedPipe = FindPipeDefinitionById(pipeLink.LinkedPipeDefinitionId, out PipeFamily linkedFamily);
                         if (linkedPipe != null)
                         {
+                            matchedDef        = linkedPipe;
                             linkedPozNo       = linkedPipe.PozNo    ?? "";
                             linkedSinif       = linkedPipe.Sinif    ?? "";
                             linkedAciklama    = linkedPipe.Aciklama ?? "";
@@ -1000,6 +1016,24 @@ namespace UrbanoMetraj.BoQ.Services
 
                 double odM = odMm / 1000.0;
                 double idM = nomMm / 1000.0; // inner (nominal) diameter
+
+                // ── Wall-thickness check (warning only — no value is changed) ─────
+                if (matchedDef != null && !double.IsNaN(urbWallMm))
+                {
+                    double ourId     = matchedDef.InnerDiameter > 0 ? matchedDef.InnerDiameter : matchedDef.NominalDiameter;
+                    double ourWallMm = matchedDef.WallThickness > 0
+                        ? matchedDef.WallThickness
+                        : Math.Max(0, (matchedDef.OuterDiameter - ourId) / 2.0);
+                    if (Math.Abs(ourWallMm - urbWallMm) > 0.5)
+                    {
+                        string key = urbItemName + "|" + matchedDef.Id;
+                        wallMismatch.TryGetValue(key, out var w);
+                        wallMismatch[key] = (string.IsNullOrEmpty(urbItemName) ? $"DN{nomMm}" : urbItemName,
+                                             $"DN{matchedDef.NominalDiameter:0} dış Ø{matchedDef.OuterDiameter:0}" +
+                                             (string.IsNullOrEmpty(matchedDef.Sinif) ? "" : $" {matchedDef.Sinif}"),
+                                             urbWallMm, ourWallMm, w.Count + 1);
+                    }
+                }
 
                 // Convert LL10/LL11 → AkarKot using the per-pipe LLPOS measurement position.
                 double invertStart = LlToInvert(ll10, llpos, odM, idM);
@@ -1328,6 +1362,11 @@ namespace UrbanoMetraj.BoQ.Services
                 notes.Add($"{NoteMarker.Warning} {missingTrenchRuleCount} boru kesiti için Hendek Kataloğu kuralı bulunamadı — varsayılan hendek boyutları kullanıldı.");
             if (unlinkedPipeCount > 0)
                 notes.Add($"{NoteMarker.Warning} {unlinkedPipeCount} boru kesiti Tür Eşleştirme'de bağlı değil — Poz No/Sınıf boş kalacak ve bağlı bacalar çap/malzeme listesini çözemeyebilir.");
+            if (wallMismatch.Count > 0)
+                notes.Add($"{NoteMarker.Warning} Boru et kalınlığı Urbano kataloğu ile Akıllı Montaj boru kataloğunda farklı " +
+                          "(hesap Akıllı Montaj değerini kullanır; Urbano kotları Urbano'nun kendi borusuna göre çizilmiştir): " +
+                          string.Join("; ", wallMismatch.Values.Select(w =>
+                              $"'{w.Urb}' Urbano {w.UrbMm:0.#} mm ↔ {w.Ours} {w.OurMm:0.#} mm ({w.Count} kesit)")));
 
             return result;
         }
