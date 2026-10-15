@@ -133,6 +133,7 @@
     <Compile Include="BoQ\Services\PipeNetLengthService.cs" />
     <Compile Include="BoQ\Services\ManholeConnectionLinkService.cs" />
     <Compile Include="BoQ\Services\ManholeExcavOverlapService.cs" />
+    <Compile Include="BoQ\Services\PipeIdentityDiagService.cs" />
     <Compile Include="BoQ\Services\ManholeExcavationGeometry.cs" />
     <Compile Include="BoQ\Services\ExcelExportService.cs" />
     <Compile Include="BoQ\Services\ManholeKesifExportService.cs" />

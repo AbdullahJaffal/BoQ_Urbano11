@@ -159,7 +159,7 @@ namespace UrbanoMetraj.BoQ.Services
                         // BoQParserService/V2 BuildGrossProfiles): one trapezoid whose
                         // bottom is the outer pipe bottom − Yataklama, widening with the
                         // slope from THAT bottom; zones are referenced to the OUTER pipe
-                        // bottom. (Before 2026-10-16 the trench was taken down to the pit
+                        // bottom. (Before 2026-10-15 the trench was taken down to the pit
                         // bottom at full width, from the inner invert, and the sand zones
                         // with no slope — UT_BOQ_PIT_DIAG proved T ≠ F + S by 270.75 m³.)
                         double wallM     = Math.Max(0, (sdr.PipeOuterDiamM - sdr.DiameterMm / 1000.0) / 2.0);
@@ -854,13 +854,13 @@ namespace UrbanoMetraj.BoQ.Services
         /// </summary>
         private static double PitTrenchSlice(
             ManholeItem mh, double rotAngle, double pitBottom, double z0, double z1,
-            double trBottom, double trWidth, double slope, double dirX, double dirY)
+            double trBottom, double trWidth, double slope, double dirX, double dirY, double reach = 10.0)
         {
             z0 = Math.Max(z0, trBottom);
             if (z1 - z0 <= 1e-6) return 0;
             double A(double z) => AreaOfIntersect(
                 ManholeSquareAt(mh.X, mh.Y, pitBottom, z, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio),
-                TrenchRectAt(mh.X, mh.Y, z, trBottom, trWidth, slope, dirX, dirY));
+                TrenchRectAt(mh.X, mh.Y, z, trBottom, trWidth, slope, dirX, dirY, reach));
             return ((z1 - z0) / 6.0) * (A(z0) + 4.0 * A((z0 + z1) * 0.5) + A(z1));
         }
 
@@ -972,6 +972,111 @@ namespace UrbanoMetraj.BoQ.Services
                         rows.Add(r);
                     }
                 }
+            return rows;
+        }
+
+        /// <summary>One pipe between two manholes — the two pipe-in-pit suspects of
+        /// KAZI_DOLGU_DOGRULAMA.md §5.2, measured read-only.</summary>
+        public sealed class DoublePitRow
+        {
+            public string System, Pipe, MhStart, MhEnd;
+            public double Length;
+            /// <summary>Pipe trench lying in BOTH pits (deducted from the pipe once per pit),
+            /// measured with the start-end / end-end trench section.</summary>
+            public double BothPitsFromStart, BothPitsFromEnd;
+            /// <summary>Trench counted inside a pit BEYOND the pipe's far end (the 10 m reach
+            /// overshoots a pipe shorter than the pit), start / end manhole.</summary>
+            public double OvershootStart, OvershootEnd;
+        }
+
+        /// <summary>
+        /// READ-ONLY. For every pipe whose both end manholes have a pit: (1) the trench
+        /// volume inside pitStart ∩ pitEnd, (2) the trench volume Compute() takes beyond
+        /// the pipe's own length (Reach = 10 m vs the real length). Neither changes data.
+        /// </summary>
+        public static List<DoublePitRow> DiagnoseDoublePit(BoQReport report)
+        {
+            var rows = new List<DoublePitRow>();
+            if (report?.Systems == null || report.SectionDebug == null) return rows;
+
+            var outlets = report.SectionDebug.Where(s => s.StartNodeName != null)
+                .GroupBy(s => s.StartNodeName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+            var inlets = report.SectionDebug.Where(s => s.EndNodeName != null)
+                .GroupBy(s => s.EndNodeName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+            var mhByKey = new Dictionary<string, ManholeItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var sys in report.Systems)
+                foreach (var m in sys.Manholes)
+                    if (m.NodeName != null) mhByKey[sys.SystemName + "|" + m.NodeName] = m;
+
+            foreach (var sdr in report.SectionDebug)
+            {
+                mhByKey.TryGetValue(sdr.SystemName + "|" + sdr.StartNodeName, out var mA);
+                mhByKey.TryGetValue(sdr.SystemName + "|" + sdr.EndNodeName,   out var mB);
+                double dx = sdr.EndX - sdr.StartX, dy = sdr.EndY - sdr.StartY, L = Math.Sqrt(dx * dx + dy * dy);
+                if (L < 1e-6) continue;
+                double ux = dx / L, uy = dy / L;
+
+                double wallM = Math.Max(0, (sdr.PipeOuterDiamM - sdr.DiameterMm / 1000.0) / 2.0);
+                double TrBottom(double inv) => inv - wallM - sdr.TrBedHeight;
+
+                bool PitOk(ManholeItem m) => m != null && m.ExcavationDepth > 1e-6;
+                var row = new DoublePitRow
+                {
+                    System = sdr.SystemName, Pipe = $"{sdr.StartNodeName}->{sdr.EndNodeName}",
+                    MhStart = sdr.StartNodeName, MhEnd = sdr.EndNodeName, Length = L
+                };
+
+                // (2) overshoot at each end: same zone integration as Compute, reach 10 m vs L.
+                double Overshoot(ManholeItem m, double inv, double dirX, double dirY)
+                {
+                    if (!PitOk(m)) return 0;
+                    double zTop = m.ZKazi, zBot = zTop - m.ExcavationDepth;
+                    double rot = ComputeRotationAngle(m, outlets, inlets);
+                    double trb = TrBottom(inv);
+                    double full = PitTrenchSlice(m, rot, zBot, zBot, zTop, trb, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY, 10.0);
+                    double cut  = PitTrenchSlice(m, rot, zBot, zBot, zTop, trb, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY, L);
+                    return Math.Max(0, full - cut);
+                }
+                row.OvershootStart = Overshoot(mA, sdr.InvertStart,  ux,  uy);
+                row.OvershootEnd   = Overshoot(mB, sdr.InvertEnd,   -ux, -uy);
+
+                // (1) trench inside BOTH pits (composite Simpson, 24 intervals).
+                if (PitOk(mA) && PitOk(mB))
+                {
+                    double zTopA = mA.ZKazi, zBotA = zTopA - mA.ExcavationDepth, rotA = ComputeRotationAngle(mA, outlets, inlets);
+                    double zTopB = mB.ZKazi, zBotB = zTopB - mB.ExcavationDepth, rotB = ComputeRotationAngle(mB, outlets, inlets);
+
+                    double Both(ManholeItem anchor, double inv, double dirX, double dirY)
+                    {
+                        double trb = TrBottom(inv);
+                        double lo = Math.Max(Math.Max(zBotA, zBotB), trb), hi = Math.Min(zTopA, zTopB);
+                        if (hi - lo <= 1e-6) return 0;
+                        double Area(double z)
+                        {
+                            var sqA = ManholeSquareAt(mA.X, mA.Y, zBotA, z, rotA, mA.ExcavBaseSideM, mA.ExcavSlopeRatio);
+                            var sqB = ManholeSquareAt(mB.X, mB.Y, zBotB, z, rotB, mB.ExcavBaseSideM, mB.ExcavSlopeRatio);
+                            var tr  = TrenchRectAt(anchor.X, anchor.Y, z, trb, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY, L);
+                            if (sqA == null || sqB == null || tr == null) return 0;
+                            var ab = ClipperGeo.Intersect(sqA, sqB);
+                            if (ab.Count == 0) return 0;
+                            return ClipperGeo.Area(ClipperGeo.Intersect(ab, new List<List<double[]>> { tr }));
+                        }
+                        const int N = 24;
+                        double h = (hi - lo) / N, acc = 0;
+                        for (int k = 0; k <= N; k++)
+                            acc += ((k == 0 || k == N) ? 1 : (k % 2 == 1 ? 4 : 2)) * Area(lo + k * h);
+                        return acc * h / 3.0;
+                    }
+                    row.BothPitsFromStart = Both(mA, sdr.InvertStart,  ux,  uy);
+                    row.BothPitsFromEnd   = Both(mB, sdr.InvertEnd,   -ux, -uy);
+                }
+
+                if (row.BothPitsFromStart + row.BothPitsFromEnd + row.OvershootStart + row.OvershootEnd > 1e-9)
+                    rows.Add(row);
+            }
             return rows;
         }
 
@@ -1129,7 +1234,7 @@ namespace UrbanoMetraj.BoQ.Services
             double cx, double cy,
             double z, double invertAtMh,
             double baseTrenchWidth, double slopeRatio,
-            double dirX, double dirY)
+            double dirX, double dirY, double reach = 10.0)
         {
             double rise  = Math.Max(0, z - invertAtMh);
             double halfW = (baseTrenchWidth + 2.0 * rise * slopeRatio) * 0.5;
@@ -1137,7 +1242,7 @@ namespace UrbanoMetraj.BoQ.Services
 
             // Perpendicular (90° CCW from dir)
             double perpX = -dirY, perpY = dirX;
-            const double Reach = 10.0;  // m — safely beyond any manhole footprint
+            double Reach = reach;   // m — default 10: safely beyond any manhole footprint
 
             // CCW: near-left → far-left → far-right → near-right
             return new List<double[]>
