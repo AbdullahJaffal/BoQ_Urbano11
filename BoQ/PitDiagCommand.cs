@@ -149,7 +149,8 @@ namespace UrbanoMetraj.BoQ
                 var nob = v2.Where(r => r.BisectorStations == 0).ToList();
                 sb.Append($"\n  Bisektorsuz borular ({nob.Count,3})     : hata {nob.Sum(r => r.ExcavError),10:F3} / ref {nob.Sum(r => r.ExcavRef),10:F3}");
                 sb.Append($"\n  Bisektorlu borular  ({bis.Count,3})     : hata {bis.Sum(r => r.ExcavError),10:F3} / ref {bis.Sum(r => r.ExcavRef),10:F3}");
-                sb.Append("\n  ---- SEGMENT AYRINTISI (kesit duzleminin eksen kesimi ile) ----");
+                sb.Append("\n  ---- SEGMENT AYRINTISI (ESKI yontem: alan x istasyonlar arasi dunya mesafesi) ----");
+                sb.Append("\n  (V2 artik eksen kesimiyle entegre ediyor; dogrulama = yukaridaki 'Kazi V2 - referans' ~ 0)");
                 sb.Append("\n                           V2            Referans        Fark");
                 sb.Append($"\n  Eksen-Eksen (AA)   : {v2.Sum(r => r.V2AA),12:F3}  {v2.Sum(r => r.RefAA),12:F3}  {v2.Sum(r => r.V2AA - r.RefAA),10:F3}");
                 sb.Append($"\n  Gecis Eksen-Bis.(TR): {v2.Sum(r => r.V2TR),12:F3}  {v2.Sum(r => r.RefTR),12:F3}  {v2.Sum(r => r.V2TR - r.RefTR),10:F3}");
