@@ -31,6 +31,13 @@ namespace UrbanoMetraj.BoQ.Services
             public double R;
             public double ShapeDatum, ShapeDegenerate, ShapeOther, Clamp, Path, Rest, BisectorBody;
             public int    DatumStations, DegenerateStations, BisectorStations;
+            // Station-path check: the volumes as V2 integrates them (area × station-to-
+            // station world distance) vs a reference that integrates the PERPENDICULAR
+            // section (area / k) over the distance ALONG the pipe axis. A difference means
+            // the station path (bisector frame / zone boundaries) inflates or deflates
+            // the volume itself — not only the pipe-body term.
+            public double PathLength, AlongLength;   // Σ world distance, Σ |Δ along axis|
+            public double ExcavPathError, FillPathError;
         }
 
         public static List<Row> Run(BoQReport report)
@@ -76,6 +83,14 @@ namespace UrbanoMetraj.BoQ.Services
                     else                            r.ShapeOther      += shape;
 
                     r.Clamp += (a.Clamp + b.Clamp) * 0.5 * d;
+
+                    double dAlong = Math.Abs(Along(st[k + 1], s) - Along(st[k], s));
+                    r.PathLength  += d;
+                    r.AlongLength += dAlong;
+                    r.ExcavPathError += (a.Ex + b.Ex) * 0.5 * d - (a.Ex / a.K + b.Ex / b.K) * 0.5 * dAlong;
+                    double fa = a.Layers - s.PipeArea, fb = b.Layers - s.PipeArea;
+                    double fa0 = a.Layers / a.K - s.PipeArea, fb0 = b.Layers / b.K - s.PipeArea;
+                    r.FillPathError  += (fa + fb) * 0.5 * d - (fa0 + fb0) * 0.5 * dAlong;
                     r.Path  += s.PipeArea * d;
                     double kAvg = (a.K + b.K) * 0.5;
                     if (kAvg > 1.0005) r.BisectorBody += s.PipeArea * d * (kAvg - 1.0);
@@ -90,7 +105,15 @@ namespace UrbanoMetraj.BoQ.Services
 
         private enum Cat { Other, Datum, Degenerate }
 
-        private struct StInfo { public double Gap, Clamp, K; public Cat Cat; }
+        private struct StInfo { public double Gap, Clamp, K, Ex, Layers; public Cat Cat; }
+
+        // Position of a station along the pipe axis (Start → End), metres.
+        private static double Along(CrossSectionStation x, SectionDebugRow s)
+        {
+            double dx = s.EndX - s.StartX, dy = s.EndY - s.StartY, L = Math.Sqrt(dx * dx + dy * dy);
+            if (L < 1e-9) return 0;
+            return ((x.WorldX - s.StartX) * dx + (x.WorldY - s.StartY) * dy) / L;
+        }
 
         private static StInfo Classify(CrossSectionStation x, SectionDebugRow s)
         {
@@ -102,6 +125,8 @@ namespace UrbanoMetraj.BoQ.Services
             var i = new StInfo
             {
                 Gap   = aEx - aBed - aSur - aBf,
+                Ex    = aEx,
+                Layers = aBed + aSur + aBf,
                 Clamp = Math.Max(0, s.PipeArea - aSur),
                 K     = 1.0,
                 Cat   = Cat.Other,

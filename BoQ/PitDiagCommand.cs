@@ -139,12 +139,19 @@ namespace UrbanoMetraj.BoQ
                 sb.Append($"\n  6 Kalan (yuvarlama / bisektor entegr.) : {v2.Sum(r => r.Rest),12:F3}");
                 sb.Append("\n  ---- EK BILGI ----");
                 sb.Append($"\n  Bisektor bolgesinde dusulmeyen govde  : {v2.Sum(r => r.BisectorBody),12:F3}   ({v2.Sum(r => r.BisectorStations)} istasyon)");
+                sb.Append("\n  ---- ISTASYON YOLU KONTROLU (bisektor / bolge siniri) ----");
+                sb.Append($"\n  Istasyon yolu / eksen boyu / Length2D : {v2.Sum(r => r.PathLength),10:F2} / {v2.Sum(r => r.AlongLength),10:F2} / {v2.Sum(r => r.Length2D),10:F2} m");
+                sb.Append($"\n  Kazi: V2 entegrasyonu - eksen referansi : {v2.Sum(r => r.ExcavPathError),12:F3}   (0 olmali)");
+                sb.Append($"\n  Dolgu: V2 entegrasyonu - eksen referansi: {v2.Sum(r => r.FillPathError),12:F3}   (0 olmali)");
                 bool grossMissing = v2.Count > 0 && v2.All(r => r.BeddingGross == 0 && r.SurroundGross == 0);
                 if (grossMissing)
                     sb.Append("\n  UYARI: brut Yataklama/Gomlekleme yok — V249+ ile HESAPLA yeniden calistirilmali.");
                 sb.Append("\n  En buyuk |R| borular:");
                 foreach (var r in v2.OrderByDescending(r => Math.Abs(r.R)).Take(10))
                     sb.Append($"\n    {r.System} {r.Pipe,-22} R={r.R,9:F3}  dolgu-kotu={r.ShapeDatum,8:F3}  dejenere={r.ShapeDegenerate,8:F3}  diger={r.ShapeOther,8:F3}  yol={r.Path,8:F3}  kalan={r.Rest,8:F3}");
+                sb.Append("\n  En buyuk kazi yol hatasi borular:");
+                foreach (var r in v2.OrderByDescending(r => Math.Abs(r.ExcavPathError)).Take(10))
+                    sb.Append($"\n    {r.System} {r.Pipe,-22} kazi={r.ExcavPathError,9:F3}  dolgu={r.FillPathError,9:F3}  yol={r.PathLength,8:F2} m  eksen={r.AlongLength,8:F2} m  L2D={r.Length2D,8:F2} m  bisektor ist={r.BisectorStations}");
 
                 string csv = Path.Combine(Path.GetTempPath(), "UrbanoMetraj_PipeDiag.csv");
                 WritePipeCsv(csv, rows);
@@ -181,12 +188,14 @@ namespace UrbanoMetraj.BoQ
             sb.AppendLine(string.Join(sep, "Sistem", "Boru", "V2", "Boy", "PipeArea",
                 "KaziBrut", "YataklamaBrut", "GomleklemeBrut", "GeriDolguBrut", "R",
                 "DolguKotu", "Dejenere", "Diger", "Kirpma", "Yol", "Kalan", "BisektorGovde",
-                "DolguKotuIst", "DejenereIst", "BisektorIst"));
+                "DolguKotuIst", "DejenereIst", "BisektorIst",
+                "IstasyonYolu", "EksenBoyu", "KaziYolHatasi", "DolguYolHatasi"));
             foreach (var r in rows)
                 sb.AppendLine(string.Join(sep, r.System, r.Pipe, r.HasV2 ? "1" : "0", N(r.Length2D), N(r.PipeArea),
                     N(r.ExcavGross), N(r.BeddingGross), N(r.SurroundGross), N(r.BackfillGross), N(r.R),
                     N(r.ShapeDatum), N(r.ShapeDegenerate), N(r.ShapeOther), N(r.Clamp), N(r.Path), N(r.Rest),
-                    N(r.BisectorBody), r.DatumStations, r.DegenerateStations, r.BisectorStations));
+                    N(r.BisectorBody), r.DatumStations, r.DegenerateStations, r.BisectorStations,
+                    N(r.PathLength), N(r.AlongLength), N(r.ExcavPathError), N(r.FillPathError)));
             File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
         }
 

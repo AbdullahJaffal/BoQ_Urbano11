@@ -169,7 +169,8 @@ namespace UrbanoMetraj.BoQ.Services
 
                         double ZoneVol(double z0, double z1, double pitBottom, double rLo, double rHi)
                             => PitTrenchSlice(mh, rotAngle, pitBottom, Math.Max(z0, rLo), Math.Min(z1, rHi),
-                                              trBottom, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
+                                              trBottom, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY,
+                                              PipeReach(sdr));
 
                         // Kazı basis: T is the exact sum of its three zones, so the pipe's
                         // trench removed here = its bedding + surround + backfill removed.
@@ -847,6 +848,19 @@ namespace UrbanoMetraj.BoQ.Services
         }
 
         /// <summary>
+        /// The trench rectangle runs from the manhole centre along the pipe for the pipe's
+        /// own length (it ends at the other manhole's centre). Was a fixed 10 m, which on a
+        /// pipe shorter than the pit counted trench beyond the pipe's end (UT_BOQ_PIT_DIAG:
+        /// 0.048 m³ on 31 pipes, 2026-10-18).
+        /// </summary>
+        private static double PipeReach(SectionDebugRow sdr)
+        {
+            double dx = sdr.EndX - sdr.StartX, dy = sdr.EndY - sdr.StartY;
+            double L = Math.Sqrt(dx * dx + dy * dy);
+            return L > 1e-6 ? L : 10.0;
+        }
+
+        /// <summary>
         /// Volume of (manhole pit) ∩ (pipe trench) between z0 and z1 — Simpson's 1/3 rule
         /// on one Z-zone. The trench is the pipe's real trapezoid: width
         /// trWidth + 2·(z − trBottom)·slope, nothing below trBottom. Within one zone the
@@ -933,7 +947,8 @@ namespace UrbanoMetraj.BoQ.Services
 
                         double Zone(double z0, double z1, double pitBottom, double rLo, double rHi)
                             => PitTrenchSlice(mh, rot, pitBottom, Math.Max(z0, rLo), Math.Min(z1, rHi),
-                                              trBottom, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
+                                              trBottom, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY,
+                                              PipeReach(sdr));
 
                         var r = new PitDiagRow
                         {
@@ -1036,7 +1051,8 @@ namespace UrbanoMetraj.BoQ.Services
                     double zTop = m.ZKazi, zBot = zTop - m.ExcavationDepth;
                     double rot = ComputeRotationAngle(m, outlets, inlets);
                     double trb = TrBottom(inv);
-                    double full = PitTrenchSlice(m, rot, zBot, zBot, zTop, trb, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY, 10.0);
+                    // What Compute now takes (PipeReach) vs the pipe's exact length — 0 once fixed.
+                    double full = PitTrenchSlice(m, rot, zBot, zBot, zTop, trb, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY, PipeReach(sdr));
                     double cut  = PitTrenchSlice(m, rot, zBot, zBot, zTop, trb, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY, L);
                     return Math.Max(0, full - cut);
                 }

@@ -949,8 +949,6 @@ namespace UrbanoMetraj.BoQ
             if (L < 1e-9) return;
 
             double hwBase = row.TrWidth      * 0.5;
-            double hwBed  = row.TopWidthBed  * 0.5;
-            double hwSurr = row.TopWidthSurr * 0.5;
 
             foreach (var st in stations)
             {
@@ -971,7 +969,15 @@ namespace UrbanoMetraj.BoQ
                 double trueDepth  = Math.Max(0, zTop - zBot);
                 double topWExcav  = row.TrWidth + 2.0 * trueDepth * row.SlopeRatio;
                 double hwExcav    = topWExcav * 0.5;
-                double zSurrTop   = Math.Min(outerPipeBtm + row.HSurround, zTop);
+                // Sand zones clipped at the excavation top WITH the trench's own width at
+                // the clipped level (2026-10-18). Before, a shallow station (ground below
+                // the sand top) kept the full-height TopWidthBed/TopWidthSurr at the lower
+                // clipped level → the sand polygon stuck out of the trench and Σfill
+                // exceeded Σkazı (UT_BOQ_PIPE_DIAG "dejenere", −9.824 m³ on 45 stations).
+                double zBedTop    = Math.Max(zBot, Math.Min(outerPipeBtm, zTop));
+                double zSurrTop   = Math.Max(zBedTop, Math.Min(outerPipeBtm + row.HSurround, zTop));
+                double hwBedTop   = (row.TrWidth + 2.0 * (zBedTop  - zBot) * row.SlopeRatio) * 0.5;
+                double hwSurrTop  = (row.TrWidth + 2.0 * (zSurrTop - zBot) * row.SlopeRatio) * 0.5;
 
                 // Backfill's own top reference (ZDolgu), independent of the excavation
                 // top (ZKazi) — same trapezoid formula re-run with the new level (user
@@ -995,18 +1001,18 @@ namespace UrbanoMetraj.BoQ
                 };
                 st.BeddingPoly = new List<double[]>
                 {
-                    new[] { -hwBase, zBot         }, new[] {  hwBase, zBot         },
-                    new[] {  hwBed,  outerPipeBtm }, new[] { -hwBed,  outerPipeBtm }
+                    new[] { -hwBase,   zBot    }, new[] {  hwBase,   zBot    },
+                    new[] {  hwBedTop, zBedTop }, new[] { -hwBedTop, zBedTop }
                 };
                 st.SurroundPoly = new List<double[]>
                 {
-                    new[] { -hwBed,  outerPipeBtm }, new[] {  hwBed,  outerPipeBtm },
-                    new[] {  hwSurr, zSurrTop     }, new[] { -hwSurr, zSurrTop     }
+                    new[] { -hwBedTop,  zBedTop  }, new[] {  hwBedTop,  zBedTop  },
+                    new[] {  hwSurrTop, zSurrTop }, new[] { -hwSurrTop, zSurrTop }
                 };
                 st.BackfillPoly = backfillDegenerate ? new List<double[]>() : new List<double[]>
                 {
-                    new[] { -hwSurr,  zSurrTop  }, new[] {  hwSurr,  zSurrTop  },
-                    new[] {  hwDolgu, zTopDolgu }, new[] { -hwDolgu, zTopDolgu }
+                    new[] { -hwSurrTop, zSurrTop  }, new[] {  hwSurrTop, zSurrTop  },
+                    new[] {  hwDolgu,   zTopDolgu }, new[] { -hwDolgu,   zTopDolgu }
                 };
 
                 st.PipePoly = PipePolyAt(row.PipeOuterDiamM, outerPipeBtm, 1.0);
@@ -1287,10 +1293,13 @@ namespace UrbanoMetraj.BoQ
             double trueDepth    = Math.Max(0, zTop - zBot);
 
             double hwBase  = row.TrWidth      * 0.5 / cosHalf;
-            double hwBed   = row.TopWidthBed  * 0.5 / cosHalf;
-            double hwSurr  = row.TopWidthSurr * 0.5 / cosHalf;
             double hwExcav = (row.TrWidth + 2.0 * trueDepth * row.SlopeRatio) * 0.5 / cosHalf;
-            double zSurrTop = Math.Min(outerPipeBtm + row.HSurround, zTop);
+            // Sand zones clipped at the excavation top with the trench width at that level
+            // (mirrors BuildGrossProfiles, 2026-10-18).
+            double zBedTop   = Math.Max(zBot, Math.Min(outerPipeBtm, zTop));
+            double zSurrTop  = Math.Max(zBedTop, Math.Min(outerPipeBtm + row.HSurround, zTop));
+            double hwBedTop  = (row.TrWidth + 2.0 * (zBedTop  - zBot) * row.SlopeRatio) * 0.5 / cosHalf;
+            double hwSurrTop = (row.TrWidth + 2.0 * (zSurrTop - zBot) * row.SlopeRatio) * 0.5 / cosHalf;
 
             // Backfill's own top reference (ZDolgu), independent of the excavation
             // top (ZKazi) — mirrors BuildGrossProfiles.
@@ -1319,12 +1328,12 @@ namespace UrbanoMetraj.BoQ
                 new[] {hwExcav, zTop}, new[] {-hwExcav, zTop} };
             st.BeddingPoly = new List<double[]> {
                 new[] {-hwBase, zBot}, new[] {hwBase, zBot},
-                new[] {hwBed, outerPipeBtm}, new[] {-hwBed, outerPipeBtm} };
+                new[] {hwBedTop, zBedTop}, new[] {-hwBedTop, zBedTop} };
             st.SurroundPoly = new List<double[]> {
-                new[] {-hwBed, outerPipeBtm}, new[] {hwBed, outerPipeBtm},
-                new[] {hwSurr, zSurrTop}, new[] {-hwSurr, zSurrTop} };
+                new[] {-hwBedTop, zBedTop}, new[] {hwBedTop, zBedTop},
+                new[] {hwSurrTop, zSurrTop}, new[] {-hwSurrTop, zSurrTop} };
             st.BackfillPoly = backfillDegenerate ? new List<double[]>() : new List<double[]> {
-                new[] {-hwSurr,  zSurrTop }, new[] {hwSurr,  zSurrTop },
+                new[] {-hwSurrTop, zSurrTop }, new[] {hwSurrTop, zSurrTop },
                 new[] {hwDolgu, zTopDolgu}, new[] {-hwDolgu, zTopDolgu} };
 
             st.PipePoly = PipePolyAt(row.PipeOuterDiamM, outerPipeBtm, cosHalf);
