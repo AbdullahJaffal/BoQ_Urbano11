@@ -31,13 +31,13 @@ namespace UrbanoMetraj.BoQ.Services
             public double R;
             public double ShapeDatum, ShapeDegenerate, ShapeOther, Clamp, Path, Rest, BisectorBody;
             public int    DatumStations, DegenerateStations, BisectorStations;
-            // Station-path check: the volumes as V2 integrates them (area × station-to-
-            // station world distance) vs a reference that integrates the PERPENDICULAR
-            // section (area / k) over the distance ALONG the pipe axis. A difference means
-            // the station path (bisector frame / zone boundaries) inflates or deflates
-            // the volume itself — not only the pipe-body term.
-            public double PathLength, AlongLength;   // Σ world distance, Σ |Δ along axis|
-            public double ExcavPathError, FillPathError;
+            // Exact excavation reference, independent of the station frames: the pipe's own
+            // trapezoid (bottom = outer pipe bottom − Yataklama, width TrWidth + 2·D·slope)
+            // integrated along the axis from the stored end levels (StartTerrainZ/EndTerrainZ,
+            // InvertStart/InvertEnd — linear, exactly what V2 interpolates per station).
+            // ExcavError = V2 gross − reference: what the station integration adds/loses.
+            public double PathLength;                // Σ station-to-station world distance (info)
+            public double ExcavRef, ExcavError;
         }
 
         public static List<Row> Run(BoQReport report)
@@ -84,18 +84,14 @@ namespace UrbanoMetraj.BoQ.Services
 
                     r.Clamp += (a.Clamp + b.Clamp) * 0.5 * d;
 
-                    double dAlong = Math.Abs(Along(st[k + 1], s) - Along(st[k], s));
-                    r.PathLength  += d;
-                    r.AlongLength += dAlong;
-                    r.ExcavPathError += (a.Ex + b.Ex) * 0.5 * d - (a.Ex / a.K + b.Ex / b.K) * 0.5 * dAlong;
-                    double fa = a.Layers - s.PipeArea, fb = b.Layers - s.PipeArea;
-                    double fa0 = a.Layers / a.K - s.PipeArea, fb0 = b.Layers / b.K - s.PipeArea;
-                    r.FillPathError  += (fa + fb) * 0.5 * d - (fa0 + fb0) * 0.5 * dAlong;
+                    r.PathLength += d;
                     r.Path  += s.PipeArea * d;
                     double kAvg = (a.K + b.K) * 0.5;
                     if (kAvg > 1.0005) r.BisectorBody += s.PipeArea * d * (kAvg - 1.0);
                 }
                 r.Path -= s.PipeArea * s.Length2D;
+                r.ExcavRef   = ExcavReference(s);
+                r.ExcavError = r.ExcavGross - r.ExcavRef;
                 // R = Σ gap + Path − Clamp + rest   (Gömlekleme net = surround poly − body + clamp)
                 r.Rest = r.R - (r.ShapeDatum + r.ShapeDegenerate + r.ShapeOther + r.Path - r.Clamp);
                 rows.Add(r);
@@ -105,14 +101,27 @@ namespace UrbanoMetraj.BoQ.Services
 
         private enum Cat { Other, Datum, Degenerate }
 
-        private struct StInfo { public double Gap, Clamp, K, Ex, Layers; public Cat Cat; }
+        private struct StInfo { public double Gap, Clamp, K; public Cat Cat; }
 
-        // Position of a station along the pipe axis (Start → End), metres.
-        private static double Along(CrossSectionStation x, SectionDebugRow s)
+        // ∫ trench area dt over [0, Length2D] — composite Simpson, 40 intervals (the area
+        // is quadratic in t except where the depth clamps at 0).
+        private static double ExcavReference(SectionDebugRow s)
         {
-            double dx = s.EndX - s.StartX, dy = s.EndY - s.StartY, L = Math.Sqrt(dx * dx + dy * dy);
-            if (L < 1e-9) return 0;
-            return ((x.WorldX - s.StartX) * dx + (x.WorldY - s.StartY) * dy) / L;
+            double L = s.Length2D;
+            if (L <= 1e-9) return 0;
+            double wall = Math.Max(0, (s.PipeOuterDiamM - s.DiameterMm / 1000.0) / 2.0);
+            double A(double f)
+            {
+                double zTop = s.StartTerrainZ + (s.EndTerrainZ - s.StartTerrainZ) * f;
+                double inv  = s.InvertStart   + (s.InvertEnd   - s.InvertStart)   * f;
+                double D    = Math.Max(0, zTop - (inv - wall - s.TrBedHeight));
+                return D * (s.TrWidth + D * s.SlopeRatio);
+            }
+            const int N = 40;
+            double acc = 0;
+            for (int k = 0; k <= N; k++)
+                acc += ((k == 0 || k == N) ? 1 : (k % 2 == 1 ? 4 : 2)) * A((double)k / N);
+            return acc * (L / N) / 3.0;
         }
 
         private static StInfo Classify(CrossSectionStation x, SectionDebugRow s)
@@ -125,8 +134,6 @@ namespace UrbanoMetraj.BoQ.Services
             var i = new StInfo
             {
                 Gap   = aEx - aBed - aSur - aBf,
-                Ex    = aEx,
-                Layers = aBed + aSur + aBf,
                 Clamp = Math.Max(0, s.PipeArea - aSur),
                 K     = 1.0,
                 Cat   = Cat.Other,

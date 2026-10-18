@@ -994,10 +994,14 @@ namespace UrbanoMetraj.BoQ
                 st.TrueDepthDolgu = trueDepthDolgu;
                 st.DolguInvalid   = dolguInvalid;
 
+                // Top clamped to the trench bottom: where the ground is BELOW the trench
+                // bottom (pipe above natural ground) the polygon used to flip upside down and
+                // its |area| counted as excavation (UT_BOQ_PIPE_DIAG, A21→A22, 2026-10-18).
+                double zTopEx = zBot + trueDepth;
                 st.ExcavPoly = new List<double[]>
                 {
-                    new[] { -hwBase,  zBot  }, new[] {  hwBase,  zBot  },
-                    new[] {  hwExcav, zTop  }, new[] { -hwExcav, zTop  }
+                    new[] { -hwBase,  zBot   }, new[] {  hwBase,  zBot   },
+                    new[] {  hwExcav, zTopEx }, new[] { -hwExcav, zTopEx }
                 };
                 st.BeddingPoly = new List<double[]>
                 {
@@ -1323,9 +1327,10 @@ namespace UrbanoMetraj.BoQ
                 HwExcav        = hwExcav
             };
 
+            double zTopEx = zBot + trueDepth;   // clamped: no inverted polygon (mirrors BuildGrossProfiles)
             st.ExcavPoly = new List<double[]> {
                 new[] {-hwBase, zBot}, new[] {hwBase, zBot},
-                new[] {hwExcav, zTop}, new[] {-hwExcav, zTop} };
+                new[] {hwExcav, zTopEx}, new[] {-hwExcav, zTopEx} };
             st.BeddingPoly = new List<double[]> {
                 new[] {-hwBase, zBot}, new[] {hwBase, zBot},
                 new[] {hwBedTop, zBedTop}, new[] {-hwBedTop, zBedTop} };
