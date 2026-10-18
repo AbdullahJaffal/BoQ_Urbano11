@@ -145,6 +145,18 @@ namespace UrbanoMetraj.BoQ
                 sb.Append($"\n  Kazi referansi (boru ekseni, analitik): {v2.Sum(r => r.ExcavRef),12:F3}");
                 sb.Append($"\n  Kazi V2 - referans                    : {exErr,12:F3}   (0 olmali)");
                 sb.Append($"\n  R'nin dolgu tarafi (R - kazi hatasi)  : {R - exErr,12:F3}");
+                var bis = v2.Where(r => r.BisectorStations > 0).ToList();
+                var nob = v2.Where(r => r.BisectorStations == 0).ToList();
+                sb.Append($"\n  Bisektorsuz borular ({nob.Count,3})     : hata {nob.Sum(r => r.ExcavError),10:F3} / ref {nob.Sum(r => r.ExcavRef),10:F3}");
+                sb.Append($"\n  Bisektorlu borular  ({bis.Count,3})     : hata {bis.Sum(r => r.ExcavError),10:F3} / ref {bis.Sum(r => r.ExcavRef),10:F3}");
+                sb.Append("\n  ---- SEGMENT AYRINTISI (kesit duzleminin eksen kesimi ile) ----");
+                sb.Append("\n                           V2            Referans        Fark");
+                sb.Append($"\n  Eksen-Eksen (AA)   : {v2.Sum(r => r.V2AA),12:F3}  {v2.Sum(r => r.RefAA),12:F3}  {v2.Sum(r => r.V2AA - r.RefAA),10:F3}");
+                sb.Append($"\n  Gecis Eksen-Bis.(TR): {v2.Sum(r => r.V2TR),12:F3}  {v2.Sum(r => r.RefTR),12:F3}  {v2.Sum(r => r.V2TR - r.RefTR),10:F3}");
+                sb.Append($"\n  Bisektor-Bis. (BB) : {v2.Sum(r => r.V2BB),12:F3}  {v2.Sum(r => r.RefBB),12:F3}  {v2.Sum(r => r.V2BB - r.RefBB),10:F3}");
+                sb.Append($"\n  Eksen kapsama Σ|Δc| / Length2D        : {v2.Sum(r => r.Coverage),10:F2} / {v2.Sum(r => r.Length2D),10:F2} m");
+                sb.Append($"\n  Geri adim (ayni eksen araligi 2. kez) : {v2.Sum(r => r.BackwardLen),10:F2} m   ({bis.Count(r => r.BackwardLen > 1e-3)} boru)");
+                sb.Append($"\n  Yonu bulunamayan bisektor istasyonu   : {v2.Sum(r => r.BisNoDir)}");
                 bool grossMissing = v2.Count > 0 && v2.All(r => r.BeddingGross == 0 && r.SurroundGross == 0);
                 if (grossMissing)
                     sb.Append("\n  UYARI: brut Yataklama/Gomlekleme yok — V249+ ile HESAPLA yeniden calistirilmali.");
@@ -153,7 +165,7 @@ namespace UrbanoMetraj.BoQ
                     sb.Append($"\n    {r.System} {r.Pipe,-22} R={r.R,9:F3}  dolgu-kotu={r.ShapeDatum,8:F3}  dejenere={r.ShapeDegenerate,8:F3}  diger={r.ShapeOther,8:F3}  yol={r.Path,8:F3}  kalan={r.Rest,8:F3}");
                 sb.Append("\n  En buyuk kazi entegrasyon hatasi borular:");
                 foreach (var r in v2.OrderByDescending(r => Math.Abs(r.ExcavError)).Take(10))
-                    sb.Append($"\n    {r.System} {r.Pipe,-22} kazi V2={r.ExcavGross,10:F3}  ref={r.ExcavRef,10:F3}  hata={r.ExcavError,9:F3}  yol={r.PathLength,8:F2} m  L2D={r.Length2D,8:F2} m  bisektor ist={r.BisectorStations}");
+                    sb.Append($"\n    {r.System} {r.Pipe,-22} hata={r.ExcavError,9:F3}  AA={r.V2AA - r.RefAA,8:F3}  TR={r.V2TR - r.RefTR,8:F3}  BB={r.V2BB - r.RefBB,8:F3}  kapsama={r.Coverage,7:F2}/{r.Length2D,7:F2} m  geri={r.BackwardLen,6:F2} m  bis ist={r.BisectorStations}");
 
                 string csv = Path.Combine(Path.GetTempPath(), "UrbanoMetraj_PipeDiag.csv");
                 WritePipeCsv(csv, rows);
@@ -191,13 +203,16 @@ namespace UrbanoMetraj.BoQ
                 "KaziBrut", "YataklamaBrut", "GomleklemeBrut", "GeriDolguBrut", "R",
                 "DolguKotu", "Dejenere", "Diger", "Kirpma", "Yol", "Kalan", "BisektorGovde",
                 "DolguKotuIst", "DejenereIst", "BisektorIst",
-                "IstasyonYolu", "KaziReferans", "KaziHatasi"));
+                "IstasyonYolu", "KaziReferans", "KaziHatasi",
+                "V2_AA", "Ref_AA", "V2_TR", "Ref_TR", "V2_BB", "Ref_BB", "Kapsama", "GeriAdim", "BisYonsuz"));
             foreach (var r in rows)
                 sb.AppendLine(string.Join(sep, r.System, r.Pipe, r.HasV2 ? "1" : "0", N(r.Length2D), N(r.PipeArea),
                     N(r.ExcavGross), N(r.BeddingGross), N(r.SurroundGross), N(r.BackfillGross), N(r.R),
                     N(r.ShapeDatum), N(r.ShapeDegenerate), N(r.ShapeOther), N(r.Clamp), N(r.Path), N(r.Rest),
                     N(r.BisectorBody), r.DatumStations, r.DegenerateStations, r.BisectorStations,
-                    N(r.PathLength), N(r.ExcavRef), N(r.ExcavError)));
+                    N(r.PathLength), N(r.ExcavRef), N(r.ExcavError),
+                    N(r.V2AA), N(r.RefAA), N(r.V2TR), N(r.RefTR), N(r.V2BB), N(r.RefBB),
+                    N(r.Coverage), N(r.BackwardLen), r.BisNoDir));
             File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
         }
 
