@@ -170,6 +170,15 @@ namespace UrbanoMetraj.BoQ
 
                 string csv = Path.Combine(Path.GetTempPath(), "UrbanoMetraj_PipeDiag.csv");
                 WritePipeCsv(csv, rows);
+
+                // Station dump of the pipes with the largest excavation error (read-only).
+                var dumpPipes = v2.OrderByDescending(r => Math.Abs(r.ExcavError)).Take(8).Select(r => r.Pipe).ToList();
+                var ciD = CultureInfo.CurrentCulture;
+                string dumpCsv = Path.Combine(Path.GetTempPath(), "UrbanoMetraj_StationDump.csv");
+                File.WriteAllText(dumpCsv,
+                    PipeIdentityDiagService.DumpStations(report, dumpPipes, ciD.TextInfo.ListSeparator, ciD),
+                    new UTF8Encoding(true));
+                sb.Append($"\n  Istasyon dokumu ({dumpPipes.Count} boru): {dumpCsv}");
                 sb.Append($"\n  Detay: {csv}");
                 sb.Append("\n================================================================\n");
                 ed.WriteMessage(sb.ToString());

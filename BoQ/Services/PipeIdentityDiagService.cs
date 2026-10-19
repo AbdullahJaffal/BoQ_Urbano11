@@ -121,6 +121,65 @@ namespace UrbanoMetraj.BoQ.Services
             return rows;
         }
 
+        /// <summary>
+        /// READ-ONLY station dump for the given pipes (KAZI_DOLGU_DOGRULAMA §6): every stored
+        /// station (unfiltered, in stored order) with its position, levels, stored and polygon
+        /// excavation areas, and the reference area the analytic check expects at the same
+        /// point — so a residual can be traced to the exact station/segment that causes it.
+        /// Pipe header rows carry the pipe's own geometry (Length2D vs the node-to-node
+        /// distance, end levels, trench parameters).
+        /// </summary>
+        public static string DumpStations(BoQReport report, IEnumerable<string> pipeNames, string sep,
+                                          System.Globalization.CultureInfo ci)
+        {
+            string N(double v) => double.IsNaN(v) ? "" : v.ToString("0.0000", ci);
+            var want = new HashSet<string>(pipeNames ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            var sb = new System.Text.StringBuilder();
+
+            foreach (var s in report?.SectionDebug ?? new List<SectionDebugRow>())
+            {
+                string pipe = s.PipeName ?? $"{s.StartNodeName}->{s.EndNodeName}";
+                if (!want.Contains(pipe)) continue;
+
+                double dx = s.EndX - s.StartX, dy = s.EndY - s.StartY, nodeDist = Math.Sqrt(dx * dx + dy * dy);
+                double wall = Math.Max(0, (s.PipeOuterDiamM - s.DiameterMm / 1000.0) / 2.0);
+                sb.AppendLine(string.Join(sep, "BORU", s.SystemName, pipe,
+                    "Length2D", N(s.Length2D), "DugumArasi", N(nodeDist),
+                    "ZKaziBas", N(s.StartTerrainZ), "ZKaziSon", N(s.EndTerrainZ),
+                    "AkarBas", N(s.InvertStart), "AkarSon", N(s.InvertEnd),
+                    "TrWidth", N(s.TrWidth), "Sev", N(s.SlopeRatio), "Yataklama", N(s.TrBedHeight),
+                    "Et", N(wall), "KaziBrutV2", N(s.VExcavGross), "KaziRef", N(ExcavReference(s))));
+                sb.AppendLine(string.Join(sep, "#", "StationDist", "WorldX", "WorldY", "EksenIzdusumu",
+                    "Kesim_c", "k", "ZKazi", "Akar", "AreaExcav_kayitli", "AreaExcav_poligon",
+                    "PoligonTaban", "PoligonUst", "RefAlan_StationDist", "RefAlan_izdusum",
+                    "Fark_kayitli-ref", "Bisektor"));
+
+                var st = s.Stations ?? new List<CrossSectionStation>();
+                double ux = nodeDist > 1e-9 ? dx / nodeDist : 1, uy = nodeDist > 1e-9 ? dy / nodeDist : 0;
+                var infos = st.Select(x => Has(x.ExcavPoly) ? Classify(x, s) : new StInfo { K = 1 }).ToList();
+                double[] cut = st.Count > 0 ? AxisCuts(st, infos, s, out _) : new double[0];
+
+                for (int i = 0; i < st.Count; i++)
+                {
+                    var x = st[i];
+                    double proj = (x.WorldX - s.StartX) * ux + (x.WorldY - s.StartY) * uy;
+                    double polyA = Has(x.ExcavPoly) ? ClipperGeo.Area(x.ExcavPoly) : 0;
+                    double pBot = x.ExcavPoly != null && x.ExcavPoly.Count >= 3 ? x.ExcavPoly.Min(v => v[1]) : double.NaN;
+                    double pTop = x.ExcavPoly != null && x.ExcavPoly.Count >= 3 ? x.ExcavPoly.Max(v => v[1]) : double.NaN;
+                    double L = s.Length2D > 1e-9 ? s.Length2D : 1;
+                    double refSd   = AreaAt(s, Math.Max(0, Math.Min(1, x.StationDist / L)));
+                    double refProj = AreaAt(s, Math.Max(0, Math.Min(1, proj / L)));
+                    double k = infos[i].K;
+                    sb.AppendLine(string.Join(sep, "", N(x.StationDist), N(x.WorldX), N(x.WorldY), N(proj),
+                        N(cut.Length > i ? cut[i] : double.NaN), N(k), N(x.TerrainZ), N(x.InvertZ),
+                        N(x.AreaExcav), N(polyA), N(pBot), N(pTop), N(refSd), N(refProj),
+                        N(x.AreaExcav / (k > 1e-9 ? k : 1) - refSd), k > 1.0005 ? "1" : "0"));
+                }
+                sb.AppendLine();
+            }
+            return sb.ToString();
+        }
+
         private enum Cat { Other, Datum, Degenerate }
 
         private struct StInfo { public double Gap, Clamp, K, Ex; public Cat Cat; }
