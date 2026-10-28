@@ -139,6 +139,16 @@ namespace UrbanoMetraj.BoQ
                 sb.Append($"\n  6 Kalan (yuvarlama / bisektor entegr.) : {v2.Sum(r => r.Rest),12:F3}");
                 sb.Append("\n  ---- EK BILGI ----");
                 sb.Append($"\n  Bisektor bolgesinde dusulmeyen govde  : {v2.Sum(r => r.BisectorBody),12:F3}   ({v2.Sum(r => r.BisectorStations)} istasyon)");
+                // Scenario invariance (all networks): KU / KL / SP only redistribute overlaps.
+                var sd = report.SectionDebug.Where(x => x.HasV2Volumes).ToList();
+                double eKU = sd.Sum(x => x.VExcavKU), eKL = sd.Sum(x => x.VExcavKL), eSP = sd.Sum(x => x.VExcavSP);
+                double bKU = sd.Sum(x => x.VBackfillKU), bKL = sd.Sum(x => x.VBackfillKL), bSP = sd.Sum(x => x.VBackfillSP);
+                double sandNet = sd.Sum(x => x.VBeddingNet + x.VSurroundNet);
+                sb.Append("\n  ---- SENARYO TOPLAMLARI (tum aglar; KU = KL = SP olmali) ----");
+                sb.Append($"\n  Kazi      KU / KL / SP : {eKU,12:F3} / {eKL,12:F3} / {eSP,12:F3}   (fark {Math.Max(Math.Abs(eKU - eKL), Math.Abs(eKU - eSP)):F6})");
+                sb.Append($"\n  Geri Dolgu KU / KL / SP: {bKU,12:F3} / {bKL,12:F3} / {bSP,12:F3}   (fark {Math.Max(Math.Abs(bKU - bKL), Math.Abs(bKU - bSP)):F6})");
+                sb.Append($"\n  Toplam dolgu (+kum)    : {bKU + sandNet,12:F3} / {bKL + sandNet,12:F3} / {bSP + sandNet,12:F3}");
+
                 double exErr = v2.Sum(r => r.ExcavError);
                 sb.Append("\n  ---- KAZI ENTEGRASYON KONTROLU (kesin referans) ----");
                 sb.Append($"\n  Istasyon yolu / Length2D              : {v2.Sum(r => r.PathLength),10:F2} / {v2.Sum(r => r.Length2D),10:F2} m");

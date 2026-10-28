@@ -21,6 +21,8 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="V2EngineTests.cs" />
+    <Compile Include="..\..\BoQ\BoQSimplifiedTestV2Engine.cs" />
     <Compile Include="..\..\BoQ\Models\TrenchGeometry.cs" />
     <Compile Include="..\..\BoQ\Models\BoQModels.cs" />
     <Compile Include="..\..\BoQ\ManholeExcavationCatalog\Models\ManholeExcavationCatalogModels.cs" />

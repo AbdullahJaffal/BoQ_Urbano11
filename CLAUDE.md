@@ -24,7 +24,12 @@ cd Tests\GeoHarness
 dotnet run
 ```
 
-Exit code 0 = all 13 tests pass. Tests validate `ClipperGeo.cs`, `BoQOverlapResolver.cs`, and `TrenchGeometry.cs` using shared source links (no circular references). When modifying polygon math, run this before building the main plugin.
+Exit code 0 = all tests pass. Tests validate `ClipperGeo.cs`, `BoQOverlapResolver.cs`, `TrenchGeometry.cs` and the REAL V2 trench engine (`BoQ/BoQSimplifiedTestV2Engine.cs`, `RunV2Engine`) using shared source links. The engine tests (`V2EngineTests.cs`, E1–E4) enforce:
+- gross excavation of every pipe = its own trench prism (analytic, ≤1 ppm);
+- **Σ over all networks: Kazı, Geri Dolgu and total fill are identical in KU / KL / SP** — the overlap scenarios only redistribute volume between pipes (Ignore may differ);
+- same datum: Σ Kazı − Σ fill = Σ pipe body in every scenario.
+
+Run this after ANY change to the V2 engine, polygon math or overlap logic, before building the plugin. On a real drawing, `UT_BOQ_PIPE_DIAG` / `UT_BOQ_PIT_DIAG` print the same checks (see `KAZI_DOLGU_DOGRULAMA.md`).
 
 ## Architecture
 

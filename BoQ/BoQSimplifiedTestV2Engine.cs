@@ -50,9 +50,17 @@ namespace UrbanoMetraj.BoQ
                 for (int i = 0; i < rows.Count; i++)
                     BuildGrossProfiles(rows[i], allStations[i]);
 
+                // ── Phase 7b: GROSS volumes on the pipe's own axis stations ──────
+                // Taken NOW — before any clash phase replaces/removes stations or
+                // reduces areas — so the gross volume of every layer is the pipe's own
+                // trench prism (exact trapezoid areas × axis distance, 0 → L).
+                var vols = new List<PipeVolumes>(rows.Count);
+                for (int i = 0; i < rows.Count; i++)
+                    vols.Add(IntegrateGross(rows[i], allStations[i]));
+
                 // ── Phase 8a: Bisector-frame processing for crossing pairs ───────
                 // Builds scaled bisector stations and stores them in pz.BisStationsA/B.
-                // Boundary stations remain OtherInvertZ=NaN (out-of-zone for IntegrateVolumes).
+                // Boundary stations remain OtherInvertZ=NaN (display only — volumes come from Phase 7b + the ledger).
                 ProcessBisectorPairs(rows, pairZones, allStations);
 
                 // ── Phase 8: Pair scenario processing (parallel pairs only) ──────
@@ -65,16 +73,10 @@ namespace UrbanoMetraj.BoQ
                 // Applied after 8c so the out-of-zone GrossClone boundary stations stay gross.
                 FinalizeCrossLayerLosses(allStations);
 
-                // ── Phase 9: Per-pipe integration (out-of-zone + parallel in-zone)
-                // Bisector in-zone segments are skipped (handled in Phase 9b).
-                var results = new List<SimplifiedSectionResult>(rows.Count);
-                for (int i = 0; i < rows.Count; i++)
-                    results.Add(IntegrateVolumes(rows[i], allStations[i]));
-
-                // ── Phase 9b: Bisector zone independent integration ──────────────
-                // Treats each crossing zone as a separate entity. Per-slice volumes
-                // are computed and verified (KU=KL guaranteed structurally).
-                IntegrateBisectorZones(pairZones, results);
+                // ── Phase 9: per-pair deduction ledger ───────────────────────────
+                // Each pair's overlap / loss volumes are integrated ONCE on that pair's
+                // own slices and then assigned per scenario → Σ KU = Σ KL = Σ SP exactly.
+                ApplyPairLedger(pairZones, vols);
 
                 // ── Phase 9b.5: Transfer V2 volumes to rows for DWG storage ─────
                 // After all integration phases are complete, copy final KU/KL/SP
@@ -82,21 +84,23 @@ namespace UrbanoMetraj.BoQ
                 // V2_VOLUMES and BoQScenarioAggregator can use them directly.
                 for (int i = 0; i < rows.Count; i++)
                 {
-                    var r = results[i];
-                    rows[i].VExcavKU    = Math.Max(0, r.VExcavKU);
-                    rows[i].VExcavKL    = Math.Max(0, r.VExcavKL);
-                    rows[i].VExcavSP    = Math.Max(0, r.VExcavSP);
-                    rows[i].VBedding    = r.VBedding;
-                    rows[i].VSurround   = r.VSurround;
-                    rows[i].VBeddingNet    = r.VBedding;
-                    rows[i].VSurroundNet   = r.VSurround;
-                    rows[i].VBeddingGross  = r.VBeddingGross;
-                    rows[i].VSurroundGross = r.VSurroundGross;
-                    rows[i].VBackfillKU    = Math.Max(0, r.VBackfillKU);
-                    rows[i].VBackfillKL    = Math.Max(0, r.VBackfillKL);
-                    rows[i].VBackfillSP    = Math.Max(0, r.VBackfillSP);
-                    rows[i].VExcavGross    = r.VExcavGross;
-                    rows[i].VBackfillGross = r.VBackfillGross;
+                    var v = vols[i];
+                    double bed = Math.Max(0, v.BedGross - v.BedLoss);
+                    double sur = Math.Max(0, v.SurGross - v.SurLoss);
+                    rows[i].VExcavGross    = v.ExGross;
+                    rows[i].VExcavKU       = v.ExGross - v.ExDedKU;
+                    rows[i].VExcavKL       = v.ExGross - v.ExDedKL;
+                    rows[i].VExcavSP       = v.ExGross - v.ExDedSP;
+                    rows[i].VBedding       = bed;
+                    rows[i].VSurround      = sur;
+                    rows[i].VBeddingNet    = bed;
+                    rows[i].VSurroundNet   = sur;
+                    rows[i].VBeddingGross  = v.BedGross;
+                    rows[i].VSurroundGross = v.SurGross;
+                    rows[i].VBackfillGross = v.BfGross;
+                    rows[i].VBackfillKU    = v.BfGross - v.BfDedKU - v.BfSand;
+                    rows[i].VBackfillKL    = v.BfGross - v.BfDedKL - v.BfSand;
+                    rows[i].VBackfillSP    = v.BfGross - v.BfDedSP - v.BfSand;
                     rows[i].HasV2Volumes = true;
                 }
 
@@ -237,6 +241,20 @@ namespace UrbanoMetraj.BoQ
             // BisStationsA[k] and BisStationsB[k] share the same bisector world position.
             public readonly List<SimplifiedStation> BisStationsA = new List<SimplifiedStation>();
             public readonly List<SimplifiedStation> BisStationsB = new List<SimplifiedStation>();
+            // Deduction ledger (one entry per processed slice of this pair).
+            public readonly List<PairSlice> Slices = new List<PairSlice>();
+        }
+
+        /// <summary>One slice of a clash pair: areas (m²) in the slice's own frame (bisector
+        /// frame for crossings, pipe A's section for parallel pairs) at position Pos (bisector
+        /// distance, or A's StationDist). Integrated ONCE per pair by ApplyPairLedger.</summary>
+        private sealed class PairSlice
+        {
+            public double Pos;
+            public bool   AUpper;
+            public double OvE, LoseAE;    // excavation overlap; A's share of it under SP
+            public double OvB, LoseAB;    // backfill ∩ backfill overlap; A's SP share
+            public double LossABed, LossASur, LossABf, LossBBed, LossBSur, LossBBf;   // Phase 8e
         }
 
         private static List<PairZone> ComputePairZones(
@@ -271,10 +289,12 @@ namespace UrbanoMetraj.BoQ
                         if (tB > exitB)  exitB  = tB;
                     }
                 }
-                enterA = Math.Round(Math.Max(0,         enterA), 3);
-                exitA  = Math.Round(Math.Min(cA.Length, exitA),  3);
-                enterB = Math.Round(Math.Max(0,         enterB), 3);
-                exitB  = Math.Round(Math.Min(cB.Length, exitB),  3);
+                // Round, THEN clamp: rounding after the clamp pushed an exit up to 0.5 mm
+                // past the pipe end and the zone pass then deleted the pipe-end station.
+                enterA = Math.Max(0,         Math.Round(enterA, 3));
+                exitA  = Math.Min(cA.Length, Math.Round(exitA,  3));
+                enterB = Math.Max(0,         Math.Round(enterB, 3));
+                exitB  = Math.Min(cB.Length, Math.Round(exitB,  3));
 
                 if (exitA > enterA + 1e-6 && exitB > enterB + 1e-6)
                 {
@@ -383,12 +403,17 @@ namespace UrbanoMetraj.BoQ
                 }
             }
 
+            // The pipe ends 0 and L are always kept: an interior station within 1 mm of the
+            // previous one OR of L is dropped instead (a zone boundary rounded to just
+            // before L used to evict L itself → the gross volume stopped short of the end).
             var result = new List<SimplifiedStation>();
             double prev = double.NegativeInfinity;
             foreach (double d in distSet)
             {
                 double clamped = Math.Max(0.0, Math.Min(L, d));
-                if (clamped - prev < 1e-3) continue;
+                bool isEnd = clamped >= L - 1e-12;
+                if (!isEnd && (clamped - prev < 1e-3 || L - clamped < 1e-3)) continue;
+                if (isEnd && clamped - prev < 1e-12) continue;
                 prev = clamped;
                 result.Add(new SimplifiedStation { StationDist = clamped });
             }
@@ -535,13 +560,14 @@ namespace UrbanoMetraj.BoQ
                 };
 
                 st.PipePoly = PipePolyAt(row.PipeOuterDiamM, outerPipeBtm, 1.0);
-                st.AxisCut  = st.StationDist;
-                st.CosHalf  = 1.0;
 
-                st.AreaExcav    = Math.Round(ClipperGeo.Area(st.ExcavPoly),    3);
-                st.AreaBedding  = Math.Round(ClipperGeo.Area(st.BeddingPoly),  3);
-                st.AreaSurround = Math.Round(Math.Max(0, ClipperGeo.Area(st.SurroundPoly) - row.PipeArea), 3);
-                st.AreaBackfill = backfillDegenerate ? 0.0 : Math.Round(ClipperGeo.Area(st.BackfillPoly), 3);
+                // Exact trapezoid areas (half-widths × height) — not the 1 mm-snapped,
+                // mm²-rounded Clipper areas, which left Kazı − fill ≠ pipe body by ~2 %
+                // even on a single straight pipe (GeoHarness E4, 2026-10-28).
+                st.AreaExcav    = (hwBase + hwExcav) * (zTopEx - zBot);
+                st.AreaBedding  = (hwBase + hwBedTop) * (zBedTop - zBot);
+                st.AreaSurround = Math.Max(0, (hwBedTop + hwSurrTop) * (zSurrTop - zBedTop) - row.PipeArea);
+                st.AreaBackfill = backfillDegenerate ? 0.0 : (hwSurrTop + hwDolgu) * (zTopDolgu - zSurrTop);
 
                 st.AreaExcavDeducted    = st.AreaExcav;
                 st.AreaExcavDeductedKL  = st.AreaExcav;
@@ -558,8 +584,8 @@ namespace UrbanoMetraj.BoQ
         // For pairs where UseBisectorFrame=true (angle >= AnglePairThresholdDeg),
         // replaces the individual per-pipe in-zone stations with stations that lie
         // on the bisector of the two pipe directions.  Both A and B share the same
-        // world position at each bisector station, so IntegrateVolumes uses the
-        // same dXY step for both → KU = KL = SP is guaranteed by symmetry.
+        // world position at each bisector station, so the pair ledger integrates
+        // both with the same slice spacing → Σ KU = Σ KL = Σ SP by construction.
         //
         // Cross-section half-widths are scaled by cos(θ/2) (bisector projection).
         // Overlap, deductions, and SP split use the same polygon logic as the
@@ -641,8 +667,8 @@ namespace UrbanoMetraj.BoQ
                     if (Math.Abs(tA - pz.EnterA) < 1e-4 || Math.Abs(tA - pz.ExitA) < 1e-4) continue;
                     if (Math.Abs(tB - pz.EnterB) < 1e-4 || Math.Abs(tB - pz.ExitB) < 1e-4) continue;
 
-                    var sA = BuildBisectorStation(rowA, tA, cosHalf, wx, wy, bTx, bTy);
-                    var sB = BuildBisectorStation(rowB, tB, cosHalf, wx, wy, bTx, bTy);
+                    var sA = BuildBisectorStation(rowA, tA, cosHalf, wx, wy);
+                    var sB = BuildBisectorStation(rowB, tB, cosHalf, wx, wy);
 
                     sA.BisectorDist = n * IntersectionInterval;
                     sB.BisectorDist = n * IntersectionInterval;
@@ -775,6 +801,7 @@ namespace UrbanoMetraj.BoQ
                     }
 
                     ApplyCrossLayerLosses(sA, sB, uBc);
+                    RecordSlice(pz, pz.UseBisectorFrame ? sA.BisectorDist : sA.StationDist, sA, sB, uBc);
 
                     sA.OtherInvertZ = sB.InvertZ;
                     sB.OtherInvertZ = sA.InvertZ;
@@ -789,7 +816,7 @@ namespace UrbanoMetraj.BoQ
                 listA.AddRange(bStationsA); listA.Sort((x, y) => x.StationDist.CompareTo(y.StationDist));
                 listB.AddRange(bStationsB); listB.Sort((x, y) => x.StationDist.CompareTo(y.StationDist));
 
-                // Store paired station lists in the zone for IntegrateBisectorZones
+                // Store paired station lists in the zone (report stations)
                 pz.BisStationsA.Clear(); pz.BisStationsA.AddRange(bStationsA);
                 pz.BisStationsB.Clear(); pz.BisStationsB.AddRange(bStationsB);
             }
@@ -797,9 +824,9 @@ namespace UrbanoMetraj.BoQ
 
         // Build a SimplifiedStation for use inside a bisector-frame zone.
         // Half-widths are scaled by cosHalf = cos(θ/2); world position is the
-        // bisector point (wx, wy) so IntegrateVolumes uses bisector path length.
+        // bisector point (wx, wy); its BisectorDist is the ledger slice position.
         private static SimplifiedStation BuildBisectorStation(
-            SectionDebugRow row, double t, double cosHalf, double wx, double wy, double bTx, double bTy)
+            SectionDebugRow row, double t, double cosHalf, double wx, double wy)
         {
             double L = row.Length2D;
             double f = L > 1e-9 ? Math.Min(t / L, 1.0) : 0.0;
@@ -860,22 +887,12 @@ namespace UrbanoMetraj.BoQ
 
             st.PipePoly = PipePolyAt(row.PipeOuterDiamM, outerPipeBtm, cosHalf);
 
-            // Where this station's plane (⊥ b through (wx,wy)) cuts the pipe axis:
-            // c = ((W − Start)·b) / (u·b). Sign-invariant in b.
-            st.CosHalf = cosHalf;
-            st.AxisCut = t;
-            if (L > 1e-9)
-            {
-                double ux = (row.EndX - row.StartX) / L, uy = (row.EndY - row.StartY) / L;
-                double ub = ux * bTx + uy * bTy;
-                if (Math.Abs(ub) > 1e-9)
-                    st.AxisCut = ((wx - row.StartX) * bTx + (wy - row.StartY) * bTy) / ub;
-            }
-
-            st.AreaExcav    = Math.Round(ClipperGeo.Area(st.ExcavPoly),    3);
-            st.AreaBedding  = Math.Round(ClipperGeo.Area(st.BeddingPoly),  3);
-            st.AreaSurround = Math.Round(Math.Max(0, ClipperGeo.Area(st.SurroundPoly) - row.PipeArea), 3);
-            st.AreaBackfill = backfillDegenerate ? 0.0 : Math.Round(ClipperGeo.Area(st.BackfillPoly), 3);
+            // Exact trapezoid areas in the bisector frame (widths already / cos(θ/2));
+            // the pipe body cut obliquely is PipeArea / cos(θ/2).
+            st.AreaExcav    = (hwBase + hwExcav) * (zTopEx - zBot);
+            st.AreaBedding  = (hwBase + hwBedTop) * (zBedTop - zBot);
+            st.AreaSurround = Math.Max(0, (hwBedTop + hwSurrTop) * (zSurrTop - zBedTop) - row.PipeArea / cosHalf);
+            st.AreaBackfill = backfillDegenerate ? 0.0 : (hwSurrTop + hwDolgu) * (zTopDolgu - zSurrTop);
 
             st.AreaExcavDeducted      = st.AreaExcav;
             st.AreaExcavDeductedKL    = st.AreaExcav;
@@ -889,7 +906,7 @@ namespace UrbanoMetraj.BoQ
         }
 
         // Set OtherInvertZ on the boundary station so that the zone-edge segment
-        // is recognised as "in zone" by IntegrateVolumes.
+        // is recognised as "in zone" (display).
         private static void SetBoundaryOtherInvert(
             List<SimplifiedStation> list,    double boundaryDist,
             SectionDebugRow         otherRow, double otherDist)
@@ -992,7 +1009,7 @@ namespace UrbanoMetraj.BoQ
                         // KL field: per-pair overwrite (not union-accumulated).
                         // When this station falls in multiple pair zones, AreaExcavDeducted (union)
                         // becomes over-deducted, breaking the KL invariant.  The KL field stores
-                        // only this pair's deduction so IntegrateVolumes sees the correct value.
+                        // only this pair's deduction (station display; volumes come from the ledger).
                         sA.AreaExcavDeductedKL = Math.Max(0, sA.AreaExcav - overlapE);
                         sB.AreaExcavDeductedKL = Math.Max(0, sB.AreaExcav - overlapE);
 
@@ -1123,6 +1140,7 @@ namespace UrbanoMetraj.BoQ
                     }
 
                     ApplyCrossLayerLosses(sA, sB, uBc);
+                    RecordSlice(pz, pz.UseBisectorFrame ? sA.BisectorDist : sA.StationDist, sA, sB, uBc);
 
                     sA.OtherInvertZ = sB.InvertZ;
                     sB.OtherInvertZ = sA.InvertZ;
@@ -1213,9 +1231,7 @@ namespace UrbanoMetraj.BoQ
                 AreaBackfillDeducted    = src.AreaBackfill,
                 AreaBackfillDeductedKL  = src.AreaBackfill,
                 AreaBackfillSP          = src.AreaBackfill,
-                OtherInvertZ         = double.NaN,
-                AxisCut              = src.AxisCut,
-                CosHalf              = src.CosHalf
+                OtherInvertZ         = double.NaN
             };
         }
 
@@ -1289,161 +1305,98 @@ namespace UrbanoMetraj.BoQ
         }
 
         // =====================================================================
-        // Phase 9 — Trapezoidal integration
+        // Phase 7b / 9 — Gross volumes + per-pair deduction ledger
+        //
+        // Gross: every layer of a pipe integrated on its own axis stations (0 → L,
+        // exact trapezoid areas) BEFORE any clash phase touches the station list —
+        // the gross volume IS the pipe's trench prism.
+        // Ledger: each clash pair's overlap / loss volumes are integrated once on that
+        // pair's slices (bisector crossings: parallel planes ⊥ b, spacing = bisector
+        // distance → Cavalieri; parallel pairs: A's stations, spacing = A's axis
+        // distance). Per scenario the SAME pair volume V goes to a different pipe:
+        //   KU (upper keeps): the lower pipe loses V    KL: the upper pipe loses V
+        //   SP: A loses its side of the split line, B loses V − that
+        // so Σ KU = Σ KL = Σ SP over all pipes (Kazı and Geri Dolgu) by construction.
+        // The Phase 8e sand/pipe losses are scenario-independent and come off once.
         // =====================================================================
 
-        private static SimplifiedSectionResult IntegrateVolumes(
-            SectionDebugRow         row,
-            List<SimplifiedStation> stations)
+        private sealed class PipeVolumes
         {
-            var res = new SimplifiedSectionResult
-            {
-                PipeName   = row.PipeName,
-                DiameterMm = row.DiameterMm,
-                Material   = row.Material,
-                Length2D   = row.Length2D
-            };
-
-            if (stations.Count < 2) return res;
-
-            for (int i = 0; i < stations.Count - 1; i++)
-            {
-                var s0 = stations[i];
-                var s1 = stations[i + 1];
-
-                double dAx = s1.AxisCut - s0.AxisCut;           // signed axis distance
-                if (Math.Abs(dAx) < 1e-9) continue;
-                // Perpendicular-area trapezoid over the axis distance (see SimplifiedStation.AxisCut).
-                double Seg(double a0, double a1) => (a0 * s0.CosHalf + a1 * s1.CosHalf) * 0.5 * dAx;
-
-                res.VBedding  += Seg(s0.AreaBedding,  s1.AreaBedding);
-                res.VSurround += Seg(s0.AreaSurround, s1.AreaSurround);
-                res.VBeddingGross  += Seg(s0.AreaBeddingGross,  s1.AreaBeddingGross);
-                res.VSurroundGross += Seg(s0.AreaSurroundGross, s1.AreaSurroundGross);
-
-                // Backfill displaced by the other pipe's sand/pipe body (Phase 8e) —
-                // scenario-independent, so it comes off KU/KL/SP alike (never Gross).
-                double vBfSand = Seg(s0.BackfillSandLoss, s1.BackfillSandLoss);
-
-                bool inZone = !double.IsNaN(s0.OtherInvertZ) &&
-                              !double.IsNaN(s1.OtherInvertZ);
-
-                // Bisector zone: the GROSS volume is integrated here like everywhere else;
-                // IntegrateBisectorZones only subtracts the scenario overlap deductions.
-                if ((inZone && s0.IsBisectorZone && s1.IsBisectorZone) || !inZone)
-                {
-                    double ve = Seg(s0.AreaExcav,    s1.AreaExcav);
-                    double vb = Seg(s0.AreaBackfill, s1.AreaBackfill);
-                    res.VExcavKU    += ve; res.VExcavKL    += ve; res.VExcavSP    += ve;
-                    res.VBackfillKU += vb; res.VBackfillKL += vb; res.VBackfillSP += vb;
-                    res.VExcavGross += ve; res.VBackfillGross += vb;
-                }
-                else
-                {
-                    // Parallel-zone (non-bisector) in-zone: use deducted values from ProcessPairScenarios
-                    bool thisIsUpper =
-                        (s0.InvertZ + s1.InvertZ) >= (s0.OtherInvertZ + s1.OtherInvertZ);
-
-                    double eKU_s0 = thisIsUpper ? s0.AreaExcav : s0.AreaExcavDeducted;
-                    double eKU_s1 = thisIsUpper ? s1.AreaExcav : s1.AreaExcavDeducted;
-                    double eKL_s0 = thisIsUpper ? s0.AreaExcavDeductedKL : s0.AreaExcav;
-                    double eKL_s1 = thisIsUpper ? s1.AreaExcavDeductedKL : s1.AreaExcav;
-
-                    res.VExcavKU += Seg(eKU_s0, eKU_s1);
-                    res.VExcavKL += Seg(eKL_s0, eKL_s1);
-                    res.VExcavSP += Seg(s0.AreaExcavSP, s1.AreaExcavSP);
-                    res.VExcavGross += Seg(s0.AreaExcav, s1.AreaExcav);
-
-                    double bKU_s0 = thisIsUpper ? s0.AreaBackfill : s0.AreaBackfillDeducted;
-                    double bKU_s1 = thisIsUpper ? s1.AreaBackfill : s1.AreaBackfillDeducted;
-                    double bKL_s0 = thisIsUpper ? s0.AreaBackfillDeductedKL : s0.AreaBackfill;
-                    double bKL_s1 = thisIsUpper ? s1.AreaBackfillDeductedKL : s1.AreaBackfill;
-
-                    res.VBackfillKU += Seg(bKU_s0, bKU_s1);
-                    res.VBackfillKL += Seg(bKL_s0, bKL_s1);
-                    res.VBackfillSP += Seg(s0.AreaBackfillSP, s1.AreaBackfillSP);
-                    res.VBackfillGross += Seg(s0.AreaBackfill, s1.AreaBackfill);
-                }
-
-                // No per-segment clamp: a backward segment (signed dAx < 0) legitimately
-                // subtracts; the totals are clamped once at the end of the pipe.
-                res.VBackfillKU -= vBfSand;
-                res.VBackfillKL -= vBfSand;
-                res.VBackfillSP -= vBfSand;
-
-                res.SegmentCount++;
-            }
-
-            return res;
+            public double ExGross, BfGross, BedGross, SurGross;
+            public double ExDedKU, ExDedKL, ExDedSP, BfDedKU, BfDedKL, BfDedSP;
+            public double BedLoss, SurLoss, BfSand;
         }
 
-        // =====================================================================
-        // Phase 9b — Bisector zone independent integration
-        //
-        // Each crossing pair is treated as a self-contained new entity.
-        // For each pair of consecutive bisector stations [k, k+1]:
-        //   vA      = A gross area × dXY (same bisector dXY for both pipes)
-        //   vB      = B gross area × dXY
-        //   vOverlap= overlap area × dXY   (overlap = A.AreaExcav - A.AreaExcavDeductedKL)
-        //   vUnion  = vA + vB - vOverlap
-        //   KU: upper pipe keeps vA/vB gross; lower pipe deducts vOverlap
-        //   KL: upper pipe deducts vOverlap; lower pipe keeps vB/vA gross
-        //   SP: each pipe deducts half vOverlap
-        //
-        // Because both pipes share the same dXY, KU_combined = KL_combined = vUnion
-        // at every slice — the invariant is structural, not coincidental.
-        // =====================================================================
+        private static PipeVolumes IntegrateGross(SectionDebugRow row, List<SimplifiedStation> stations)
+        {
+            var v  = new PipeVolumes();
+            var st = stations.Where(x => x.ExcavPoly != null).OrderBy(x => x.StationDist).ToList();
+            double W = row.TrWidth, sl = row.SlopeRatio;
 
-        private static void IntegrateBisectorZones(
-            List<PairZone>                pairZones,
-            List<SimplifiedSectionResult> results)
+            // ∫ D·(W + D·sl) dt with D linear over the segment — EXACT (the trapezoid
+            // rule overstated this quadratic by up to ~0.01 %, GeoHarness E1).
+            double TrapInt(double d0, double d1, double len)
+                => len * (W * (d0 + d1) * 0.5 + sl * (d0 * d0 + d0 * d1 + d1 * d1) / 3.0);
+
+            for (int i = 0; i + 1 < st.Count; i++)
+            {
+                var a = st[i]; var b = st[i + 1];
+                double d = b.StationDist - a.StationDist;
+                if (d <= 1e-9) continue;
+
+                // Excavation: exact while the trench exists at both ends (depth linear,
+                // no clamp kink inside); trapezoid rule across a depth-0 end.
+                v.ExGross += (a.TrueDepth > 1e-9 && b.TrueDepth > 1e-9)
+                    ? TrapInt(a.TrueDepth, b.TrueDepth, d)
+                    : (a.AreaExcav + b.AreaExcav) * 0.5 * d;
+
+                // Sand layers are constant along a normal pipe (exact either way).
+                v.BedGross += (a.AreaBedding  + b.AreaBedding)  * 0.5 * d;
+                v.SurGross += (a.AreaSurround + b.AreaSurround) * 0.5 * d;
+
+                // Geri Dolgu = Dolgu trapezoid − bedding − surround(incl. pipe), exact when
+                // both ends have a regular backfill zone; trapezoid rule otherwise.
+                bool regular = a.AreaBackfill > 1e-12 && b.AreaBackfill > 1e-12
+                            && a.TrueDepthDolgu > 1e-9 && b.TrueDepthDolgu > 1e-9
+                            && a.AreaSurround > 1e-12 && b.AreaSurround > 1e-12;
+                v.BfGross += regular
+                    ? TrapInt(a.TrueDepthDolgu, b.TrueDepthDolgu, d)
+                      - (a.AreaBedding + b.AreaBedding) * 0.5 * d
+                      - (a.AreaSurround + b.AreaSurround + 2.0 * row.PipeArea) * 0.5 * d
+                    : (a.AreaBackfill + b.AreaBackfill) * 0.5 * d;
+            }
+            return v;
+        }
+
+        private static void ApplyPairLedger(List<PairZone> pairZones, List<PipeVolumes> vols)
         {
             foreach (var pz in pairZones)
             {
-                if (!pz.UseBisectorFrame) continue;
-                if (pz.BisStationsA.Count < 2) continue;
-
-                var resA = results[pz.PipeA];
-                var resB = results[pz.PipeB];
-
-                for (int k = 0; k < pz.BisStationsA.Count - 1; k++)
+                var sl = pz.Slices.OrderBy(x => x.Pos).ToList();
+                var A = vols[pz.PipeA]; var B = vols[pz.PipeB];
+                for (int k = 0; k + 1 < sl.Count; k++)
                 {
-                    var sA0 = pz.BisStationsA[k];
-                    var sA1 = pz.BisStationsA[k + 1];
-                    var sB0 = pz.BisStationsB[k];
-                    var sB1 = pz.BisStationsB[k + 1];
+                    var a = sl[k]; var b = sl[k + 1];
+                    double d = b.Pos - a.Pos;
+                    if (d <= 1e-9) continue;
+                    double Avg(Func<PairSlice, double> f) => (f(a) + f(b)) * 0.5 * d;
 
-                    double dXY = Math.Round(Math.Sqrt(
-                        (sA1.WorldX - sA0.WorldX) * (sA1.WorldX - sA0.WorldX) +
-                        (sA1.WorldY - sA0.WorldY) * (sA1.WorldY - sA0.WorldY)), 3);
-                    if (dXY < 1e-9) continue;
+                    double vE = Avg(x => x.OvE), vB = Avg(x => x.OvB);
+                    double fu = ((a.AUpper ? 1 : 0) + (b.AUpper ? 1 : 0)) * 0.5;   // share of the segment where A is upper
 
-                    // Gross volumes (and the sand loss) are integrated per pipe in
-                    // IntegrateVolumes on the axis-cut scheme; only the scenario overlap
-                    // deductions are taken here. Both pipes share the bisector slices
-                    // (parallel planes ⊥ b, spacing dXY), so an overlap AREA × dXY is the
-                    // exact overlap volume (Cavalieri) — KU = KL = SP in total by symmetry.
-                    double ov0 = sA0.AreaExcav - sA0.AreaExcavDeductedKL;
-                    double ov1 = sA1.AreaExcav - sA1.AreaExcavDeductedKL;
-                    double vOverlap = Math.Max(0, (ov0 + ov1) * 0.5 * dXY);
+                    // KU: upper keeps → lower loses.   KL: lower keeps → upper loses.
+                    A.ExDedKU += vE * (1 - fu); B.ExDedKU += vE * fu;
+                    A.ExDedKL += vE * fu;       B.ExDedKL += vE * (1 - fu);
+                    A.BfDedKU += vB * (1 - fu); B.BfDedKU += vB * fu;
+                    A.BfDedKL += vB * fu;       B.BfDedKL += vB * (1 - fu);
+                    // SP: A loses its side, B the rest — sums to the same V.
+                    double laE = Avg(x => x.LoseAE), laB = Avg(x => x.LoseAB);
+                    A.ExDedSP += laE; B.ExDedSP += vE - laE;
+                    A.BfDedSP += laB; B.BfDedSP += vB - laB;
 
-                    bool aIsUpper = (sA0.InvertZ + sA1.InvertZ) >= (sB0.InvertZ + sB1.InvertZ);
-
-                    // Excav KU/KL/SP: the losing pipe gives up the overlap.
-                    if (aIsUpper) { resB.VExcavKU -= vOverlap; resA.VExcavKL -= vOverlap; }
-                    else          { resA.VExcavKU -= vOverlap; resB.VExcavKL -= vOverlap; }
-                    resA.VExcavSP -= vOverlap * 0.5;
-                    resB.VExcavSP -= vOverlap * 0.5;
-
-                    // Backfill KU/KL/SP
-                    double bov0 = sA0.AreaBackfill - sA0.AreaBackfillDeductedKL;
-                    double bov1 = sA1.AreaBackfill - sA1.AreaBackfillDeductedKL;
-                    double bvOverlap = Math.Max(0, (bov0 + bov1) * 0.5 * dXY);
-
-                    if (aIsUpper) { resB.VBackfillKU -= bvOverlap; resA.VBackfillKL -= bvOverlap; }
-                    else          { resA.VBackfillKU -= bvOverlap; resB.VBackfillKL -= bvOverlap; }
-                    resA.VBackfillSP -= bvOverlap * 0.5;
-                    resB.VBackfillSP -= bvOverlap * 0.5;
+                    // Phase 8e losses (every scenario alike).
+                    A.BedLoss += Avg(x => x.LossABed); A.SurLoss += Avg(x => x.LossASur); A.BfSand += Avg(x => x.LossABf);
+                    B.BedLoss += Avg(x => x.LossBBed); B.SurLoss += Avg(x => x.LossBSur); B.BfSand += Avg(x => x.LossBBf);
                 }
             }
         }
@@ -1637,9 +1590,28 @@ namespace UrbanoMetraj.BoQ
             return acc == null ? add : ClipperGeo.Union(acc, add);
         }
 
+        // Per-pair Phase 8e loss regions (A's in A's frame, B's in B's frame).
+        private sealed class CrossLoss
+        {
+            public List<List<double[]>> ABf, BBf, ABed, ASur, BBed, BSur;
+        }
+
         private static void ApplyCrossLayerLosses(SimplifiedStation sA, SimplifiedStation sB, double uBc)
         {
-            if (sA.ExcavPoly == null || sB.ExcavPoly == null) return;
+            var c = ComputeCrossLoss(sA, sB, uBc);
+            if (c == null) return;
+            sA.BackfillSandLossPoly = Accumulate(sA.BackfillSandLossPoly, c.ABf);
+            sB.BackfillSandLossPoly = Accumulate(sB.BackfillSandLossPoly, c.BBf);
+            sA.BeddingLossPoly  = Accumulate(sA.BeddingLossPoly,  c.ABed);
+            sA.SurroundLossPoly = Accumulate(sA.SurroundLossPoly, c.ASur);
+            sB.BeddingLossPoly  = Accumulate(sB.BeddingLossPoly,  c.BBed);
+            sB.SurroundLossPoly = Accumulate(sB.SurroundLossPoly, c.BSur);
+        }
+
+        private static CrossLoss ComputeCrossLoss(SimplifiedStation sA, SimplifiedStation sB, double uBc)
+        {
+            if (sA.ExcavPoly == null || sB.ExcavPoly == null) return null;
+            var res = new CrossLoss();
 
             // Everything in A's frame (B shifted by its lateral offset uBc).
             List<double[]> R(List<double[]> p)  => HasArea(p) ? RoundPolyTo1mm(p) : null;
@@ -1657,11 +1629,9 @@ namespace UrbanoMetraj.BoQ
 
             // ── Backfill under the other pipe's sand/pipe → backfill loses it ──
             if (HasArea(aBf) && bSandPipe.Count > 0)
-                sA.BackfillSandLossPoly = Accumulate(sA.BackfillSandLossPoly,
-                    ClipperGeo.Intersect(Region(aBf), bSandPipe));
+                res.ABf = ClipperGeo.Intersect(Region(aBf), bSandPipe);
             if (HasArea(bBf) && aSandPipe.Count > 0)
-                sB.BackfillSandLossPoly = Accumulate(sB.BackfillSandLossPoly,
-                    TranslatePolyList(ClipperGeo.Intersect(Region(bBf), aSandPipe), -uBc));
+                res.BBf = TranslatePolyList(ClipperGeo.Intersect(Region(bBf), aSandPipe), -uBc);
 
             // ── Sand vs sand / pipe ──
             bool aIsUpper = sA.InvertZ >= sB.InvertZ;
@@ -1691,12 +1661,64 @@ namespace UrbanoMetraj.BoQ
             var bBedLoss = aIsUpper ? loBedLoss : upBedLoss;
             var bSurLoss = aIsUpper ? loSurLoss : upSurLoss;
 
-            sA.BeddingLossPoly  = Accumulate(sA.BeddingLossPoly,  aBedLoss);
-            sA.SurroundLossPoly = Accumulate(sA.SurroundLossPoly, aSurLoss);
-            if (bBedLoss != null)
-                sB.BeddingLossPoly  = Accumulate(sB.BeddingLossPoly,  TranslatePolyList(bBedLoss, -uBc));
-            if (bSurLoss != null)
-                sB.SurroundLossPoly = Accumulate(sB.SurroundLossPoly, TranslatePolyList(bSurLoss, -uBc));
+            res.ABed = aBedLoss;
+            res.ASur = aSurLoss;
+            res.BBed = bBedLoss != null ? TranslatePolyList(bBedLoss, -uBc) : null;
+            res.BSur = bSurLoss != null ? TranslatePolyList(bSurLoss, -uBc) : null;
+            return res;
+        }
+
+        /// <summary>
+        /// Records one slice of a clash pair into its ledger (see PairSlice). Areas are
+        /// recomputed here, unrounded (ClipperGeo.AreaRaw), from the same 1 mm-snapped
+        /// polygons the per-station passes use. SP: A gives up the part of the overlap on
+        /// the other pipe's side of the split line (B gives up the rest).
+        /// </summary>
+        private static void RecordSlice(PairZone pz, double pos, SimplifiedStation sA, SimplifiedStation sB, double uBc)
+        {
+            if (sA.ExcavPoly == null || sB.ExcavPoly == null) return;
+            List<double[]> R(List<double[]> p)  => HasArea(p) ? RoundPolyTo1mm(p) : null;
+            List<double[]> RB(List<double[]> p) => HasArea(p) ? RoundPolyTo1mm(TranslatePoly(p, uBc)) : null;
+            double Ar(List<List<double[]>> r) => r == null ? 0 : ClipperGeo.AreaRaw(r);
+
+            bool aIsUpper = sA.InvertZ >= sB.InvertZ;
+            // Split line: the upper pipe's trench-bottom edge on the lower pipe's side.
+            double upperHW   = aIsUpper ? -sA.ExcavPoly[0][0] : -sB.ExcavPoly[0][0];
+            double upperCtrU = aIsUpper ? 0.0 : uBc;
+            double lowerCtrU = aIsUpper ? uBc : 0.0;
+            bool   lowerRight = lowerCtrU > upperCtrU;
+            double splitU     = lowerRight ? upperCtrU + upperHW : upperCtrU - upperHW;
+            const double BIG = 1000.0;
+            var leftRect  = new List<double[]> { new[] { -BIG, -BIG }, new[] { splitU, -BIG }, new[] { splitU, BIG }, new[] { -BIG, BIG } };
+            var rightRect = new List<double[]> { new[] { splitU, -BIG }, new[] { BIG, -BIG }, new[] { BIG, BIG }, new[] { splitU, BIG } };
+            var upperSide = lowerRight ? leftRect : rightRect;
+            var lowerSide = lowerRight ? rightRect : leftRect;
+            var aLoseSide = new List<List<double[]>> { aIsUpper ? lowerSide : upperSide };
+
+            var slice = new PairSlice { Pos = pos, AUpper = aIsUpper };
+
+            var aEx = R(sA.ExcavPoly);    var bEx = RB(sB.ExcavPoly);
+            if (aEx != null && bEx != null)
+            {
+                var ov = ClipperGeo.Intersect(aEx, bEx);
+                slice.OvE    = Ar(ov);
+                slice.LoseAE = ov.Count > 0 ? Ar(ClipperGeo.Intersect(ov, aLoseSide)) : 0;
+            }
+            var aBf = R(sA.BackfillPoly); var bBf = RB(sB.BackfillPoly);
+            if (aBf != null && bBf != null)
+            {
+                var ov = ClipperGeo.Intersect(aBf, bBf);
+                slice.OvB    = Ar(ov);
+                slice.LoseAB = ov.Count > 0 ? Ar(ClipperGeo.Intersect(ov, aLoseSide)) : 0;
+            }
+            var c = ComputeCrossLoss(sA, sB, uBc);
+            if (c != null)
+            {
+                slice.LossABf = Ar(c.ABf);  slice.LossBBf = Ar(c.BBf);
+                slice.LossABed = Ar(c.ABed); slice.LossASur = Ar(c.ASur);
+                slice.LossBBed = Ar(c.BBed); slice.LossBSur = Ar(c.BSur);
+            }
+            pz.Slices.Add(slice);
         }
 
         // Turns the accumulated loss regions into areas: Yataklama/Gömlekleme are
@@ -1767,31 +1789,7 @@ namespace UrbanoMetraj.BoQ
             public double BackfillSandLoss;
             // Yataklama/Gömlekleme areas BEFORE the cross-layer losses (FinalizeCrossLayerLosses).
             public double AreaBeddingGross, AreaSurroundGross;
-
-            // Axis-cut integration (2026-10-18): where this station's section plane cuts the
-            // pipe axis (m from start) and the section's widening factor. On-axis stations:
-            // AxisCut = StationDist, CosHalf = 1. Bisector stations: AxisCut = the cut of
-            // their plane (⊥ bisector b) with the axis, CosHalf = cos(θ/2). Every volume is
-            // Σ ½(A0·CosHalf0 + A1·CosHalf1)·(AxisCut1 − AxisCut0) — perpendicular area ×
-            // signed axis distance — so the gross volume telescopes to the pipe's own trench
-            // prism whatever the station layout (UT_BOQ_PIPE_DIAG: +750 m³ / +9.8% on crossing
-            // pipes when integrated with the world distance between stations).
-            public double AxisCut;
-            public double CosHalf = 1.0;
         }
 
-        private sealed class SimplifiedSectionResult
-        {
-            public string PipeName;
-            public int    DiameterMm;
-            public string Material;
-            public double Length2D;
-            public int    SegmentCount;
-
-            public double VExcavKU,    VExcavKL,    VExcavSP,    VExcavGross;
-            public double VBedding,    VSurround;
-            public double VBeddingGross, VSurroundGross;
-            public double VBackfillKU, VBackfillKL, VBackfillSP, VBackfillGross;
-        }
     }
 }

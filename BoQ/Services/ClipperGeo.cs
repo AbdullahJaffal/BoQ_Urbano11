@@ -207,6 +207,19 @@ namespace UrbanoMetraj.BoQ.Services
         // Measurement helpers
         // =====================================================================
 
+        /// <summary>Net area (m²) of a region WITHOUT the 3-d.p. rounding of <see cref="Area(IEnumerable{List{double[]}})"/>.
+        /// Used where many slice areas are integrated and must stay consistent with each other
+        /// (V2 per-pair deduction ledger).</summary>
+        public static double AreaRaw(IEnumerable<List<double[]>> region)
+        {
+            if (region == null) return 0;
+            double a = 0;
+            foreach (var ring in region)
+                if (ring != null && ring.Count >= 3)
+                    a += Clipper.Area(ToPath(ring));
+            return Math.Abs(a) / (Scale * Scale);
+        }
+
         /// <summary>Net area (m²) of a region, accounting for holes, rounded to nearest mm² (3 d.p.).</summary>
         public static double Area(IEnumerable<List<double[]>> region)
         {

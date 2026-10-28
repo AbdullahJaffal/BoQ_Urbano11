@@ -11,7 +11,7 @@ namespace GeoHarness
     /// built on top of it. Asserts the geometric invariants the methodology relies
     /// on. Exit code 0 = all pass, 1 = a failure.
     /// </summary>
-    internal static class Program
+    internal static partial class Program
     {
         private static int _pass, _fail;
         private const double Tol = 1e-4;
@@ -34,6 +34,7 @@ namespace GeoHarness
             T12_CollisionStationInjection();
             T13_LowerPipeDeductedParallel();
             T14_SpatialGridEquivalence();
+            E_V2Engine();
 
             Console.WriteLine($"\n── {_pass} passed, {_fail} failed ──");
             return _fail == 0 ? 0 : 1;
