@@ -166,6 +166,7 @@
     </Compile>
     <Compile Include="BoQ\BoQViewCommand.cs" />
     <Compile Include="BoQ\BoQSimplifiedTestV2Command.cs" />
+    <Compile Include="BoQ\BoQSimplifiedTestV2Engine.cs" />
     <Compile Include="BoQ\BacaKesifTablosuCommand.cs" />
     <Compile Include="BoQ\MetrajKesifTablosuCommand.cs" />
     <Compile Include="BoQ\PitDiagCommand.cs" />
