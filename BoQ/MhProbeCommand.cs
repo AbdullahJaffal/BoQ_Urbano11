@@ -257,7 +257,7 @@ namespace UrbanoMetraj.BoQ
                 try
                 {
                     string txt = cp == 0
-                        ? Encoding.Default.GetString(raw)
+                        ? Encoding.GetEncoding(0).GetString(raw)   // 0 = system ANSI code page (== Encoding.Default on net48; on .NET 8 Default is UTF-8)
                         : Encoding.GetEncoding(cp).GetString(raw);
                     return XDocument.Parse(
                         XmlDeclRx.Replace(txt, "<?xml version=\"1.0\" encoding=\"utf-8\"?>"));
