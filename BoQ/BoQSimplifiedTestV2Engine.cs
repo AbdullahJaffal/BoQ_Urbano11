@@ -16,10 +16,14 @@ namespace UrbanoMetraj.BoQ
     public partial class BoQSimplifiedTestV2Command
     {
         /// <summary>Runs Phases 2–9c on report.SectionDebug in place (V2 volumes + stations).</summary>
-        internal static void RunV2Engine(BoQReport report)
+        internal static void RunV2Engine(BoQReport report) => RunV2EngineCapture(report);
+
+        /// <summary>Same run as <see cref="RunV2Engine"/>; also returns the engine's own
+        /// stations and clash zones for the cross-section drawing (null when there are no rows).</summary>
+        internal static V2SectionCapture RunV2EngineCapture(BoQReport report)
         {
                 var rows = report.SectionDebug;
-                if (rows == null || rows.Count == 0) return;
+                if (rows == null || rows.Count == 0) return null;
 
                 // ── Phase 2: Max top half-width per pipe ─────────────────────────
                 var maxHW = new double[rows.Count];
@@ -110,6 +114,11 @@ namespace UrbanoMetraj.BoQ
                 // profiles). This is what DwgBoQStore persists and VIEW/SECTIONS read.
                 PopulateReportStations(report, rows, allStations, pairZones);
 
+                return new V2SectionCapture
+                {
+                    Rows = rows, Stations = allStations,
+                    PerPipeZones = perPipeZones, PairZones = pairZones
+                };
         }
 
         // =====================================================================
@@ -227,7 +236,7 @@ namespace UrbanoMetraj.BoQ
         // Phase 4 — Zone computation
         // =====================================================================
 
-        private sealed class PairZone
+        internal sealed class PairZone
         {
             public int    PipeA, PipeB;
             public double EnterA, ExitA;
@@ -248,7 +257,7 @@ namespace UrbanoMetraj.BoQ
         /// <summary>One slice of a clash pair: areas (m²) in the slice's own frame (bisector
         /// frame for crossings, pipe A's section for parallel pairs) at position Pos (bisector
         /// distance, or A's StationDist). Integrated ONCE per pair by ApplyPairLedger.</summary>
-        private sealed class PairSlice
+        internal sealed class PairSlice
         {
             public double Pos;
             public bool   AUpper;
@@ -802,6 +811,7 @@ namespace UrbanoMetraj.BoQ
 
                     ApplyCrossLayerLosses(sA, sB, uBc);
                     RecordSlice(pz, pz.UseBisectorFrame ? sA.BisectorDist : sA.StationDist, sA, sB, uBc);
+                    RecordClash(pz, sA, sB, uBc, bTx * txB + bTy * tyB < 0);
 
                     sA.OtherInvertZ = sB.InvertZ;
                     sB.OtherInvertZ = sA.InvertZ;
@@ -1141,6 +1151,7 @@ namespace UrbanoMetraj.BoQ
 
                     ApplyCrossLayerLosses(sA, sB, uBc);
                     RecordSlice(pz, pz.UseBisectorFrame ? sA.BisectorDist : sA.StationDist, sA, sB, uBc);
+                    RecordClash(pz, sA, sB, uBc, txA * txB + tyA * tyB < 0);
 
                     sA.OtherInvertZ = sB.InvertZ;
                     sB.OtherInvertZ = sA.InvertZ;
@@ -1608,7 +1619,9 @@ namespace UrbanoMetraj.BoQ
             sB.SurroundLossPoly = Accumulate(sB.SurroundLossPoly, c.BSur);
         }
 
-        private static CrossLoss ComputeCrossLoss(SimplifiedStation sA, SimplifiedStation sB, double uBc)
+        // aIsUpperOverride: the cross-section drawing evaluates the pair from B's side and must keep
+        // the engine's own tie rule (A upper on equal inverts). Engine call sites pass nothing.
+        private static CrossLoss ComputeCrossLoss(SimplifiedStation sA, SimplifiedStation sB, double uBc, bool? aIsUpperOverride = null)
         {
             if (sA.ExcavPoly == null || sB.ExcavPoly == null) return null;
             var res = new CrossLoss();
@@ -1634,7 +1647,7 @@ namespace UrbanoMetraj.BoQ
                 res.BBf = TranslatePolyList(ClipperGeo.Intersect(Region(bBf), aSandPipe), -uBc);
 
             // ── Sand vs sand / pipe ──
-            bool aIsUpper = sA.InvertZ >= sB.InvertZ;
+            bool aIsUpper = aIsUpperOverride ?? (sA.InvertZ >= sB.InvertZ);
             var upBed  = aIsUpper ? aBed  : bBed;   var upSur = aIsUpper ? aSur : bSur;
             var upPipe = aIsUpper ? aPipe : bPipe;
             var loBed  = aIsUpper ? bBed  : aBed;   var loSur = aIsUpper ? bSur : aSur;
@@ -1746,7 +1759,7 @@ namespace UrbanoMetraj.BoQ
         // Internal data models
         // =====================================================================
 
-        private sealed class SimplifiedStation
+        internal sealed class SimplifiedStation
         {
             public double StationDist;
             public double WorldX, WorldY, TerrainZ, InvertZ, TrueDepth, HwExcav;
@@ -1789,6 +1802,10 @@ namespace UrbanoMetraj.BoQ
             public double BackfillSandLoss;
             // Yataklama/Gömlekleme areas BEFORE the cross-layer losses (FinalizeCrossLayerLosses).
             public double AreaBeddingGross, AreaSurroundGross;
+
+            // Per clash pair: the shapes this station loses / shares (display only — read by
+            // the cross-section drawing, never by the volume integration). See RecordClash.
+            public List<StationClash> Clashes;
         }
 
     }

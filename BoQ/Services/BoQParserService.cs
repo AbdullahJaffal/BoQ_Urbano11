@@ -600,6 +600,7 @@ namespace UrbanoMetraj.BoQ.Services
             public List<TrenchLayerSplit> BoruEtrafiLayerSplits { get; set; } = new List<TrenchLayerSplit>();
             public List<TrenchLayerSplit> BoruUstuLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
             public List<TrenchLayerSplit> BackfillLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
+            public List<TrenchStackLayer> TrenchStack           { get; set; } = new List<TrenchStackLayer>();
         }
 
         // =====================================================================
@@ -1352,7 +1353,8 @@ namespace UrbanoMetraj.BoQ.Services
                     BeddingLayerSplits    = beddingSplits,
                     BoruEtrafiLayerSplits = boruEtrafiSplits,
                     BoruUstuLayerSplits   = boruUstuSplits,
-                    BackfillLayerSplits   = backfillSplits
+                    BackfillLayerSplits   = backfillSplits,
+                    TrenchStack           = BuildTrenchStack(trenchTier)
                 });
             }
 
@@ -1488,6 +1490,36 @@ namespace UrbanoMetraj.BoQ.Services
                 if (string.Equals(l.Position, position, StringComparison.OrdinalIgnoreCase))
                     sum += l.ThicknessM;
             return sum;
+        }
+
+        // Raw bottom-up sub-layer stack of the matched tier, persisted for the cross-section
+        // drawing (UT_CROSS_SECTIONS), which resolves the heights per station itself.
+        private static List<TrenchStackLayer> BuildTrenchStack(PipeTrenchDepthTier tier)
+        {
+            var stack = new List<TrenchStackLayer>();
+            if (tier == null) return stack;
+            foreach (var l in tier.BeddingLayers)
+                stack.Add(new TrenchStackLayer
+                {
+                    Group = TrenchStackGroup.Yataklama,
+                    Kind  = l.IsFillToSurface ? TrenchStackKind.FillToSurface : TrenchStackKind.Fixed,
+                    LayerName = l.LayerName ?? "", MaterialType = l.MaterialType ?? "", ThicknessM = l.ThicknessM
+                });
+            foreach (var l in tier.GomleklemeLayers)
+                stack.Add(new TrenchStackLayer
+                {
+                    Group = l.Position == "boru üstü" ? TrenchStackGroup.BoruUstu : TrenchStackGroup.BoruEtrafi,
+                    Kind  = l.Position != "boru üstü" && l.IsUpToPipeTop ? TrenchStackKind.UpToPipeTop : TrenchStackKind.Fixed,
+                    LayerName = l.LayerName ?? "", MaterialType = l.MaterialType ?? "", ThicknessM = l.ThicknessM
+                });
+            foreach (var l in tier.BackfillLayers)
+                stack.Add(new TrenchStackLayer
+                {
+                    Group = TrenchStackGroup.GeriDolgu,
+                    Kind  = l.IsFillToSurface ? TrenchStackKind.FillToSurface : TrenchStackKind.Fixed,
+                    LayerName = l.LayerName ?? "", MaterialType = l.MaterialType ?? "", ThicknessM = l.ThicknessM
+                });
+            return stack;
         }
 
         // Fixed area-ratio split among a bottom-up ordered list of sub-layers,
@@ -1723,7 +1755,8 @@ namespace UrbanoMetraj.BoQ.Services
                     BeddingLayerSplits    = sec.BeddingLayerSplits,
                     BoruEtrafiLayerSplits = sec.BoruEtrafiLayerSplits,
                     BoruUstuLayerSplits   = sec.BoruUstuLayerSplits,
-                    BackfillLayerSplits   = sec.BackfillLayerSplits
+                    BackfillLayerSplits   = sec.BackfillLayerSplits,
+                    TrenchStack           = sec.TrenchStack
                 };
                 sdrs.Add(sdr);
                 report.SectionDebug.Add(sdr);
@@ -2443,7 +2476,7 @@ namespace UrbanoMetraj.BoQ.Services
                 try
                 {
                     string txt = cp == 0
-                        ? Encoding.Default.GetString(raw)
+                        ? Encoding.GetEncoding(0).GetString(raw)   // 0 = system ANSI code page (== Encoding.Default on net48; on .NET 8 Default is UTF-8)
                         : Encoding.GetEncoding(cp).GetString(raw);
                     return XDocument.Parse(
                         XmlDeclRx.Replace(txt,

@@ -35,6 +35,7 @@ namespace GeoHarness
             T13_LowerPipeDeductedParallel();
             T14_SpatialGridEquivalence();
             E_V2Engine();
+            S_Sections();
 
             Console.WriteLine($"\n── {_pass} passed, {_fail} failed ──");
             return _fail == 0 ? 0 : 1;

@@ -139,7 +139,6 @@
     <Compile Include="BoQ\Services\ManholeKesifExportService.cs" />
     <Compile Include="BoQ\Services\MetrajKesifExportService.cs" />
     <Compile Include="BoQ\Services\SolidBuilderService.cs" />
-    <Compile Include="BoQ\Services\CrossSectionDrawService.cs" />
     <Compile Include="BoQ\Services\CadSelectionScopeService.cs" />
     <Compile Include="BoQ\UI\RibbonSetup.cs" />
     <Compile Include="BoQ\UI\RibbonIcons.cs" />
@@ -167,11 +166,26 @@
     <Compile Include="BoQ\BoQViewCommand.cs" />
     <Compile Include="BoQ\BoQSimplifiedTestV2Command.cs" />
     <Compile Include="BoQ\BoQSimplifiedTestV2Engine.cs" />
+    <Compile Include="BoQ\BoQSimplifiedTestV2Engine.Sections.cs" />
+    <!-- ═══ En Kesit (UT_CROSS_SECTIONS) — see EN_KESIT_PLAN.md ═══════════════ -->
+    <Compile Include="BoQ\Sections\CrossSectionsCommand.cs" />
+    <Compile Include="BoQ\Sections\Models\SectionCutModels.cs" />
+    <Compile Include="BoQ\Sections\Models\SectionStyle.cs" />
+    <Compile Include="BoQ\Sections\Services\CrossSectionSession.cs" />
+    <Compile Include="BoQ\Sections\Services\KolChainageService.cs" />
+    <Compile Include="BoQ\Sections\Services\SectionLayoutEngine.cs" />
+    <Compile Include="BoQ\Sections\Services\SectionRenderer.cs" />
+    <Compile Include="BoQ\Sections\Services\SectionStationPlanner.cs" />
+    <Compile Include="BoQ\Sections\Services\SectionStyleStore.cs" />
+    <Compile Include="BoQ\Sections\UI\CrossSectionsVm.cs" />
+    <Compile Include="BoQ\Sections\UI\SectionPreview.cs" />
+    <Compile Include="BoQ\Sections\UI\CrossSectionsWindow.xaml.cs">
+      <DependentUpon>CrossSectionsWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="BoQ\BacaKesifTablosuCommand.cs" />
     <Compile Include="BoQ\MetrajKesifTablosuCommand.cs" />
     <Compile Include="BoQ\PitDiagCommand.cs" />
     <Compile Include="BoQ\SolidsCommand.cs" />
-    <Compile Include="BoQ\SectionsCommand.cs" />
     <Compile Include="BoQ\SectionsDbCommand.cs" />
     <Compile Include="BoQ\Models\ManholeBoQCatalogModels.cs" />
     <Compile Include="BoQ\Services\ManholeCatalogStore.cs" />
@@ -313,6 +327,10 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="BoQ\SmartAssembly\UI\Views\ProjectSettingsWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="BoQ\Sections\UI\CrossSectionsWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

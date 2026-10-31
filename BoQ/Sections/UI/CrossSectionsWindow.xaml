@@ -1,0 +1,498 @@
+<Window x:Class="UrbanoMetraj.BoQ.Sections.UI.CrossSectionsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:UrbanoMetraj.BoQ.Sections.UI"
+        xmlns:beh="clr-namespace:UrbanoMetraj.BoQ.SmartAssembly.UI.Behaviors"
+        Title="En Kesit Çizimi"
+        Width="1280" Height="780" MinWidth="1000" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="False"
+        FontFamily="Segoe UI" FontSize="12">
+
+    <Window.Resources>
+        <ui:EnumBoolConverter x:Key="EnumBool"/>
+        <ui:AciBrushConverter x:Key="AciBrush"/>
+        <BooleanToVisibilityConverter x:Key="BoolVis"/>
+
+        <Style x:Key="KaydetButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="14,4"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="#00467F" CornerRadius="2" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="b" Property="Background" Value="#9BB8CE"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SutunBasligi" TargetType="DataGridColumnHeader">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding"    Value="4,2"/>
+            <Setter Property="Background" Value="#F0F0F0"/>
+        </Style>
+        <Style TargetType="GroupBox">
+            <Setter Property="Margin"  Value="0,0,0,8"/>
+            <Setter Property="Padding" Value="6,4"/>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Margin" Value="0,3"/>
+        </Style>
+        <Style TargetType="RadioButton">
+            <Setter Property="Margin" Value="0,3"/>
+        </Style>
+        <Style x:Key="Lbl" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="Gray"/>
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,2,0,4"/>
+        </Style>
+        <Style x:Key="Small" TargetType="Button">
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Margin"  Value="0,0,4,0"/>
+        </Style>
+        <Style x:Key="Swatch" TargetType="Button">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="16"/>
+            <Setter Property="BorderBrush" Value="#888"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel LastChildFill="True">
+
+        <!-- ══ Şablon bar ══════════════════════════════════════════════════════ -->
+        <Border DockPanel.Dock="Top" Background="#F4F6F8" BorderBrush="#D8DDE2" BorderThickness="0,0,0,1" Padding="8,6">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding HeaderText}" Foreground="Gray" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Şablon:" FontWeight="SemiBold" Style="{StaticResource Lbl}"/>
+                    <ComboBox Width="220" ItemsSource="{Binding Templates}" SelectedItem="{Binding TemplateName, Mode=TwoWay}"
+                              ToolTip="Kayıtlı şablonlar (%AppData%\UrbanoMetraj\SectionStyles) — tüm projelerde ortak"/>
+                    <Button Content="Kaydet" Style="{StaticResource KaydetButton}" Margin="8,0,4,0" Click="SaveTemplate_Click"
+                            ToolTip="Şablonu bu adla kaydet (üzerine yazar)"/>
+                    <Button Content="Farklı Kaydet…" Style="{StaticResource Small}" Click="SaveTemplateAs_Click"/>
+                    <Button Content="Sil" Style="{StaticResource Small}" Click="DeleteTemplate_Click"/>
+                    <Button Content="İçe ▾" Style="{StaticResource Small}" Click="Import_Click" ToolTip="XML şablonu içe aktar"/>
+                    <Button Content="Dışa ▾" Style="{StaticResource Small}" Click="Export_Click" ToolTip="Şablonu XML olarak dışa aktar"/>
+                    <TextBlock Text="{Binding DirtyText}" Foreground="#C0392B" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- ══ Bottom: warnings + actions ══════════════════════════════════════ -->
+        <Border DockPanel.Dock="Bottom" Background="#F4F6F8" BorderBrush="#D8DDE2" BorderThickness="0,1,0,0" Padding="8,6">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <CheckBox Content="Önceki çizimin yerine (aynı noktaya)" IsChecked="{Binding ReplaceLast}"
+                              IsEnabled="{Binding HasLastRun}" VerticalAlignment="Center" Margin="0,0,12,0"
+                              ToolTip="Son çizilen kesitleri siler ve yenilerini aynı noktaya çizer"/>
+                    <Button Content="Kesitleri Sil ▾" Style="{StaticResource Small}" Click="Clear_Click"/>
+                    <Button Content="Kapat" Style="{StaticResource Small}" Click="Close_Click" Margin="8,0,4,0"/>
+                    <Button Content="Çiz ▸" Style="{StaticResource KaydetButton}" Click="Draw_Click" MinWidth="90"/>
+                </StackPanel>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Summary}" FontWeight="SemiBold"/>
+                    <TextBlock Text="{Binding Warnings}" Foreground="#B9770E" TextWrapping="Wrap" FontSize="11"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Grid Margin="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="6*" MinWidth="520"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="4*" MinWidth="300"/>
+            </Grid.ColumnDefinitions>
+
+            <TabControl Grid.Column="0" x:Name="Tabs">
+
+                <!-- ── Kapsam ──────────────────────────────────────────────── -->
+                <TabItem Header="Kapsam">
+                    <DockPanel Margin="6">
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                            <TextBlock Text="Ara:" Style="{StaticResource Lbl}"/>
+                            <TextBox Width="180" Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}"/>
+                            <Button Content="Tümünü seç" Style="{StaticResource Small}" Margin="8,0,4,0" Click="SelectAll_Click"/>
+                            <Button Content="Hiçbiri" Style="{StaticResource Small}" Click="SelectNone_Click"/>
+                            <Button Content="Yalnızca kesişenler" Style="{StaticResource Small}" Click="SelectClash_Click"
+                                    ToolTip="Yalnızca başka bir boruyla kesişen borular"/>
+                            <TextBlock Text="Ağ:" Style="{StaticResource Lbl}" Margin="12,0,6,0"/>
+                            <ComboBox x:Name="NetworkPick" Width="110" ItemsSource="{Binding Networks}"/>
+                            <Button Content="Yalnızca bu ağ" Style="{StaticResource Small}" Margin="4,0,0,0" Click="SelectNetwork_Click"/>
+                        </StackPanel>
+                        <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Hint}"
+                                   Text="Yalnızca son UT_BOQ_HESAPLA'da hesaplanan ağlar listelenir. Sıralama kol hatlarına göredir (uzun hat önce)."/>
+                        <DataGrid ItemsSource="{Binding FilteredPipes}" AutoGenerateColumns="False" CanUserAddRows="False"
+                                  CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  ColumnHeaderStyle="{StaticResource SutunBasligi}" SelectionMode="Extended"
+                                  beh:GridBulk.Enable="True">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="Çiz" Binding="{Binding Selected, UpdateSourceTrigger=PropertyChanged}" Width="40"/>
+                                <DataGridTextColumn Header="Ağ" Binding="{Binding Network}" IsReadOnly="True" Width="60"/>
+                                <DataGridTextColumn Header="Kol" Binding="{Binding Kol}" IsReadOnly="True" Width="70"/>
+                                <DataGridTextColumn Header="Boru" Binding="{Binding Name}" IsReadOnly="True" Width="*"/>
+                                <DataGridTextColumn Header="Uzunluk (m)" Binding="{Binding LengthText}" IsReadOnly="True" Width="85"/>
+                                <DataGridCheckBoxColumn Header="Kesişim" Binding="{Binding Clash, Mode=OneWay}" IsReadOnly="True" Width="60"/>
+                                <DataGridTextColumn Header="Kesit" Binding="{Binding Count}" IsReadOnly="True" Width="50"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- ── Senaryo & İstasyon ──────────────────────────────────── -->
+                <TabItem Header="Senaryo &amp; İstasyon">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="8">
+                            <GroupBox Header="Kaynak">
+                                <StackPanel>
+                                    <CheckBox Content="Proje Ayarlarını kullan (önerilen)" IsChecked="{Binding UseProjectSettings}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding ProjectSettingsText}" Style="{StaticResource Hint}"/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="Kapatılırsa aşağıdaki değerler yalnızca bu çizim için kullanılır; Proje Ayarları değişmez. Kesitler her durumda kaydedilmiş hesabın aynısını gösterir."/>
+                                </StackPanel>
+                            </GroupBox>
+                            <GroupBox Header="Senaryo" IsEnabled="{Binding CustomEnabled}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="220"/></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                    <TextBlock Text="Kazı:" Style="{StaticResource Lbl}"/>
+                                    <ComboBox Grid.Column="1" Margin="0,2" ItemsSource="{Binding Scenarios}" DisplayMemberPath="Label"
+                                              SelectedValuePath="Value" SelectedValue="{Binding ExcavScenario}"/>
+                                    <TextBlock Grid.Row="1" Text="Dolgu:" Style="{StaticResource Lbl}"/>
+                                    <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,2" ItemsSource="{Binding Scenarios}" DisplayMemberPath="Label"
+                                              SelectedValuePath="Value" SelectedValue="{Binding BackfillScenario}"/>
+                                </Grid>
+                            </GroupBox>
+                            <GroupBox Header="İstasyonlar">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" IsEnabled="{Binding CustomEnabled}">
+                                        <TextBlock Text="Kesitler arası mesafe:" Style="{StaticResource Lbl}"/>
+                                        <TextBox Width="60" Text="{Binding IntervalText, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBlock Text=" m  (0.5 m katları — her kesit hesaplanmış bir istasyona düşer)" Style="{StaticResource Hint}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <CheckBox Content="Boru başı ve sonu (her zaman)" IsChecked="True" IsEnabled="False"/>
+                                    <CheckBox Content="Kesişim bölgesi sınırları (giriş / çıkış)" IsChecked="{Binding IncludeZoneBoundaries}"/>
+                                    <CheckBox Content="Yalnızca kesişim bölgeleri (+ boru uçları)" IsChecked="{Binding OnlyClashZones}"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                        <TextBlock Text="Ek kesitler (m):" Style="{StaticResource Lbl}"/>
+                                        <TextBox Width="220" Text="{Binding ManualChainages, UpdateSourceTrigger=LostFocus}"
+                                                 ToolTip="Boru başından yerel mesafeler, ; ile ayrılmış — örn. 12.5; 37"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                        <TextBlock Text="En küçük kesit aralığı (m):" Style="{StaticResource Lbl}"/>
+                                        <TextBox Width="60" Text="{Binding MinGap, UpdateSourceTrigger=LostFocus}"/>
+                                    </StackPanel>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="Kesişim bölgesinde ızgara dışı bir mesafe istenirse en yakın hesap istasyonu çizilir ve kesitte belirtilir."/>
+                                </StackPanel>
+                            </GroupBox>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ── İçerik (şablon) ─────────────────────────────────────── -->
+                <TabItem Header="İçerik">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <Grid Margin="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <GroupBox Header="Kesişim bölgeleri">
+                                    <StackPanel>
+                                        <RadioButton Content="Yalnızca bu ağın payı" GroupName="cross"
+                                                     IsChecked="{Binding CrossingMode, Converter={StaticResource EnumBool}, ConverterParameter=OwnOnly}"/>
+                                        <RadioButton Content="Tam kazı alanı (diğer borular kendi stiliyle)" GroupName="cross"
+                                                     IsChecked="{Binding CrossingMode, Converter={StaticResource EnumBool}, ConverterParameter=FullExcavation}"/>
+                                        <RadioButton Content="Tam + hayalet (brüt hatlar da)" GroupName="cross"
+                                                     IsChecked="{Binding CrossingMode, Converter={StaticResource EnumBool}, ConverterParameter=FullWithGhost}"/>
+                                        <CheckBox Content="Diğer boruların adını yaz" IsChecked="{Binding Style.ShowOtherLabel}"/>
+                                        <CheckBox Content="Kesişim notu (kiminle, kim üstte, senaryo)" IsChecked="{Binding Style.ShowClashNote}"/>
+                                        <CheckBox Content="Diğer ağları ağ rengiyle göster" IsChecked="{Binding PerNetworkColors}"/>
+                                        <ItemsControl ItemsSource="{Binding NetworkColors}" Margin="18,2,0,0"
+                                                      Visibility="{Binding PerNetworkColors, Converter={StaticResource BoolVis}}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal" Margin="0,1">
+                                                        <Button Style="{StaticResource Swatch}" Background="{Binding Aci, Converter={StaticResource AciBrush}}"
+                                                                Click="NetworkColor_Click" ToolTip="Renk seç"/>
+                                                        <TextBlock Text="{Binding Network}" VerticalAlignment="Center" Width="80"/>
+                                                        <TextBlock Text="{Binding AciText}" Foreground="Gray" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </GroupBox>
+                                <GroupBox Header="Başlık">
+                                    <StackPanel>
+                                        <CheckBox Content="Başlık bloğu" IsChecked="{Binding Style.ShowTitle}" FontWeight="SemiBold"/>
+                                        <StackPanel Margin="16,0,0,0" IsEnabled="{Binding Style.ShowTitle}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <CheckBox Content="Yerel km" IsChecked="{Binding Style.ShowLocalChainage}" Width="90"/>
+                                                <TextBlock Text="önek:" Style="{StaticResource Lbl}"/>
+                                                <TextBox Width="80" Text="{Binding Style.LocalPrefix, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <CheckBox Content="Genel km" IsChecked="{Binding Style.ShowGlobalChainage}" Width="90"/>
+                                                <TextBlock Text="önek:" Style="{StaticResource Lbl}"/>
+                                                <TextBox Width="80" Text="{Binding Style.GlobalPrefix, UpdateSourceTrigger=PropertyChanged}"/>
+                                                <CheckBox Content="kol adı ile" IsChecked="{Binding Style.ShowKolName}" Margin="8,3,0,3"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="Km biçimi:" Style="{StaticResource Lbl}"/>
+                                                <ComboBox Width="100" ItemsSource="{Binding ChainageFormats}" DisplayMemberPath="Label"
+                                                          SelectedValuePath="Value" SelectedValue="{Binding Style.ChainageFormat}"/>
+                                            </StackPanel>
+                                            <CheckBox Content="Boru adı" IsChecked="{Binding Style.ShowPipeName}"/>
+                                            <CheckBox Content="Ağ adı" IsChecked="{Binding Style.ShowNetwork}"/>
+                                            <CheckBox Content="Çap / malzeme" IsChecked="{Binding Style.ShowDiameter}"/>
+                                        </StackPanel>
+                                        <CheckBox Content="İstasyon notu (en yakın istasyon / açıortay kesiti)" IsChecked="{Binding Style.ShowStationNote}"/>
+                                    </StackPanel>
+                                </GroupBox>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <GroupBox Header="Etiketler">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <CheckBox Content="Kotlar (kazı, dolgu, akar, taban)" IsChecked="{Binding Style.ShowLevels}" Width="230"/>
+                                            <TextBlock Text="ondalık:" Style="{StaticResource Lbl}"/>
+                                            <TextBox Width="30" Text="{Binding Style.LevelDecimals, UpdateSourceTrigger=PropertyChanged}"/>
+                                        </StackPanel>
+                                        <CheckBox Content="Ölçüler (taban, üst genişlik, derinlik, şev)" IsChecked="{Binding Style.ShowDimensions}"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <CheckBox Content="Alanlar" IsChecked="{Binding Style.ShowAreas}" Width="80"/>
+                                            <ComboBox Width="150" ItemsSource="{Binding AreaDisplays}" DisplayMemberPath="Label"
+                                                      SelectedValuePath="Value" SelectedValue="{Binding Style.AreaDisplay}"/>
+                                            <TextBlock Text=" ondalık:" Style="{StaticResource Lbl}"/>
+                                            <TextBox Width="30" Text="{Binding Style.AreaDecimals, UpdateSourceTrigger=PropertyChanged}"/>
+                                        </StackPanel>
+                                        <CheckBox Content="Alt katman adları (katalog katmanları)" IsChecked="{Binding Style.ShowSubLayerNames}"/>
+                                    </StackPanel>
+                                </GroupBox>
+                                <GroupBox Header="Bilgi tablosu (kesitin altında)">
+                                    <DockPanel>
+                                        <CheckBox DockPanel.Dock="Top" Content="Tabloyu çiz" IsChecked="{Binding Style.ShowTable}" FontWeight="SemiBold"/>
+                                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,4,0,0">
+                                            <TextBlock Text="Sütun (mm):" Style="{StaticResource Lbl}"/>
+                                            <TextBox Width="36" Text="{Binding Style.TableLabelWidthMm, UpdateSourceTrigger=LostFocus}"/>
+                                            <TextBlock Text=" + " VerticalAlignment="Center"/>
+                                            <TextBox Width="36" Text="{Binding Style.TableValueWidthMm, UpdateSourceTrigger=LostFocus}"/>
+                                            <TextBlock Text="  satır (mm):" Style="{StaticResource Lbl}"/>
+                                            <TextBox Width="36" Text="{Binding Style.TableRowHeightMm, UpdateSourceTrigger=LostFocus}"/>
+                                        </StackPanel>
+                                        <ListBox x:Name="TableList" ItemsSource="{Binding TableRows}" Height="250" IsEnabled="{Binding Style.ShowTable}">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Button Content="▲" Padding="3,0" Margin="0,0,2,0" Click="RowUp_Click" FontSize="9"/>
+                                                        <Button Content="▼" Padding="3,0" Margin="0,0,6,0" Click="RowDown_Click" FontSize="9"/>
+                                                        <CheckBox IsChecked="{Binding Visible}" Content="{Binding Label}" Margin="0"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </DockPanel>
+                                </GroupBox>
+                            </StackPanel>
+                        </Grid>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ── Görünüm (katman / renk / çizgi / tarama) ────────────── -->
+                <TabItem Header="Görünüm">
+                    <DockPanel Margin="6">
+                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}"
+                                   Text="Katman adında {AG} = ağ adı, {KATMAN} = öğe anahtarı. Birden çok satır seçip bir hücreyi değiştirmek tüm seçili satırlara uygular. Renk kutusuna tıklayarak AutoCAD renk penceresini açın."/>
+                        <DataGrid x:Name="ElementGrid" ItemsSource="{Binding Elements}" AutoGenerateColumns="False" CanUserAddRows="False"
+                                  CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  ColumnHeaderStyle="{StaticResource SutunBasligi}" SelectionMode="Extended"
+                                  beh:GridBulk.Enable="True">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="Göster" Binding="{Binding Visible, UpdateSourceTrigger=PropertyChanged}" Width="48"/>
+                                <DataGridTextColumn Header="Öğe" Binding="{Binding Name}" IsReadOnly="True" Width="190"/>
+                                <DataGridTextColumn Header="Katman" Binding="{Binding Layer}" Width="150"/>
+                                <DataGridTemplateColumn Header="Katman rengi" Width="85" beh:GridBulk.Path="LayerColorAci">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button Style="{StaticResource Swatch}" Background="{Binding LayerColorAci, Converter={StaticResource AciBrush}}"
+                                                        Click="LayerColor_Click"/>
+                                                <TextBlock Text="{Binding LayerColorText}" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Nesne rengi" Width="95" beh:GridBulk.Path="-">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button Style="{StaticResource Swatch}" Click="EntityColor_Click" Content="…" FontSize="9"/>
+                                                <TextBlock Text="{Binding ColorText}" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridComboBoxColumn Header="Çizgi tipi" Width="95" SelectedItemBinding="{Binding Linetype}">
+                                    <DataGridComboBoxColumn.ElementStyle>
+                                        <Style TargetType="ComboBox"><Setter Property="ItemsSource" Value="{Binding DataContext.Linetypes, RelativeSource={RelativeSource AncestorType=Window}}"/></Style>
+                                    </DataGridComboBoxColumn.ElementStyle>
+                                    <DataGridComboBoxColumn.EditingElementStyle>
+                                        <Style TargetType="ComboBox"><Setter Property="ItemsSource" Value="{Binding DataContext.Linetypes, RelativeSource={RelativeSource AncestorType=Window}}"/></Style>
+                                    </DataGridComboBoxColumn.EditingElementStyle>
+                                </DataGridComboBoxColumn>
+                                <DataGridComboBoxColumn Header="Kalınlık" Width="80" SelectedItemBinding="{Binding LineWeightText}">
+                                    <DataGridComboBoxColumn.ElementStyle>
+                                        <Style TargetType="ComboBox"><Setter Property="ItemsSource" Value="{Binding DataContext.LineWeights, RelativeSource={RelativeSource AncestorType=Window}}"/></Style>
+                                    </DataGridComboBoxColumn.ElementStyle>
+                                    <DataGridComboBoxColumn.EditingElementStyle>
+                                        <Style TargetType="ComboBox"><Setter Property="ItemsSource" Value="{Binding DataContext.LineWeights, RelativeSource={RelativeSource AncestorType=Window}}"/></Style>
+                                    </DataGridComboBoxColumn.EditingElementStyle>
+                                </DataGridComboBoxColumn>
+                                <DataGridComboBoxColumn Header="Tarama" Width="90" SelectedItemBinding="{Binding Hatch}">
+                                    <DataGridComboBoxColumn.ElementStyle>
+                                        <Style TargetType="ComboBox"><Setter Property="ItemsSource" Value="{Binding DataContext.Hatches, RelativeSource={RelativeSource AncestorType=Window}}"/></Style>
+                                    </DataGridComboBoxColumn.ElementStyle>
+                                    <DataGridComboBoxColumn.EditingElementStyle>
+                                        <Style TargetType="ComboBox"><Setter Property="ItemsSource" Value="{Binding DataContext.Hatches, RelativeSource={RelativeSource AncestorType=Window}}"/></Style>
+                                    </DataGridComboBoxColumn.EditingElementStyle>
+                                </DataGridComboBoxColumn>
+                                <DataGridTextColumn Header="Ölçek" Binding="{Binding HatchScale}" Width="55"/>
+                                <DataGridTextColumn Header="Açı" Binding="{Binding HatchAngle}" Width="40"/>
+                                <DataGridTemplateColumn Header="Tarama rengi" Width="95" beh:GridBulk.Path="HatchColorAci">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button Style="{StaticResource Swatch}" Background="{Binding HatchColorAci, Converter={StaticResource AciBrush}}"
+                                                        Click="HatchColor_Click"/>
+                                                <TextBlock Text="{Binding HatchColorText}" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Şeffaflık %" Binding="{Binding HatchTransparency}" Width="70"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- ── Yerleşim ────────────────────────────────────────────── -->
+                <TabItem Header="Yerleşim">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <Grid Margin="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <GroupBox Header="Ölçek">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                        <TextBlock Text="Yatay ölçek  1 :" Style="{StaticResource Lbl}"/>
+                                        <TextBox Grid.Column="1" Width="70" HorizontalAlignment="Left" Margin="0,2"
+                                                 Text="{Binding Style.HorizontalScale, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBlock Grid.Row="1" Text="Düşey ölçek  1 :" Style="{StaticResource Lbl}"/>
+                                        <TextBox Grid.Row="1" Grid.Column="1" Width="70" HorizontalAlignment="Left" Margin="0,2"
+                                                 Text="{Binding Style.VerticalScale, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Style="{StaticResource Hint}"
+                                                   Text="Model birimi metredir. Düşey ölçek farklıysa kesit düşeyde büyütülür; tüm ölçü ve kot yazıları gerçek değeri gösterir."/>
+                                    </Grid>
+                                </GroupBox>
+                                <GroupBox Header="Yazı">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                        <TextBlock Text="Yazı stili:" Style="{StaticResource Lbl}"/>
+                                        <ComboBox x:Name="TextStyleCombo" Grid.Column="1" Width="140" HorizontalAlignment="Left" Margin="0,2" IsEditable="True"
+                                                  Text="{Binding Style.TextStyle, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBlock Grid.Row="1" Text="Yazı yüksekliği (mm):" Style="{StaticResource Lbl}"/>
+                                        <TextBox Grid.Row="1" Grid.Column="1" Width="50" HorizontalAlignment="Left" Margin="0,2"
+                                                 Text="{Binding Style.TextHeightMm, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBlock Grid.Row="2" Text="Başlık yüksekliği (mm):" Style="{StaticResource Lbl}"/>
+                                        <TextBox Grid.Row="2" Grid.Column="1" Width="50" HorizontalAlignment="Left" Margin="0,2"
+                                                 Text="{Binding Style.TitleHeightMm, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBlock Grid.Row="3" Text="Çizgi tipi ölçeği:" Style="{StaticResource Lbl}"/>
+                                        <TextBox Grid.Row="3" Grid.Column="1" Width="60" HorizontalAlignment="Left" Margin="0,2"
+                                                 Text="{Binding Style.LinetypeScale, UpdateSourceTrigger=LostFocus}"/>
+                                    </Grid>
+                                </GroupBox>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <GroupBox Header="Pafta düzeni">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                        <TextBlock Text="Sıralama:" Style="{StaticResource Lbl}"/>
+                                        <ComboBox Grid.Column="1" Margin="0,2" ItemsSource="{Binding Orderings}" DisplayMemberPath="Label"
+                                                  SelectedValuePath="Value" SelectedValue="{Binding Style.Ordering}"/>
+                                        <TextBlock Grid.Row="1" Text="Satır başına kesit:" Style="{StaticResource Lbl}"/>
+                                        <TextBox Grid.Row="1" Grid.Column="1" Width="50" HorizontalAlignment="Left" Margin="0,2"
+                                                 Text="{Binding Style.Columns, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBlock Grid.Row="2" Text="Aralık yatay / düşey (mm):" Style="{StaticResource Lbl}"/>
+                                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,2">
+                                            <TextBox Width="45" Text="{Binding Style.GapXmm, UpdateSourceTrigger=LostFocus}"/>
+                                            <TextBlock Text=" / " VerticalAlignment="Center"/>
+                                            <TextBox Width="45" Text="{Binding Style.GapYmm, UpdateSourceTrigger=LostFocus}"/>
+                                        </StackPanel>
+                                        <TextBlock Grid.Row="3" Text="Zemin çizgisi uzatma (m):" Style="{StaticResource Lbl}"/>
+                                        <TextBox Grid.Row="3" Grid.Column="1" Width="50" HorizontalAlignment="Left" Margin="0,2"
+                                                 Text="{Binding Style.GroundExtendM, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBlock Grid.Row="4" Text="Gruplama:" Style="{StaticResource Lbl}"/>
+                                        <ComboBox Grid.Row="4" Grid.Column="1" Margin="0,2" ItemsSource="{Binding Groupings}" DisplayMemberPath="Label"
+                                                  SelectedValuePath="Value" SelectedValue="{Binding Style.Grouping}"/>
+                                    </Grid>
+                                </GroupBox>
+                                <GroupBox Header="Ek öğeler">
+                                    <StackPanel>
+                                        <CheckBox Content="Her kesitin çerçevesi" IsChecked="{Binding Style.ShowFrame}"/>
+                                        <CheckBox Content="Satır başlığı (boru adı)" IsChecked="{Binding Style.ShowRowTitle}"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <CheckBox Content="Referans ızgarası, aralık (m):" IsChecked="{Binding Style.ShowGrid}" Width="190"/>
+                                            <TextBox Width="45" Text="{Binding Style.GridStepM, UpdateSourceTrigger=LostFocus}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </GroupBox>
+                            </StackPanel>
+                        </Grid>
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="#E4E7EA"/>
+
+            <!-- ══ Preview ═════════════════════════════════════════════════════ -->
+            <DockPanel Grid.Column="2">
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                    <TextBlock Text="Önizleme" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <DockPanel>
+                        <TextBlock Text="Boru:" Style="{StaticResource Lbl}"/>
+                        <ComboBox ItemsSource="{Binding PreviewPipes}" SelectedItem="{Binding PreviewPipe}" DisplayMemberPath="Name"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,4,0,0">
+                        <Button DockPanel.Dock="Left" Content="◀" Width="28" Click="PrevStation_Click"/>
+                        <Button DockPanel.Dock="Right" Content="▶" Width="28" Click="NextStation_Click"/>
+                        <TextBlock Text="{Binding PreviewStationText}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </DockPanel>
+                </StackPanel>
+                <Border BorderBrush="#C8CDD2" BorderThickness="1">
+                    <ui:SectionPreview x:Name="Preview"/>
+                </Border>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</Window>

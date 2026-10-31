@@ -29,6 +29,8 @@ Exit code 0 = all tests pass. Tests validate `ClipperGeo.cs`, `BoQOverlapResolve
 - **Σ over all networks: Kazı, Geri Dolgu and total fill are identical in KU / KL / SP** — the overlap scenarios only redistribute volume between pipes (Ignore may differ);
 - same datum: Σ Kazı − Σ fill = Σ pipe body in every scenario.
 
+`SectionTests.cs` covers the cross-section drawing (`UT_CROSS_SECTIONS`, see `EN_KESIT_PLAN.md`): S0–S8 (a drawn section = the engine's resolved section, owned + lost = gross, Σ owned identical in KU/KL/SP on the same cut, section extraction never changes volumes, no sliver rings), P (station planner), K (kol chainage), L (layout + style XML). Set `SECTION_SVG=<file>` to dump a layout sheet as SVG for a visual check.
+
 Run this after ANY change to the V2 engine, polygon math or overlap logic, before building the plugin. On a real drawing, `UT_BOQ_PIPE_DIAG` / `UT_BOQ_PIT_DIAG` print the same checks (see `KAZI_DOLGU_DOGRULAMA.md`).
 
 ## Architecture

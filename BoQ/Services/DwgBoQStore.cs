@@ -58,6 +58,7 @@ namespace UrbanoMetraj.BoQ.Services
         private const string K_MANHOLE_STACKS = "MANHOLE_STACKS";
         private const string K_V2_VOLUMES    = "V2_VOLUMES";
         private const string K_LAYER_SPLITS  = "LAYER_SPLITS";  // Phase 2b — PipeTrenchCatalog per-sub-layer ratios
+        private const string K_TRENCH_STACK  = "TRENCH_STACK";  // raw tier sub-layer stack (UT_CROSS_SECTIONS)
 
         // Sub-container that holds all pipe-network data.
         // Other stores (ManholeCatalogStore, ManholeAssignStore) write under
@@ -156,6 +157,9 @@ namespace UrbanoMetraj.BoQ.Services
                 // ── All pipe networks go under AGLAR ──────────────────────────
                 var aglar = MakeSubDict(tr, root, K_NETWORKS);
                 var rows = report.SectionDebug ?? new List<SectionDebugRow>();
+                // Row order of the calc run — persisted so UT_CROSS_SECTIONS re-runs the engine in the same order.
+                var calcOrder = new Dictionary<SectionDebugRow, int>();
+                for (int ri = 0; ri < rows.Count; ri++) calcOrder[rows[ri]] = ri;
                 foreach (var grp in rows.GroupBy(r => r.SystemName ?? ""))
                 {
                     string netName = grp.Key;
@@ -172,10 +176,11 @@ namespace UrbanoMetraj.BoQ.Services
                             "P_" + SafeKey(sdr.StartNodeName) + "_to_" + SafeKey(sdr.EndNodeName));
                         var pipeDict = MakeSubDict(tr, netDict, pid);
 
-                        WritePipeMetadata(tr, pipeDict, sdr, netName);
+                        WritePipeMetadata(tr, pipeDict, sdr, netName, calcOrder[sdr]);
                         if (sdr.HasV2Volumes)
                             WriteV2Volumes(tr, pipeDict, sdr);
                         WriteLayerSplits(tr, pipeDict, sdr);
+                        WriteTrenchStack(tr, pipeDict, sdr);
 
                         foreach (var st in sdr.Stations ?? new List<CrossSectionStation>())
                         {
@@ -410,6 +415,7 @@ namespace UrbanoMetraj.BoQ.Services
                         sdr.SystemName = netName;   // keep grouping key consistent with the system
                         ReadV2Volumes(tr, pipeDict, sdr);
                         ReadLayerSplits(tr, pipeDict, sdr);
+                        ReadTrenchStack(tr, pipeDict, sdr);
 
                         foreach (DBDictionaryEntry staEntry in pipeDict)
                         {
@@ -970,7 +976,7 @@ namespace UrbanoMetraj.BoQ.Services
         }
 
         private static void WritePipeMetadata(
-            Transaction tr, DBDictionary pipeDict, SectionDebugRow s, string netName)
+            Transaction tr, DBDictionary pipeDict, SectionDebugRow s, string netName, int calcOrder)
         {
             var tvs = new List<TypedValue>
             {
@@ -998,7 +1004,48 @@ namespace UrbanoMetraj.BoQ.Services
             tvs.Add(Str(s.Sinif    ?? ""));
             tvs.Add(Str(s.Aciklama ?? ""));
             tvs.Add(Str(s.LinkedPipeFamilyId.ToString()));
+            // Appended 2026-10-29: the remaining V2 engine inputs, so UT_CROSS_SECTIONS can
+            // re-run the engine on loaded data. Marker 1 = block present.
+            tvs.Add(I16(1));
+            tvs.Add(Dbl(s.StartDolguZ));
+            tvs.Add(Dbl(s.EndDolguZ));
+            tvs.Add(Str(s.StartNodeGuid ?? ""));
+            tvs.Add(Str(s.EndNodeGuid ?? ""));
+            tvs.Add(I32(calcOrder));
             MakeXRecord(tr, pipeDict, K_METADATA, tvs.ToArray());
+        }
+
+        private static void WriteTrenchStack(Transaction tr, DBDictionary pipeDict, SectionDebugRow s)
+        {
+            if ((s.TrenchStack?.Count ?? 0) == 0) return;
+            var tvs = new List<TypedValue> { I16(1), I32(s.TrenchStack.Count) };
+            foreach (var l in s.TrenchStack)
+            {
+                tvs.Add(I16((short)l.Group));
+                tvs.Add(I16((short)l.Kind));
+                tvs.Add(Str(l.LayerName ?? ""));
+                tvs.Add(Str(l.MaterialType ?? ""));
+                tvs.Add(Dbl(l.ThicknessM));
+            }
+            MakeXRecord(tr, pipeDict, K_TRENCH_STACK, tvs.ToArray());
+        }
+
+        private static void ReadTrenchStack(Transaction tr, DBDictionary pipeDict, SectionDebugRow sdr)
+        {
+            var tvs = ReadXRecord(tr, pipeDict, K_TRENCH_STACK);
+            if (tvs == null) return;
+            int i = 0;
+            if (ReadI16(tvs, ref i) != 1) return;
+            int n = ReadI32(tvs, ref i);
+            for (int k = 0; k < n && i < tvs.Length; k++)
+                sdr.TrenchStack.Add(new TrenchStackLayer
+                {
+                    Group        = (TrenchStackGroup)ReadI16(tvs, ref i),
+                    Kind         = (TrenchStackKind)ReadI16(tvs, ref i),
+                    LayerName    = ReadStr(tvs, ref i),
+                    MaterialType = ReadStr(tvs, ref i),
+                    ThicknessM   = ReadDbl(tvs, ref i)
+                });
         }
 
         private static void WriteV2Volumes(Transaction tr, DBDictionary pipeDict, SectionDebugRow s)
@@ -1129,6 +1176,16 @@ namespace UrbanoMetraj.BoQ.Services
             Guid famId;
             Guid.TryParse(ReadStr(tvs, ref i), out famId);
             sdr.LinkedPipeFamilyId = famId;
+            // Cross-section engine inputs (absent before 2026-10-29 → HasSectionInputs=false).
+            sdr.HasSectionInputs = i < tvs.Length && ReadI16(tvs, ref i) == 1;
+            if (sdr.HasSectionInputs)
+            {
+                sdr.StartDolguZ   = ReadDbl(tvs, ref i);
+                sdr.EndDolguZ     = ReadDbl(tvs, ref i);
+                sdr.StartNodeGuid = ReadStr(tvs, ref i);
+                sdr.EndNodeGuid   = ReadStr(tvs, ref i);
+                sdr.CalcOrder     = ReadI32(tvs, ref i);
+            }
             return sdr;
         }
 

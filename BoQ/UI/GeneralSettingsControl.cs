@@ -51,7 +51,8 @@ namespace UrbanoMetraj.BoQ.UI
         };
 
         public double             SolidDisplayInterval        => (double)_nudSolid.Value;
-        public double             CrossSectionInterval        => (double)_nudSection.Value;
+        // Always a multiple of 0.5 m so every cross-section falls on a computed engine station (decision 1).
+        public double             CrossSectionInterval        => (double)Math.Max(0.5m, Math.Round(_nudSection.Value * 2m, MidpointRounding.AwayFromZero) / 2m);
         public OverlapAssignment  ExcavationOverlap           => IndexToOverlap(_cmbKazi.SelectedIndex);
         public OverlapAssignment  BackfillOverlap             => IndexToOverlap(_cmbDolgu.SelectedIndex);
         public ManholeType        SelectedManholeType         => _cmbBaca.SelectedIndex == 1 ? ManholeType.CastInPlace : ManholeType.PreCast;
@@ -124,7 +125,7 @@ namespace UrbanoMetraj.BoQ.UI
             // ── Kesit Çizim grubu ─────────────────────────────────────────────
             var grp2 = new GroupBox
             {
-                Text = "Kesit Çizim Ayarları (UT_SECTIONS)",
+                Text = "Kesit Çizim Ayarları (UT_CROSS_SECTIONS)",
                 Left = 10, Top = 118, Width = 460, Height = 100
             };
             grp2.Controls.AddRange(new Control[]
@@ -145,13 +146,16 @@ namespace UrbanoMetraj.BoQ.UI
                     TextAlign = ContentAlignment.MiddleLeft },
                 new Label
                 {
-                    Text = "Her kaç metrede bir kesit çizileceğini belirler. Çakışma sınırları her zaman eklenir.",
+                    Text = "Her kaç metrede bir kesit çizileceğini belirler (0.5 m katları). Boru başı ve sonu her zaman çizilir.",
                     Left = 8, Top = 54, Width = 320, Height = 36,
                     ForeColor = Color.Gray, Font = new Font("Segoe UI", 7.5f),
                     TextAlign = ContentAlignment.TopLeft
                 }
             });
             Controls.Add(grp2);
+            // Typed values such as 4.3 snap to the 0.5 m grid as soon as the field is left.
+            _nudSection.Value = (decimal)CrossSectionInterval;
+            _nudSection.Leave += (s, e) => _nudSection.Value = (decimal)CrossSectionInterval;
 
             // ── Hesaplama Seçenekleri grubu ───────────────────────────────────
             var grp3 = new GroupBox

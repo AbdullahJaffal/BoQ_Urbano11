@@ -573,6 +573,36 @@ namespace UrbanoMetraj.BoQ.Models
         public double Volume       { get; set; }
     }
 
+    /// <summary>Main trench fill group a <see cref="TrenchStackLayer"/> belongs to. Gömlekleme
+    /// is split into its two catalog positions (Boru Etrafı / Boru Üstü).</summary>
+    public enum TrenchStackGroup { Yataklama = 0, BoruEtrafi = 1, BoruUstu = 2, GeriDolgu = 3 }
+
+    /// <summary>How a stack layer's thickness is resolved at a station.</summary>
+    public enum TrenchStackKind
+    {
+        /// <summary>Fixed catalog thickness.</summary>
+        Fixed = 0,
+        /// <summary>Boru Etrafı: fills whatever remains up to the pipe OD (first such layer only).</summary>
+        UpToPipeTop = 1,
+        /// <summary>Absorbs whatever remains of its group's height at the station (first such layer only).</summary>
+        FillToSurface = 2
+    }
+
+    /// <summary>
+    /// One sub-layer of the matched PipeTrenchCatalog tier, bottom-up within its group —
+    /// the raw catalog definition (not the resolved ratio). Used by the cross-section
+    /// drawing (UT_CROSS_SECTIONS) to place the sub-layer division lines at their real
+    /// heights at each station. Persisted under the pipe's TRENCH_STACK XRecord.
+    /// </summary>
+    public class TrenchStackLayer
+    {
+        public TrenchStackGroup Group        { get; set; }
+        public TrenchStackKind  Kind         { get; set; }
+        public string           LayerName    { get; set; } = "";
+        public string           MaterialType { get; set; } = "";
+        public double           ThicknessM   { get; set; }
+    }
+
     public class SectionDebugRow
     {
         // ── Identity ─────────────────────────────────────────────────────────
@@ -584,8 +614,8 @@ namespace UrbanoMetraj.BoQ.Models
         public string EndNodeName     { get; set; }
         /// <summary>Start/end node (manhole) GUIDs from the Urbano topology. Used by
         /// the overlap engine to skip clashes between pipes sharing a manhole
-        /// (connected pipes never count as a real trench clash). Compute-time only —
-        /// not serialised, since overlap resolution runs before the data is saved.</summary>
+        /// (connected pipes never count as a real trench clash). Persisted (appended to
+        /// METADATA, 2026-10-29) so UT_CROSS_SECTIONS can re-run the engine on loaded data.</summary>
         public string StartNodeGuid   { get; set; }
         public string EndNodeGuid     { get; set; }
         public int    DiameterMm      { get; set; }
@@ -722,6 +752,15 @@ namespace UrbanoMetraj.BoQ.Models
         public List<TrenchLayerSplit> BoruEtrafiLayerSplits { get; set; } = new List<TrenchLayerSplit>();
         public List<TrenchLayerSplit> BoruUstuLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
         public List<TrenchLayerSplit> BackfillLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
+
+        // ── Cross-section drawing inputs (UT_CROSS_SECTIONS) ──────────────────
+        /// <summary>Raw sub-layer stack of the matched trench tier (empty = no tier / old DWG).</summary>
+        public List<TrenchStackLayer> TrenchStack { get; set; } = new List<TrenchStackLayer>();
+        /// <summary>Load-time flag: the DWG carried every V2 engine input (Dolgu levels + node
+        /// GUIDs). False for DWGs saved before 2026-10-29 → re-run UT_BOQ_HESAPLA before drawing.</summary>
+        public bool HasSectionInputs { get; set; } = true;
+        /// <summary>Index of this row in the calc run (persisted) — the engine's pair roles follow row order.</summary>
+        public int  CalcOrder        { get; set; }
     }
 
     /// <summary>
