@@ -85,6 +85,40 @@ namespace UrbanoMetraj.BoQ.Sections.UI
         public bool Visible { get => R.Visible; set { R.Visible = value; Raise(); } }
     }
 
+    /// <summary>One catalog sub-layer's own hatch (the style entry is created on first edit).</summary>
+    public sealed class SubLayerRowVm : Notify
+    {
+        private readonly SectionStyle _s;
+        public string Name  { get; }
+        public string Group { get; }
+        public SubLayerRowVm(SectionStyle s, string name, string group) { _s = s; Name = name; Group = group; }
+
+        private SubLayerStyle Get() => _s.SubLayers.TryGetValue(Name, out var v) ? v : null;
+        private SubLayerStyle Edit()
+        {
+            var v = Get();
+            if (v == null) _s.SubLayers[Name] = v = new SubLayerStyle { Name = Name };
+            return v;
+        }
+
+        public string Hatch
+        {
+            get { var h = Get()?.Hatch; return string.IsNullOrEmpty(h) ? "(grup)" : h; }
+            set
+            {
+                var v = (value ?? "").Trim();
+                if (v.Length == 0 || v == "(grup)" || v == "(yok)") { if (Get() != null) _s.SubLayers.Remove(Name); }
+                else Edit().Hatch = v.ToUpperInvariant();
+                Raise(string.Empty);
+            }
+        }
+        public double HatchScale        { get => Get()?.HatchScale ?? 1.0; set { if (value > 0) Edit().HatchScale = value; Raise(); } }
+        public double HatchAngle        { get => Get()?.HatchAngle ?? 0.0; set { Edit().HatchAngle = value; Raise(); } }
+        public short  HatchColorAci     { get => Get()?.HatchColorAci ?? 256; set { Edit().HatchColorAci = value; Raise(); Raise(nameof(HatchColorText)); } }
+        public string HatchColorText    => HatchColorAci == 256 ? "Grup rengi" : HatchColorAci.ToString(CultureInfo.InvariantCulture);
+        public int    HatchTransparency { get => Get()?.HatchTransparency ?? 50; set { Edit().HatchTransparency = Math.Max(0, Math.Min(90, value)); Raise(); } }
+    }
+
     public sealed class NetworkColorVm : Notify
     {
         private readonly SectionStyle _s;
@@ -105,6 +139,7 @@ namespace UrbanoMetraj.BoQ.Sections.UI
         public string Name    { get; set; }
         public string Key     { get; set; }
         public string Kol     { get; set; }
+        public int    Diameter { get; set; }
         public double Length  { get; set; }
         public bool   Clash   { get; set; }
         private bool _sel = true;
@@ -112,6 +147,7 @@ namespace UrbanoMetraj.BoQ.Sections.UI
         private int _count;
         public int    Count   { get => _count; set => Set(ref _count, value); }
         public string LengthText => Length.ToString("0.00", CultureInfo.InvariantCulture);
+        public string DiameterText => Diameter > 0 ? "Ø" + Diameter.ToString(CultureInfo.InvariantCulture) : "";
     }
 
     // ── Main VM ──────────────────────────────────────────────────────────────
@@ -139,7 +175,7 @@ namespace UrbanoMetraj.BoQ.Sections.UI
                 Pipes.Add(new PipeRowVm
                 {
                     Index = i, Network = r.SystemName, Name = SectionLayoutEngine.Sanitize(r.PipeName), Key = key,
-                    Kol = kol?.KolName ?? "", Length = r.Length2D, Clash = clashPipes.Contains(i),
+                    Kol = kol?.KolName ?? "", Diameter = r.DiameterMm, Length = r.Length2D, Clash = clashPipes.Contains(i),
                     Selected = (selNets.Count == 0 || selNets.Contains(r.SystemName ?? "")) && (selPipes.Count == 0 || selPipes.Contains(key))
                 });
             }
@@ -185,6 +221,9 @@ namespace UrbanoMetraj.BoQ.Sections.UI
               "0.40 mm", "0.50 mm", "0.53 mm", "0.60 mm", "0.70 mm", "0.80 mm", "0.90 mm", "1.00 mm", "1.20 mm", "1.40 mm", "2.00 mm" };
         public IReadOnlyList<string> Hatches { get; } = new[]
             { "(yok)", "SOLID", "ANSI31", "ANSI32", "ANSI33", "ANSI37", "AR-SAND", "AR-CONC", "GRAVEL", "EARTH", "DOTS", "CROSS", "NET", "HONEY", "LINE" };
+        /// <summary>Sub-layer hatches — "(grup)" keeps the group element's hatch.</summary>
+        public IReadOnlyList<string> SubLayerHatches { get; } = new[]
+            { "(grup)", "SOLID", "ANSI31", "ANSI32", "ANSI33", "ANSI37", "AR-SAND", "AR-CONC", "GRAVEL", "EARTH", "DOTS", "CROSS", "NET", "HONEY", "LINE" };
 
         // ── Run options (per drawing) ────────────────────────────────────────
         public SectionRunOptions Run { get; }
@@ -220,6 +259,28 @@ namespace UrbanoMetraj.BoQ.Sections.UI
         public string ManualChainages { get => Run.ManualChainages; set { Run.ManualChainages = value ?? ""; Raise(); PipesChanged(); } }
         public double MinGap { get => Run.MinGap; set { Run.MinGap = Math.Max(0, value); Raise(); PipesChanged(); } }
 
+        // ── Scenario comparison ──────────────────────────────────────────────
+        public bool CompareScenarios
+        {
+            get => Run.CompareScenarios;
+            set { Run.CompareScenarios = value; Raise(); PipesChanged(); RaiseWarnings(); }
+        }
+        private bool InSet(TiePreference p) => Run.CompareSet.Contains(p);
+        private void Toggle(TiePreference p, bool on, string name)
+        {
+            if (on && !Run.CompareSet.Contains(p)) Run.CompareSet.Add(p);
+            if (!on) Run.CompareSet.Remove(p);
+            // Keep the UI order KU, KL, SP, Yok say.
+            var order = new[] { TiePreference.KeepUpper, TiePreference.KeepLower, TiePreference.Split, TiePreference.Ignore };
+            Run.CompareSet = order.Where(Run.CompareSet.Contains).ToList();
+            Raise(name); PipesChanged(); RaiseWarnings();
+        }
+        public bool CompareKU     { get => InSet(TiePreference.KeepUpper); set => Toggle(TiePreference.KeepUpper, value, nameof(CompareKU)); }
+        public bool CompareKL     { get => InSet(TiePreference.KeepLower); set => Toggle(TiePreference.KeepLower, value, nameof(CompareKL)); }
+        public bool CompareSP     { get => InSet(TiePreference.Split);     set => Toggle(TiePreference.Split,     value, nameof(CompareSP)); }
+        public bool CompareIgnore { get => InSet(TiePreference.Ignore);    set => Toggle(TiePreference.Ignore,    value, nameof(CompareIgnore)); }
+        private int ScenarioCount => Session.ScenarioSet(Run).Count;
+
         private bool _replaceLast;
         /// <summary>Erase the previous run and draw at its insertion point (no pick).</summary>
         public bool ReplaceLast { get => _replaceLast; set => Set(ref _replaceLast, value); }
@@ -232,7 +293,8 @@ namespace UrbanoMetraj.BoQ.Sections.UI
         public IEnumerable<PipeRowVm> FilteredPipes => Pipes.Where(p => _filter.Length == 0
             || (p.Name ?? "").IndexOf(_filter, StringComparison.OrdinalIgnoreCase) >= 0
             || (p.Network ?? "").IndexOf(_filter, StringComparison.OrdinalIgnoreCase) >= 0
-            || (p.Kol ?? "").IndexOf(_filter, StringComparison.OrdinalIgnoreCase) >= 0);
+            || (p.Kol ?? "").IndexOf(_filter, StringComparison.OrdinalIgnoreCase) >= 0
+            || p.DiameterText.IndexOf(_filter, StringComparison.OrdinalIgnoreCase) >= 0);
         public IEnumerable<string> Networks => Pipes.Select(p => p.Network).Distinct(StringComparer.OrdinalIgnoreCase);
 
         public void SelectPipes(Func<PipeRowVm, bool> pred, bool value)
@@ -270,8 +332,10 @@ namespace UrbanoMetraj.BoQ.Sections.UI
                 p.Count = row.Length2D < 1e-6 ? 0 : SectionStationPlanner.Plan(row.Length2D, Session.Capture.PerPipeZones[p.Index], plan).Count;
                 if (p.Selected) { total += p.Count; if (p.Count > 0) pipes++; }
             }
-            SectionCount = total;
-            Summary = $"{total} kesit · {pipes} boru";
+            int n = ScenarioCount;
+            SectionCount = total * n;
+            Summary = n > 1 ? $"{total} istasyon × {n} senaryo = {total * n} kesit · {pipes} boru"
+                            : $"{total} kesit · {pipes} boru";
         }
 
         /// <summary>Writes the scope back into the run options (empty lists = everything).</summary>
@@ -285,12 +349,25 @@ namespace UrbanoMetraj.BoQ.Sections.UI
             else Run.Pipes.AddRange(Pipes.Where(p => p.Selected).Select(p => p.Key));
         }
 
+        /// <summary>Scope = exactly the pipes picked in the drawing (Çizimden seç).</summary>
+        public int ApplySelection(HashSet<int> pipeIndices)
+        {
+            _bulk = true;
+            foreach (var p in Pipes) p.Selected = pipeIndices.Contains(p.Index);
+            _bulk = false;
+            Filter = "";
+            PipesChanged();
+            if (PreviewPipe == null || !PreviewPipe.Selected) PreviewPipe = Pipes.FirstOrDefault(p => p.Selected && p.Count > 0);
+            return Pipes.Count(p => p.Selected);
+        }
+
         // ── Style / templates ────────────────────────────────────────────────
         private SectionStyle _style;
         public SectionStyle Style { get => _style; private set { _style = value; Raise(); } }
         public ObservableCollection<ElementRowVm>   Elements      { get; } = new ObservableCollection<ElementRowVm>();
         public ObservableCollection<TableRowVm>     TableRows     { get; } = new ObservableCollection<TableRowVm>();
         public ObservableCollection<NetworkColorVm> NetworkColors { get; } = new ObservableCollection<NetworkColorVm>();
+        public ObservableCollection<SubLayerRowVm>  SubLayers     { get; } = new ObservableCollection<SubLayerRowVm>();
         public ObservableCollection<string>         Templates     { get; } = new ObservableCollection<string>();
         private List<SectionStyle> _templateStyles = new List<SectionStyle>();
 
@@ -328,8 +405,36 @@ namespace UrbanoMetraj.BoQ.Sections.UI
             }
             NetworkColors.Clear();
             foreach (var n in Session.ComputedNetworks.Concat(Session.UncomputedNetworks)) NetworkColors.Add(new NetworkColorVm(s, n));
+            SubLayers.Clear();
+            foreach (var (name, group) in SubLayerNames())
+            {
+                var row = new SubLayerRowVm(s, name, group);
+                row.PropertyChanged += (o, e) => RequestPreview?.Invoke();
+                SubLayers.Add(row);
+            }
             Raise(nameof(CrossingMode)); Raise(nameof(PerNetworkColors));
             RefreshDirty();
+            RequestPreview?.Invoke();
+        }
+
+        /// <summary>Distinct catalog sub-layers of the computed pipes (name + main group), bottom-up.</summary>
+        private IEnumerable<(string Name, string Group)> SubLayerNames()
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var res = new List<(TrenchStackGroup G, string Name)>();
+            foreach (var r in Session.Capture.Rows)
+                foreach (var l in r.TrenchStack ?? new List<TrenchStackLayer>())
+                    if (!string.IsNullOrEmpty(l.LayerName) && seen.Add(l.LayerName)) res.Add((l.Group, l.LayerName));
+            string G(TrenchStackGroup g) => g == TrenchStackGroup.Yataklama ? "Yataklama" : g == TrenchStackGroup.GeriDolgu ? "Geri Dolgu" : "Gömlekleme";
+            return res.OrderBy(x => (int)x.G).Select(x => (x.Name, G(x.G)));
+        }
+
+        /// <summary>Fills the per-network colours (e.g. from the networks' drawing layers).</summary>
+        public void ApplyNetworkColors(IDictionary<string, short> colors)
+        {
+            foreach (var n in NetworkColors)
+                if (colors.TryGetValue(n.Network, out var a) && a >= 1 && a <= 255) n.Aci = a;
+            if (!PerNetworkColors) PerNetworkColors = true;
             RequestPreview?.Invoke();
         }
 
@@ -445,22 +550,31 @@ namespace UrbanoMetraj.BoQ.Sections.UI
             PreviewStationIndex = Math.Max(0, Math.Min(n - 1, _stIdx + delta));
         }
 
-        /// <summary>Builds the preview section with the current style + run options (null when none).</summary>
-        public SectionDrawing BuildPreview(out string note)
+        /// <summary>
+        /// Builds the preview with the current style + run options: one section, or in comparison
+        /// mode the whole row of compared scenarios (null when there is nothing to show).
+        /// </summary>
+        public SectionSheet BuildPreview(out string note)
         {
             note = "";
             var st = PreviewStations;
             if (_previewPipe == null || st.Count == 0) { note = "Önizlenecek kesit yok."; return null; }
             int i = Math.Min(_stIdx, st.Count - 1);
-            var (k, d, _) = Session.Resolve(Run);
-            var cut = Session.BuildOne(_previewPipe.Index, st[i], k, d);
-            if (cut == null) { note = "Bu boru için kesit üretilemedi."; return null; }
-            if (Session.Kol.TryGetValue(_previewPipe.Index, out var kol))
+            var cuts = new List<SectionCut>();
+            int g = 0;
+            Session.AddCuts(_previewPipe.Index, new[] { st[i] }, Run, cuts, ref g);
+            if (cuts.Count == 0) { note = "Bu boru için kesit üretilemedi."; return null; }
+            if (cuts.Count == 1)
             {
-                cut.KolName = kol.KolName;
-                cut.GlobalChainage = KolChainageService.Global(kol, Session.Capture.Rows[_previewPipe.Index].Length2D, cut.LocalChainage);
+                var sheet = new SectionSheet();
+                var d = SectionLayoutEngine.BuildSlot(cuts[0], Style, 0);
+                sheet.Sections.Add(d);
+                sheet.MinX = d.MinX; sheet.MinY = d.MinY; sheet.MaxX = d.MaxX; sheet.MaxY = d.MaxY;
+                return sheet;
             }
-            return SectionLayoutEngine.BuildSlot(cut, Style, 0);
+            var s = Style.Clone();
+            s.ShowRowTitle = false;
+            return SectionLayoutEngine.Layout(cuts, s);
         }
 
         // ── Warnings ─────────────────────────────────────────────────────────
@@ -476,8 +590,7 @@ namespace UrbanoMetraj.BoQ.Sections.UI
                           $"{SectionLayoutEngine.Sanitize(x.Pipe)} {x.Field} Δ={x.Diff.ToString("0.###", CultureInfo.InvariantCulture)} m³) — " +
                           "çizim son hesaptan sonra değişmiş olabilir; UT_BOQ_HESAPLA önerilir.");
                 }
-                var (k, d, _) = Session.Resolve(Run);
-                if (Session.NeedsUncomputedWarning(k, d))
+                if (Session.NeedsUncomputedWarning(Run))
                     w.Add("⚠ Hesaplanmamış ağlar var (" + string.Join(", ", Session.UncomputedNetworks) +
                           "). Kesitler bu ağlarla kesişimleri içermiyor olabilir — daha doğru sonuç için tüm ağları hesaplayın.");
                 int zero = Pipes.Count(p => p.Count == 0);

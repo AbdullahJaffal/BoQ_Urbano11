@@ -16,7 +16,15 @@ using Exception = System.Exception;
 namespace UrbanoMetraj.BoQ.Sections.UI
 {
     /// <summary>What the user asked for when the panel closed.</summary>
-    public enum PanelResult { Close = 0, Draw = 1 }
+    public enum PanelResult
+    {
+        Close = 0,
+        Draw = 1,
+        /// <summary>Pick pipes in the drawing as the scope, then reopen the panel.</summary>
+        CadSelect = 2,
+        /// <summary>Pick plan points on pipes → one section each.</summary>
+        PickSingle = 3
+    }
 
     /// <summary>
     /// UT_CROSS_SECTIONS control panel: Şablon (template) management + scope / scenario /
@@ -31,6 +39,8 @@ namespace UrbanoMetraj.BoQ.Sections.UI
         /// <summary>Set by the "Kesitleri Sil" menu: null = nothing, "" = all, else a run id.</summary>
         public Func<string, int> ClearHandler { get; set; }
         public string LastRunId { get; set; }
+        /// <summary>Network → ACI from the networks' drawing layers (supplied by the command).</summary>
+        public Func<System.Collections.Generic.IDictionary<string, short>> NetworkLayerColors { get; set; }
 
         public CrossSectionsWindow(CrossSectionsVm vm, string[] textStyles)
         {
@@ -58,10 +68,10 @@ namespace UrbanoMetraj.BoQ.Sections.UI
         {
             try
             {
-                var d = _vm.BuildPreview(out string note);
-                Preview.Show(d, _vm.Style, note);
+                var sheet = _vm.BuildPreview(out string note);
+                Preview.Show(sheet, _vm.Style, note);
             }
-            catch (Exception ex) { Preview.Show(null, _vm.Style, "Önizleme hatası: " + ex.Message); }
+            catch (Exception ex) { Preview.Show((SectionSheet)null, _vm.Style, "Önizleme hatası: " + ex.Message); }
             _vm.RefreshDirty();
             _vm.RaiseWarnings();
         }
@@ -124,6 +134,30 @@ namespace UrbanoMetraj.BoQ.Sections.UI
             if (!(NetworkPick.SelectedItem is string net)) return;
             _vm.SelectPipes(p => true, false);
             _vm.SelectPipes(p => string.Equals(p.Network, net, StringComparison.OrdinalIgnoreCase), true);
+        }
+        private void CadSelect_Click(object sender, RoutedEventArgs e) { CommitEdits(); Result = PanelResult.CadSelect; Close(); }
+
+        private void NetworkLayerColors_Click(object sender, RoutedEventArgs e)
+        {
+            var colors = NetworkLayerColors?.Invoke();
+            if (colors == null || colors.Count == 0)
+            {
+                MessageBox.Show(this, "Ağ adlarıyla başlayan katman bulunamadı.", "Ağ renkleri", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            _vm.ApplyNetworkColors(colors);
+        }
+
+        private void SubLayerColor_Click(object sender, RoutedEventArgs e)
+        {
+            var row = (sender as FrameworkElement)?.DataContext as SubLayerRowVm;
+            var sel = SubLayerGrid.SelectedItems.OfType<SubLayerRowVm>().ToArray();
+            var t = row != null && sel.Contains(row) ? sel : row != null ? new[] { row } : sel;
+            if (t.Length == 0) return;
+            var c = PickAci(t[0].HatchColorAci, true);
+            if (!c.HasValue) return;
+            foreach (var r in t) r.HatchColorAci = c.Value;
+            Schedule();
         }
 
         // ── İçerik ──────────────────────────────────────────────────────────
@@ -225,10 +259,50 @@ namespace UrbanoMetraj.BoQ.Sections.UI
 
         private void Close_Click(object sender, RoutedEventArgs e) { Result = PanelResult.Close; Close(); }
 
+        /// <summary>Commits any pending text edit (LostFocus bindings) before the options are read.</summary>
+        private void CommitEdits()
+            => (System.Windows.Input.Keyboard.FocusedElement as TextBox)?.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+
+        private void PickSingle_Click(object sender, RoutedEventArgs e) { CommitEdits(); Result = PanelResult.PickSingle; Close(); }
+
+        private void Excel_Click(object sender, RoutedEventArgs e)
+        {
+            CommitEdits();
+            _vm.CommitScope();
+            if (_vm.SectionCount == 0)
+            {
+                MessageBox.Show(this, "Aktarılacak kesit yok — Kapsam sekmesinde en az bir boru seçin.", "En Kesit",
+                                MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "Excel (*.xlsx)|*.xlsx", Title = "Kesit alanları — Excel'e aktar",
+                FileName = "EnKesit_Alanlari_" + DateTime.Now.ToString("yyyyMMdd_HHmm") + ".xlsx"
+            };
+            if (dlg.ShowDialog(this) != true) return;
+            try
+            {
+                Cursor = System.Windows.Input.Cursors.Wait;
+                var cuts = _vm.Session.BuildCuts(_vm.Run);
+                SectionExcelExport.Write(dlg.FileName, cuts, _vm.Style,
+                    "En Kesit alanları — " + DateTime.Now.ToString("dd.MM.yyyy HH:mm") + " · " + _vm.HeaderText);
+                Cursor = null;
+                string extra = _vm.Session.FailedCuts.Count > 0 ? $"\n⚠ {_vm.Session.FailedCuts.Count} kesit üretilemedi." : "";
+                if (MessageBox.Show(this, $"{cuts.Count} kesit yazıldı:\n{dlg.FileName}{extra}\n\nDosya açılsın mı?", "Excel'e aktar",
+                                    MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+                    System.Diagnostics.Process.Start(dlg.FileName);
+            }
+            catch (Exception ex)
+            {
+                Cursor = null;
+                MessageBox.Show(this, ex.Message, "Excel'e aktarılamadı", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         private void Draw_Click(object sender, RoutedEventArgs e)
         {
-            // Commit any pending text edit (LostFocus bindings) before reading the options.
-            (System.Windows.Input.Keyboard.FocusedElement as TextBox)?.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+            CommitEdits();
             _vm.CommitScope();
             if (_vm.SectionCount == 0)
             {

@@ -277,6 +277,7 @@ namespace UrbanoMetraj.BoQ
                 {
                     var other = cap.Rows[c.OtherPipe];
                     rg.OtherPipeIndex = c.OtherPipe; rg.OtherPipeName = other.PipeName; rg.OtherSystemName = other.SystemName;
+                    rg.OtherDiameterMm = other.DiameterMm;
                 }
                 cut.Regions.Add(rg);
             }
@@ -367,25 +368,38 @@ namespace UrbanoMetraj.BoQ
             double zTopDolgu = st.DolguInvalid ? zBot : st.DolguZ;
             double zOD       = Math.Min(outerBtm + row.PipeOuterDiamM, zSurrTop);
 
-            void Group(TrenchStackGroup g, SectionLayer layer, List<List<double[]>> owned, double z0, double z1, double nominalH)
+            // The group regions are snapped to 1 mm while these levels are not: the outermost
+            // band edge of a main group is opened by EdgeTol so the bands tile the region (the
+            // region itself still bounds them). Internal edges stay exact (shared by two bands).
+            const double EdgeTol = 0.002;
+            void Group(TrenchStackGroup g, SectionLayer layer, List<List<double[]>> owned, double z0, double z1, double nominalH,
+                       bool openLow, bool openHigh)
             {
                 var layers = stack.Where(l => l.Group == g).ToList();
                 if (layers.Count == 0 || owned == null || owned.Count == 0 || z1 <= z0 + 1e-6) return;
-                foreach (var (name, mat, lo, hi) in ResolveStack(layers, z0, z1, nominalH))
+                foreach (var (name, mat, lo0, hi0) in ResolveStack(layers, z0, z1, nominalH))
                 {
-                    var band = ClipperGeo.Intersect(owned, new List<List<double[]>> { Rect(-1000, lo, 1000, hi) });
+                    // Edges on the regions' 1 mm grid: a pipe top at 77.292 must not be crossed by an
+                    // edge at 77.2917 (a 0.3 mm cap the 1 mm ring clean-up then distorts).
+                    double lo = Math.Round(lo0 * 1000.0) / 1000.0, hi = Math.Round(hi0 * 1000.0) / 1000.0;
+                    if (hi <= lo) continue;
+                    double cLo = openLow  && lo0 <= z0 + 1e-9 ? lo - EdgeTol : lo;
+                    double cHi = openHigh && hi0 >= z1 - 1e-9 ? hi + EdgeTol : hi;
+                    var rect = new List<List<double[]>> { Rect(-1000, cLo, 1000, cHi) };
+                    var band = ClipperGeo.Intersect(owned, rect);
                     if (band.Count == 0) continue;
                     cut.SubBands.Add(new SectionSubBand
                     {
-                        Group = g, Layer = layer, LayerName = name, MaterialType = mat, ZLow = lo, ZHigh = hi, Rings = band
+                        Group = g, Layer = layer, LayerName = name, MaterialType = mat, ZLow = lo, ZHigh = hi, Rings = band,
+                        Area = ClipperGeo.IntersectAreaRaw(owned, rect)
                     });
                 }
             }
 
-            Group(TrenchStackGroup.Yataklama,  SectionLayer.Yataklama,  ownBed, zBot,      zBedTop,   zBedTop - zBot);
-            Group(TrenchStackGroup.BoruEtrafi, SectionLayer.Gomlekleme, ownSur, outerBtm,  zOD,       row.PipeOuterDiamM);
-            Group(TrenchStackGroup.BoruUstu,   SectionLayer.Gomlekleme, ownSur, zOD,       zSurrTop,  zSurrTop - zOD);
-            Group(TrenchStackGroup.GeriDolgu,  SectionLayer.GeriDolgu,  ownBf,  zSurrTop,  zTopDolgu, zTopDolgu - zSurrTop);
+            Group(TrenchStackGroup.Yataklama,  SectionLayer.Yataklama,  ownBed, zBot,      zBedTop,   zBedTop - zBot,       true,  true);
+            Group(TrenchStackGroup.BoruEtrafi, SectionLayer.Gomlekleme, ownSur, outerBtm,  zOD,       row.PipeOuterDiamM,   true,  false);
+            Group(TrenchStackGroup.BoruUstu,   SectionLayer.Gomlekleme, ownSur, zOD,       zSurrTop,  zSurrTop - zOD,       false, true);
+            Group(TrenchStackGroup.GeriDolgu,  SectionLayer.GeriDolgu,  ownBf,  zSurrTop,  zTopDolgu, zTopDolgu - zSurrTop, true,  true);
 
             // Division lines between consecutive bands of the same main group.
             foreach (var layer in new[] { SectionLayer.Yataklama, SectionLayer.Gomlekleme, SectionLayer.GeriDolgu })

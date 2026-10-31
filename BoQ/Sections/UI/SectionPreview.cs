@@ -27,6 +27,18 @@ namespace UrbanoMetraj.BoQ.Sections.UI
             InvalidateVisual();
         }
 
+        /// <summary>A whole laid-out sheet (comparison row) as one drawing.</summary>
+        public void Show(SectionSheet sheet, SectionStyle style, string note)
+        {
+            if (sheet == null || sheet.Sections.Count == 0) { Show((SectionDrawing)null, style, note); return; }
+            var d = new SectionDrawing
+            {
+                Cut = sheet.Sections[0].Cut, MinX = sheet.MinX, MinY = sheet.MinY, MaxX = sheet.MaxX, MaxY = sheet.MaxY,
+                Prims = sheet.Sections.SelectMany(s => s.Prims).Concat(sheet.SheetPrims).ToList()
+            };
+            Show(d, style, note);
+        }
+
         protected override void OnRender(DrawingContext dc)
         {
             var bounds = new Rect(0, 0, ActualWidth, ActualHeight);
@@ -54,8 +66,9 @@ namespace UrbanoMetraj.BoQ.Sections.UI
                 {
                     case DrawPrimKind.Hatch:
                     {
-                        var hc = es.HatchColorAci != 256 && !(p.IsOther && _style.OtherColorMode == OtherNetworkColorMode.PerNetwork) ? Aci(es.HatchColorAci) : col;
-                        double alpha = (1.0 - Math.Max(0, Math.Min(90, es.HatchTransparency)) / 100.0) * (es.Hatch == "SOLID" ? 0.85 : 0.45);
+                        var hp = SectionLayoutEngine.HatchOf(_style, p);
+                        var hc = hp.ColorAci != 256 && !(p.IsOther && _style.OtherColorMode == OtherNetworkColorMode.PerNetwork) ? Aci(hp.ColorAci) : col;
+                        double alpha = (1.0 - Math.Max(0, Math.Min(90, hp.Transparency)) / 100.0) * (hp.Pattern == "SOLID" ? 0.85 : 0.45);
                         var b = new SolidColorBrush(Color.FromArgb((byte)(255 * alpha), hc.R, hc.G, hc.B));
                         dc.DrawGeometry(b, null, Geometry(p.Loops, P, true));
                         break;

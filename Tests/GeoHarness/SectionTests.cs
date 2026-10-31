@@ -35,6 +35,7 @@ namespace GeoHarness
             S6_OffGridInterpolation();
             S9_RerunFromPersistedFields();
             S10_ZeroLengthPipe();
+            S11_SubLayers();
             P_Planner();
             K_KolChainage();
             L_Layout();
@@ -90,6 +91,18 @@ namespace GeoHarness
             Report(back.Name == "Test" && Math.Abs(back.VerticalScale - 25) < 1e-12 && back.E(SectionElements.GeriDolgu).Hatch == "AR-CONC"
                    && back.NetworkColors["YSU"] == 5 && back.TableRows[0].Key == st0.TableRows[0].Key,
                    "L2 stil XML gidiş-dönüş", back.Name);
+
+            st0.HatchSubLayers = true; st0.RowCommonDatum = true;
+            st0.SubLayers["Toprak"] = new SubLayerStyle { Name = "Toprak", Hatch = "EARTH", HatchScale = 0.02, HatchAngle = 45, HatchColorAci = 32, HatchTransparency = 20 };
+            var b2 = SectionStyle.FromXml(st0.ToXml());
+            var run = new SectionRunOptions { CompareScenarios = true, CompareSet = new List<TiePreference> { TiePreference.Split, TiePreference.Ignore } };
+            var r2 = SectionRunOptions.FromXml(run.ToXml());
+            var sl = b2.SubLayers.TryGetValue("Toprak", out var t) ? t : null;
+            Report(b2.HatchSubLayers && b2.RowCommonDatum && sl != null && sl.Hatch == "EARTH" && Math.Abs(sl.HatchScale - 0.02) < 1e-12
+                   && sl.HatchAngle == 45 && sl.HatchColorAci == 32 && sl.HatchTransparency == 20
+                   && r2.CompareScenarios && r2.CompareSet.SequenceEqual(new[] { TiePreference.Split, TiePreference.Ignore })
+                   && b2.TableRows.Any(r => r.Key == SectionTableRows.AltKatmanAlanlari),
+                   "L2b alt katman stilleri, ortak KK, karşılaştırma seçenekleri XML gidiş-dönüş", "");
         }
 
         private static (BoQReport report, BoQSimplifiedTestV2Command.V2SectionCapture cap) RunCapture(params PipeSpec[] specs)
@@ -393,7 +406,112 @@ namespace GeoHarness
                 new SectionStationPlanner.Options { Interval = 0.5, OnlyClashZones = true });
             Report(p5.First() == 0 && p5.Last() == 20 && p5.Skip(1).Take(p5.Count - 2).All(d => d >= 7.25 && d <= 9.75),
                    "P5 yalnızca çakışma bölgesi (+ uçlar)", string.Join("; ", p5));
+
+            // P6 — picked plan point → snapped local chainage (Tek kesit).
+            double c1 = SectionStationPlanner.ChainageAt(0, 0, 10.3, 0, 3.3, 2, out double o1);
+            double c2 = SectionStationPlanner.ChainageAt(0, 0, 10.3, 0, 10.2, -1, out double o2);
+            double c3 = SectionStationPlanner.ChainageAt(0, 0, 10.3, 0, -5, 0, out double o3);
+            double c4 = SectionStationPlanner.ChainageAt(10.3, 0, 0, 0, 3.3, 0, out _);   // reversed pipe: from its start
+            Report(Math.Abs(c1 - 3.5) < 1e-9 && Math.Abs(o1 - 2) < 1e-9 && Math.Abs(c2 - 10.3) < 1e-9 && Math.Abs(o2 - 1) < 1e-9
+                   && c3 == 0 && Math.Abs(o3 - 5) < 1e-9 && Math.Abs(c4 - 7.0) < 1e-9,
+                   "P6 seçilen nokta → 0.5 m ızgarası / boru ucu", $"{c1}; {c2}; {c3}; {c4}");
         }
+
+        // A catalog stack with every group: fixed + flexible layers (heights resolve to the group).
+        private static List<TrenchStackLayer> TestStack() => new List<TrenchStackLayer>
+        {
+            new TrenchStackLayer { Group = TrenchStackGroup.Yataklama,  Kind = TrenchStackKind.Fixed,         LayerName = "İnce Kum",   ThicknessM = 0.05 },
+            new TrenchStackLayer { Group = TrenchStackGroup.Yataklama,  Kind = TrenchStackKind.FillToSurface, LayerName = "Yatak Kumu" },
+            new TrenchStackLayer { Group = TrenchStackGroup.BoruEtrafi, Kind = TrenchStackKind.UpToPipeTop,   LayerName = "Boru Etrafı" },
+            new TrenchStackLayer { Group = TrenchStackGroup.BoruUstu,   Kind = TrenchStackKind.Fixed,         LayerName = "Koruma",     ThicknessM = 0.10 },
+            new TrenchStackLayer { Group = TrenchStackGroup.BoruUstu,   Kind = TrenchStackKind.FillToSurface, LayerName = "Üst Kum" },
+            new TrenchStackLayer { Group = TrenchStackGroup.GeriDolgu,  Kind = TrenchStackKind.Fixed,         LayerName = "Seçme Dolgu", ThicknessM = 0.30 },
+            new TrenchStackLayer { Group = TrenchStackGroup.GeriDolgu,  Kind = TrenchStackKind.FillToSurface, LayerName = "Toprak" },
+        };
+
+        /// <summary>
+        /// S11 — sub-layer bands: Σ band areas of a group = the group's owned area (bands tile the
+        /// owned region, also after a clash deduction). L3 — banded hatches + table rows per band.
+        /// </summary>
+        private static void S11_SubLayers()
+        {
+            Section("S11 / L3 — alt katmanlar (bantlar)");
+            var specs = new[]
+            {
+                new PipeSpec { Name = "A", X0 = 0, Y0 = 0, X1 = 30, Y1 = 0, G0 = 80, G1 = 80, I0 = 77.0, I1 = 76.8 },
+                new PipeSpec { Name = "B", X0 = 15, Y0 = -15, X1 = 15, Y1 = 15, G0 = 80, G1 = 80, I0 = 78.0, I1 = 77.9, Dn = 0.4, Od = 0.47 }
+            };
+            var report = new BoQReport();
+            foreach (var p in specs) { var r = Row(p); r.TrenchStack = TestStack(); report.SectionDebug.Add(r); }
+            var cap = BoQSimplifiedTestV2Command.RunV2EngineCapture(report);
+
+            int n = 0, bad = 0; double worst = 0;
+            var all = new List<SectionCut>();
+            foreach (var st in cap.Stations[0].Where(s => s.ExcavPoly != null))
+                foreach (var sc in SectionScenarios)
+                {
+                    var cut = BoQSimplifiedTestV2Command.BuildSectionCutAtStation(cap, 0, st, sc, sc);
+                    all.Add(cut);
+                    n++;
+                    double Sum(SectionLayer l) => cut.SubBands.Where(b => b.Layer == l).Sum(b => b.Area);
+                    double e = Math.Max(Math.Abs(Sum(SectionLayer.Yataklama) - cut.AreaYataklamaNet),
+                               Math.Max(Math.Abs(Sum(SectionLayer.Gomlekleme) - cut.AreaGomleklemeNet),
+                                        Math.Abs(Sum(SectionLayer.GeriDolgu) - cut.AreaGeriDolguNet)));
+                    worst = Math.Max(worst, e);
+                    if (e > 1e-4) bad++;
+                }
+            Report(n > 0 && bad == 0, "S11 Σ alt katman alanı = grubun sahip alanı (çakışmalı istasyonlar dahil)",
+                   $"{n} kesit, kötü {bad}, en büyük fark {worst:F4} m²");
+
+            var cutC = all.First(c => c.Clashes.Count > 0);
+            var style = SectionStyle.Default();
+            style.HatchSubLayers = true;
+            style.SubLayers["Toprak"] = new SubLayerStyle { Name = "Toprak", Hatch = "EARTH", HatchScale = 0.02 };
+            style.TableRows.First(r => r.Key == SectionTableRows.AltKatmanAlanlari).Visible = true;
+            var slot = SectionLayoutEngine.BuildSlot(cutC, style, 0);
+            var bandHatches = slot.Prims.Where(p => p.Kind == DrawPrimKind.Hatch && p.SubLayer != null).ToList();
+            var groupHatches = slot.Prims.Where(p => p.Kind == DrawPrimKind.Hatch && p.SubLayer == null
+                                                   && (p.Element == SectionElements.GeriDolgu || p.Element == SectionElements.Yataklama
+                                                       || p.Element == SectionElements.Gomlekleme)).ToList();
+            var earth = bandHatches.Where(p => p.SubLayer == "Toprak").Select(p => SectionLayoutEngine.HatchOf(style, p).Pattern).Distinct().ToList();
+            int bandsWithHatch = cutC.SubBands.Count(b => !string.IsNullOrEmpty(SectionLayoutEngine.HatchOf(style, BandElement(b), b.LayerName).Pattern));
+            bool tableHasBands = cutC.SubBands.All(b => slot.Prims.Any(p => p.Kind == DrawPrimKind.Text && p.Element == SectionElements.Tablo
+                                                                         && p.Text == b.LayerName));
+            Report(bandHatches.Count == bandsWithHatch && groupHatches.Count == 0 && earth.SequenceEqual(new[] { "EARTH" }) && tableHasBands,
+                   "L3 bant taraması (alt katman kendi deseniyle) + tabloda her alt katman bir satır",
+                   $"bant tarama {bandHatches.Count}/{bandsWithHatch}, grup tarama {groupHatches.Count}, Toprak={string.Join(",", earth)}, tablo {tableHasBands}");
+
+            // L4 — comparison rows + shared datum per row.
+            var cmp = new List<SectionCut>();
+            var sts = cap.Stations[0].Where(s => (s.Clashes?.Count ?? 0) > 0).Take(2).ToList();
+            for (int g = 0; g < sts.Count; g++)
+                foreach (var sc in SectionScenarios)
+                {
+                    var c = BoQSimplifiedTestV2Command.BuildSectionCutAtStation(cap, 0, sts[g], sc, sc);
+                    c.CompareGroup = g;
+                    cmp.Add(c);
+                }
+            var st2 = SectionStyle.Default(); st2.Columns = 2;   // a comparison row never wraps
+            var sheet = SectionLayoutEngine.Layout(cmp, st2);
+            bool sameDatum = sheet.Sections.GroupBy(s => s.Cut.CompareGroup).All(gp => gp.Select(s => s.Datum).Distinct().Count() == 1);
+            bool oneRowEach = sheet.Sections.GroupBy(s => s.Cut.CompareGroup).All(gp =>
+                gp.Select(s => s.Prims.First(p => p.Element == SectionElements.KiyasCizgisi && p.Kind == DrawPrimKind.Polyline).Points[0][1])
+                  .Distinct().Count() == 1);
+            bool labelled = sheet.Sections.All(s => s.Prims.Any(p => p.Kind == DrawPrimKind.Text && p.Text == SectionLayoutEngine.ScenarioLabel(s.Cut.ExcavScenario)));
+            Report(sheet.Sections.Count == cmp.Count && sameDatum && oneRowEach && labelled,
+                   "L4 karşılaştırma: istasyon başına bir satır, ortak KK, her kesitte senaryo adı",
+                   $"{sheet.Sections.Count} kesit, ortak KK {sameDatum}, tek satır {oneRowEach}, etiket {labelled}");
+
+            var st3 = SectionStyle.Default(); st3.RowCommonDatum = true; st3.Columns = 20; st3.Ordering = SectionOrdering.Continuous;
+            var mixed = new List<SectionCut> { all.First(), cutC };
+            var sh3 = SectionLayoutEngine.Layout(mixed, st3);
+            Report(sh3.Sections.Select(s => s.Datum).Distinct().Count() == 1 && sh3.Sections[0].Datum <= Math.Min(SectionLayoutEngine.DatumOf(mixed[0]), SectionLayoutEngine.DatumOf(mixed[1])) + 1e-9,
+                   "L5 satırda ortak KK = en düşük kesitinki", string.Join("; ", sh3.Sections.Select(s => s.Datum)));
+        }
+
+        private static string BandElement(SectionSubBand b)
+            => b.Layer == SectionLayer.Yataklama ? SectionElements.Yataklama
+             : b.Layer == SectionLayer.Gomlekleme ? SectionElements.Gomlekleme : SectionElements.GeriDolgu;
 
         private static SectionDebugRow KRow(string net, string s, string e, double len, double i0, double i1)
             => new SectionDebugRow { SystemName = net, StartNodeName = s, EndNodeName = e, PipeName = s + "-" + e,

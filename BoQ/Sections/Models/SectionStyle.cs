@@ -106,6 +106,24 @@ namespace UrbanoMetraj.BoQ.Sections
         public SectionElementStyle Clone() => (SectionElementStyle)MemberwiseClone();
     }
 
+    /// <summary>
+    /// Own hatch of one catalog sub-layer (by its layer name) - used when
+    /// <see cref="SectionStyle.HatchSubLayers"/> turns a fill group into bands. Drawn on the
+    /// group's layer; a sub-layer with no entry keeps the group's hatch.
+    /// </summary>
+    public sealed class SubLayerStyle
+    {
+        public string Name              { get; set; }
+        public string Hatch             { get; set; } = "";
+        public double HatchScale        { get; set; } = 1.0;
+        public double HatchAngle        { get; set; }
+        /// <summary>256 = the group element's hatch colour.</summary>
+        public short  HatchColorAci     { get; set; } = 256;
+        public int    HatchTransparency { get; set; } = 50;
+
+        public SubLayerStyle Clone() => (SubLayerStyle)MemberwiseClone();
+    }
+
     public enum CrossingDisplayMode
     {
         /// <summary>Only this network's share (the given-away part is not drawn).</summary>
@@ -146,11 +164,13 @@ namespace UrbanoMetraj.BoQ.Sections
         public const string GeriDolguAlani = "GeriDolguAlani";
         public const string YerelKm       = "YerelKm";
         public const string GenelKm       = "GenelKm";
+        /// <summary>Expands to one row per catalog sub-layer (its owned area).</summary>
+        public const string AltKatmanAlanlari = "AltKatmanAlanlari";
 
         public static string[] All() => new[]
         {
             YerelKm, GenelKm, KaziKotu, DolguKotu, AkarKotu, KaziTabani, Derinlik, TabanGenislik, UstGenislik, Sev,
-            KaziAlani, YataklamaAlani, GomleklemeAlani, GeriDolguAlani
+            KaziAlani, YataklamaAlani, GomleklemeAlani, GeriDolguAlani, AltKatmanAlanlari
         };
 
         public static string Label(string key)
@@ -171,6 +191,7 @@ namespace UrbanoMetraj.BoQ.Sections
                 case GeriDolguAlani:  return "Geri Dolgu Alanı";
                 case YerelKm:         return "Yerel Km";
                 case GenelKm:         return "Genel Km";
+                case AltKatmanAlanlari: return "Alt katman alanları (her katman bir satır)";
                 default:              return key;
             }
         }
@@ -223,6 +244,11 @@ namespace UrbanoMetraj.BoQ.Sections
         public bool ShowSubLayerNames   { get; set; } = true;
         public bool ShowStationNote     { get; set; } = true;   // snapped / oblique (bisector) cut note
 
+        // ── Sub-layers (decision 4) ──────────────────────────────────────────
+        /// <summary>Hatch every catalog sub-layer separately (bands) instead of one hatch per group.</summary>
+        public bool HatchSubLayers { get; set; }
+        public Dictionary<string, SubLayerStyle> SubLayers { get; set; } = new Dictionary<string, SubLayerStyle>(StringComparer.OrdinalIgnoreCase);
+
         // ── Info table ───────────────────────────────────────────────────────
         public bool ShowTable { get; set; } = true;
         public List<SectionTableRow> TableRows { get; set; } = new List<SectionTableRow>();
@@ -245,6 +271,8 @@ namespace UrbanoMetraj.BoQ.Sections
         public bool   ShowGrid        { get; set; }
         public double GridStepM       { get; set; } = 0.5;
         public bool   ShowRowTitle    { get; set; } = true;
+        /// <summary>One datum (KK) per sheet row - the sections of a row share a common elevation axis.</summary>
+        public bool   RowCommonDatum  { get; set; }
         public SectionGrouping Grouping { get; set; } = SectionGrouping.Group;
 
         public double VerticalExaggeration => VerticalScale > 1e-9 ? HorizontalScale / VerticalScale : 1.0;
@@ -267,6 +295,7 @@ namespace UrbanoMetraj.BoQ.Sections
             c.Elements = Elements.ToDictionary(kv => kv.Key, kv => kv.Value.Clone(), StringComparer.OrdinalIgnoreCase);
             c.NetworkColors = new Dictionary<string, short>(NetworkColors, StringComparer.OrdinalIgnoreCase);
             c.TableRows = TableRows.Select(r => new SectionTableRow { Key = r.Key, Visible = r.Visible }).ToList();
+            c.SubLayers = SubLayers.ToDictionary(kv => kv.Key, kv => kv.Value.Clone(), StringComparer.OrdinalIgnoreCase);
             return c;
         }
 
@@ -307,6 +336,7 @@ namespace UrbanoMetraj.BoQ.Sections
             {
                 Key = k,
                 Visible = k != SectionTableRows.YataklamaAlani && k != SectionTableRows.GomleklemeAlani
+                       && k != SectionTableRows.AltKatmanAlanlari
             }).ToList();
             return s;
         }
@@ -348,7 +378,8 @@ namespace UrbanoMetraj.BoQ.Sections
                 new XAttribute("gapXmm", F(GapXmm)), new XAttribute("gapYmm", F(GapYmm)),
                 new XAttribute("groundExt", F(GroundExtendM)), new XAttribute("frame", ShowFrame ? 1 : 0),
                 new XAttribute("grid", ShowGrid ? 1 : 0), new XAttribute("gridStep", F(GridStepM)),
-                new XAttribute("rowTitle", ShowRowTitle ? 1 : 0), new XAttribute("grouping", Grouping));
+                new XAttribute("rowTitle", ShowRowTitle ? 1 : 0), new XAttribute("grouping", Grouping),
+                new XAttribute("rowDatum", RowCommonDatum ? 1 : 0), new XAttribute("subHatch", HatchSubLayers ? 1 : 0));
 
             foreach (var key in SectionElements.All())
             {
@@ -366,6 +397,11 @@ namespace UrbanoMetraj.BoQ.Sections
                 x.Add(new XElement("TableRow", new XAttribute("key", r.Key), new XAttribute("visible", r.Visible ? 1 : 0)));
             foreach (var kv in NetworkColors)
                 x.Add(new XElement("NetworkColor", new XAttribute("network", kv.Key), new XAttribute("color", kv.Value)));
+            foreach (var sl in SubLayers.Values.OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase))
+                x.Add(new XElement("SubLayer",
+                    new XAttribute("name", sl.Name ?? ""), new XAttribute("hatch", sl.Hatch ?? ""),
+                    new XAttribute("hatchScale", F(sl.HatchScale)), new XAttribute("hatchAngle", F(sl.HatchAngle)),
+                    new XAttribute("hatchColor", sl.HatchColorAci), new XAttribute("hatchTransparency", sl.HatchTransparency)));
             return x;
         }
 
@@ -416,6 +452,8 @@ namespace UrbanoMetraj.BoQ.Sections
             s.GridStepM       = D(x.Attribute("gridStep"), s.GridStepM);
             s.ShowRowTitle    = B(x.Attribute("rowTitle"), s.ShowRowTitle);
             s.Grouping        = En(x.Attribute("grouping"), s.Grouping);
+            s.RowCommonDatum  = B(x.Attribute("rowDatum"), s.RowCommonDatum);
+            s.HatchSubLayers  = B(x.Attribute("subHatch"), s.HatchSubLayers);
 
             foreach (var ex in x.Elements("Element"))
             {
@@ -451,6 +489,18 @@ namespace UrbanoMetraj.BoQ.Sections
                 string n = S(nc.Attribute("network"), "");
                 if (n.Length > 0) s.NetworkColors[n] = (short)I(nc.Attribute("color"), 7);
             }
+            foreach (var sx in x.Elements("SubLayer"))
+            {
+                string n = S(sx.Attribute("name"), "");
+                if (n.Length == 0) continue;
+                s.SubLayers[n] = new SubLayerStyle
+                {
+                    Name = n, Hatch = S(sx.Attribute("hatch"), ""),
+                    HatchScale = D(sx.Attribute("hatchScale"), 1.0), HatchAngle = D(sx.Attribute("hatchAngle"), 0.0),
+                    HatchColorAci = (short)I(sx.Attribute("hatchColor"), 256),
+                    HatchTransparency = I(sx.Attribute("hatchTransparency"), 50)
+                };
+            }
             return s;
         }
     }
@@ -472,6 +522,14 @@ namespace UrbanoMetraj.BoQ.Sections
         /// <summary>Pipe keys (SystemName|StartNode|EndNode) to draw (empty = all pipes of the chosen networks).</summary>
         public List<string> Pipes      { get; set; } = new List<string>();
 
+        /// <summary>Scenario comparison: every station is drawn once per scenario in <see cref="CompareSet"/>
+        /// (each applied to Kazı and Dolgu alike), side by side in one row.</summary>
+        public bool CompareScenarios   { get; set; }
+        public List<UrbanoMetraj.BoQ.Models.TiePreference> CompareSet { get; set; } = new List<UrbanoMetraj.BoQ.Models.TiePreference>
+        {
+            UrbanoMetraj.BoQ.Models.TiePreference.KeepUpper, UrbanoMetraj.BoQ.Models.TiePreference.KeepLower, UrbanoMetraj.BoQ.Models.TiePreference.Split
+        };
+
         public static string PipeKey(string system, string sn, string en) => (system ?? "") + "|" + (sn ?? "") + "|" + (en ?? "");
 
         public List<double> ParseManual()
@@ -490,7 +548,9 @@ namespace UrbanoMetraj.BoQ.Sections
                 new XAttribute("excav", ExcavScenario), new XAttribute("backfill", BackfillScenario),
                 new XAttribute("zoneEdges", IncludeZoneBoundaries ? 1 : 0), new XAttribute("onlyClash", OnlyClashZones ? 1 : 0),
                 new XAttribute("manual", ManualChainages ?? ""),
-                new XAttribute("minGap", MinGap.ToString("R", CultureInfo.InvariantCulture)));
+                new XAttribute("minGap", MinGap.ToString("R", CultureInfo.InvariantCulture)),
+                new XAttribute("compare", CompareScenarios ? 1 : 0),
+                new XAttribute("compareSet", string.Join(",", CompareSet)));
             foreach (var n in Networks) x.Add(new XElement("Network", n));
             foreach (var p in Pipes)    x.Add(new XElement("Pipe", p));
             return x;
@@ -508,6 +568,13 @@ namespace UrbanoMetraj.BoQ.Sections
             o.OnlyClashZones = x.Attribute("onlyClash")?.Value == "1";
             o.ManualChainages = x.Attribute("manual")?.Value ?? "";
             if (double.TryParse(x.Attribute("minGap")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var mg)) o.MinGap = mg;
+            o.CompareScenarios = x.Attribute("compare")?.Value == "1";
+            if (x.Attribute("compareSet") != null)
+            {
+                o.CompareSet = new List<UrbanoMetraj.BoQ.Models.TiePreference>();
+                foreach (var tok in x.Attribute("compareSet").Value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                    if (Enum.TryParse(tok.Trim(), out UrbanoMetraj.BoQ.Models.TiePreference tp) && !o.CompareSet.Contains(tp)) o.CompareSet.Add(tp);
+            }
             o.Networks = x.Elements("Network").Select(e => e.Value).ToList();
             o.Pipes    = x.Elements("Pipe").Select(e => e.Value).ToList();
             return o;

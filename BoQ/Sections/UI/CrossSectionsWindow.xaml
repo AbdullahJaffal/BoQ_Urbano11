@@ -104,7 +104,11 @@
                     <CheckBox Content="Önceki çizimin yerine (aynı noktaya)" IsChecked="{Binding ReplaceLast}"
                               IsEnabled="{Binding HasLastRun}" VerticalAlignment="Center" Margin="0,0,12,0"
                               ToolTip="Son çizilen kesitleri siler ve yenilerini aynı noktaya çizer"/>
+                    <Button Content="Excel'e aktar…" Style="{StaticResource Small}" Click="Excel_Click"
+                            ToolTip="Seçili kesitlerin kot, ölçü ve alanlarını Excel tablosuna yazar (hacim yok)"/>
                     <Button Content="Kesitleri Sil ▾" Style="{StaticResource Small}" Click="Clear_Click"/>
+                    <Button Content="Tek kesit (noktadan) ▸" Style="{StaticResource Small}" Click="PickSingle_Click" Margin="8,0,4,0"
+                            ToolTip="Planda bir boru üzerinde nokta seçin — o noktada tek bir kesit çizilir (0.5 m ızgarasına oturur). Enter ile bitirin."/>
                     <Button Content="Kapat" Style="{StaticResource Small}" Click="Close_Click" Margin="8,0,4,0"/>
                     <Button Content="Çiz ▸" Style="{StaticResource KaydetButton}" Click="Draw_Click" MinWidth="90"/>
                 </StackPanel>
@@ -137,9 +141,11 @@
                             <TextBlock Text="Ağ:" Style="{StaticResource Lbl}" Margin="12,0,6,0"/>
                             <ComboBox x:Name="NetworkPick" Width="110" ItemsSource="{Binding Networks}"/>
                             <Button Content="Yalnızca bu ağ" Style="{StaticResource Small}" Margin="4,0,0,0" Click="SelectNetwork_Click"/>
+                            <Button Content="Çizimden seç…" Style="{StaticResource Small}" Margin="8,0,0,0" Click="CadSelect_Click"
+                                    ToolTip="Pencere kapanır; çizimde boru / baca seçin (Metraj'daki CAD Seçimi gibi) — kapsam seçilen borular olur"/>
                         </StackPanel>
                         <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Hint}"
-                                   Text="Yalnızca son UT_BOQ_HESAPLA'da hesaplanan ağlar listelenir. Sıralama kol hatlarına göredir (uzun hat önce)."/>
+                                   Text="Yalnızca son UT_BOQ_HESAPLA'da hesaplanan ağlar listelenir. Sıralama kol hatlarına göredir (uzun hat önce). Arama: boru, ağ, kol veya çap (örn. Ø200)."/>
                         <DataGrid ItemsSource="{Binding FilteredPipes}" AutoGenerateColumns="False" CanUserAddRows="False"
                                   CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                                   ColumnHeaderStyle="{StaticResource SutunBasligi}" SelectionMode="Extended"
@@ -149,6 +155,7 @@
                                 <DataGridTextColumn Header="Ağ" Binding="{Binding Network}" IsReadOnly="True" Width="60"/>
                                 <DataGridTextColumn Header="Kol" Binding="{Binding Kol}" IsReadOnly="True" Width="70"/>
                                 <DataGridTextColumn Header="Boru" Binding="{Binding Name}" IsReadOnly="True" Width="*"/>
+                                <DataGridTextColumn Header="Çap" Binding="{Binding DiameterText}" IsReadOnly="True" Width="55"/>
                                 <DataGridTextColumn Header="Uzunluk (m)" Binding="{Binding LengthText}" IsReadOnly="True" Width="85"/>
                                 <DataGridCheckBoxColumn Header="Kesişim" Binding="{Binding Clash, Mode=OneWay}" IsReadOnly="True" Width="60"/>
                                 <DataGridTextColumn Header="Kesit" Binding="{Binding Count}" IsReadOnly="True" Width="50"/>
@@ -180,6 +187,19 @@
                                     <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,2" ItemsSource="{Binding Scenarios}" DisplayMemberPath="Label"
                                               SelectedValuePath="Value" SelectedValue="{Binding BackfillScenario}"/>
                                 </Grid>
+                            </GroupBox>
+                            <GroupBox Header="Senaryo karşılaştırması">
+                                <StackPanel>
+                                    <CheckBox Content="Her istasyonu birden çok senaryoyla yan yana çiz" IsChecked="{Binding CompareScenarios}" FontWeight="SemiBold"/>
+                                    <WrapPanel Margin="16,0,0,0" IsEnabled="{Binding CompareScenarios}">
+                                        <CheckBox Content="Üst boru korur (KU)" IsChecked="{Binding CompareKU}" Margin="0,3,14,3"/>
+                                        <CheckBox Content="Alt boru korur (KL)" IsChecked="{Binding CompareKL}" Margin="0,3,14,3"/>
+                                        <CheckBox Content="%50 paylaşım (SP)" IsChecked="{Binding CompareSP}" Margin="0,3,14,3"/>
+                                        <CheckBox Content="Kesişim yok sayılır" IsChecked="{Binding CompareIgnore}" Margin="0,3,14,3"/>
+                                    </WrapPanel>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="Açıkken yukarıdaki senaryo seçimi yerine işaretli senaryolar kullanılır (her biri Kazı ve Dolgu'ya birlikte uygulanır); her istasyon bir satır olur. Farkı göstermek için 'Yalnızca kesişim bölgeleri' ile birlikte kullanın."/>
+                                </StackPanel>
                             </GroupBox>
                             <GroupBox Header="İstasyonlar">
                                 <StackPanel>
@@ -224,7 +244,12 @@
                                                      IsChecked="{Binding CrossingMode, Converter={StaticResource EnumBool}, ConverterParameter=FullWithGhost}"/>
                                         <CheckBox Content="Diğer boruların adını yaz" IsChecked="{Binding Style.ShowOtherLabel}"/>
                                         <CheckBox Content="Kesişim notu (kiminle, kim üstte, senaryo)" IsChecked="{Binding Style.ShowClashNote}"/>
-                                        <CheckBox Content="Diğer ağları ağ rengiyle göster" IsChecked="{Binding PerNetworkColors}"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <CheckBox Content="Diğer ağları ağ rengiyle göster" IsChecked="{Binding PerNetworkColors}"/>
+                                            <Button Content="Ağ katman renklerinden al" Style="{StaticResource Small}" Margin="10,0,0,0" Padding="6,0"
+                                                    Click="NetworkLayerColors_Click"
+                                                    ToolTip="Her ağın rengini çizimdeki kendi katmanlarının (ağ adıyla başlayan) en sık kullanılan renginden alır"/>
+                                        </StackPanel>
                                         <ItemsControl ItemsSource="{Binding NetworkColors}" Margin="18,2,0,0"
                                                       Visibility="{Binding PerNetworkColors, Converter={StaticResource BoolVis}}">
                                             <ItemsControl.ItemTemplate>
@@ -320,7 +345,44 @@
                 <TabItem Header="Görünüm">
                     <DockPanel Margin="6">
                         <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}"
-                                   Text="Katman adında {AG} = ağ adı, {KATMAN} = öğe anahtarı. Birden çok satır seçip bir hücreyi değiştirmek tüm seçili satırlara uygular. Renk kutusuna tıklayarak AutoCAD renk penceresini açın."/>
+                                   Text="Katman adında {AG} = ağ adı, {KATMAN} = öğe anahtarı, {CAP} = boru çapı (mm). Birden çok satır seçip bir hücreyi değiştirmek tüm seçili satırlara uygular. Renk kutusuna tıklayarak AutoCAD renk penceresini açın."/>
+                        <GroupBox DockPanel.Dock="Bottom" Header="Alt katmanlar (katalog katmanları)" Margin="0,6,0,0">
+                            <DockPanel>
+                                <CheckBox DockPanel.Dock="Top" Content="Her alt katmanı ayrı tara (yoksa grup tek tarama + ayrım çizgileri)"
+                                          IsChecked="{Binding Style.HatchSubLayers}" FontWeight="SemiBold"/>
+                                <DataGrid x:Name="SubLayerGrid" ItemsSource="{Binding SubLayers}" AutoGenerateColumns="False" CanUserAddRows="False"
+                                          CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" Height="150"
+                                          ColumnHeaderStyle="{StaticResource SutunBasligi}" SelectionMode="Extended"
+                                          IsEnabled="{Binding Style.HatchSubLayers}" beh:GridBulk.Enable="True">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Grup" Binding="{Binding Group}" IsReadOnly="True" Width="90"/>
+                                        <DataGridTextColumn Header="Alt katman" Binding="{Binding Name}" IsReadOnly="True" Width="*"/>
+                                        <DataGridComboBoxColumn Header="Tarama" Width="90" SelectedItemBinding="{Binding Hatch}">
+                                            <DataGridComboBoxColumn.ElementStyle>
+                                                <Style TargetType="ComboBox"><Setter Property="ItemsSource" Value="{Binding DataContext.SubLayerHatches, RelativeSource={RelativeSource AncestorType=Window}}"/></Style>
+                                            </DataGridComboBoxColumn.ElementStyle>
+                                            <DataGridComboBoxColumn.EditingElementStyle>
+                                                <Style TargetType="ComboBox"><Setter Property="ItemsSource" Value="{Binding DataContext.SubLayerHatches, RelativeSource={RelativeSource AncestorType=Window}}"/></Style>
+                                            </DataGridComboBoxColumn.EditingElementStyle>
+                                        </DataGridComboBoxColumn>
+                                        <DataGridTextColumn Header="Ölçek" Binding="{Binding HatchScale}" Width="55"/>
+                                        <DataGridTextColumn Header="Açı" Binding="{Binding HatchAngle}" Width="40"/>
+                                        <DataGridTemplateColumn Header="Tarama rengi" Width="95" beh:GridBulk.Path="HatchColorAci">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Button Style="{StaticResource Swatch}" Background="{Binding HatchColorAci, Converter={StaticResource AciBrush}}"
+                                                                Click="SubLayerColor_Click"/>
+                                                        <TextBlock Text="{Binding HatchColorText}" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="Şeffaflık %" Binding="{Binding HatchTransparency}" Width="70"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </GroupBox>
                         <DataGrid x:Name="ElementGrid" ItemsSource="{Binding Elements}" AutoGenerateColumns="False" CanUserAddRows="False"
                                   CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                                   ColumnHeaderStyle="{StaticResource SutunBasligi}" SelectionMode="Extended"
@@ -461,6 +523,8 @@
                                     <StackPanel>
                                         <CheckBox Content="Her kesitin çerçevesi" IsChecked="{Binding Style.ShowFrame}"/>
                                         <CheckBox Content="Satır başlığı (boru adı)" IsChecked="{Binding Style.ShowRowTitle}"/>
+                                        <CheckBox Content="Satırda ortak kıyas kotu (KK) — kesitler aynı kot ekseninde"
+                                                  IsChecked="{Binding Style.RowCommonDatum}"/>
                                         <StackPanel Orientation="Horizontal">
                                             <CheckBox Content="Referans ızgarası, aralık (m):" IsChecked="{Binding Style.ShowGrid}" Width="190"/>
                                             <TextBox Width="45" Text="{Binding Style.GridStepM, UpdateSourceTrigger=LostFocus}"/>

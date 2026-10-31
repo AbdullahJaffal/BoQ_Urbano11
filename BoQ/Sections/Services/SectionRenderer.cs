@@ -181,10 +181,14 @@ namespace UrbanoMetraj.BoQ.Sections
 
         private static void Tag(Entity e, Ctx c, SectionElementStyle es, DrawPrim p, ResultBuffer xdata, ObjectIdCollection ids, bool isHatch)
         {
-            e.LayerId = EnsureLayer(c, es, p.Network);
+            e.LayerId = EnsureLayer(c, es, p.Network, p.Diameter);
             // Colour: per-network override for clashing pipes, else the element's own setting.
             short aci = es.ColorAci;
-            if (isHatch && es.HatchColorAci != 256) aci = es.HatchColorAci;
+            if (isHatch)
+            {
+                short hc = SectionLayoutEngine.HatchOf(c.Style, p).ColorAci;
+                if (hc != 256) aci = hc;
+            }
             if (p.IsOther && c.Style.OtherColorMode == OtherNetworkColorMode.PerNetwork
                 && p.Network != null && c.Style.NetworkColors.TryGetValue(p.Network, out var nc)) aci = nc;
             if (es.TrueColor >= 0 && !(p.IsOther && c.Style.OtherColorMode == OtherNetworkColorMode.PerNetwork))
@@ -220,7 +224,8 @@ namespace UrbanoMetraj.BoQ.Sections
         {
             Hatch h = null;
             var temps = new List<Polyline>();
-            string pattern = string.IsNullOrEmpty(es.Hatch) ? "SOLID" : es.Hatch.Trim().ToUpperInvariant();
+            var hp = SectionLayoutEngine.HatchOf(c.Style, p);
+            string pattern = string.IsNullOrEmpty(hp.Pattern) ? "SOLID" : hp.Pattern.Trim().ToUpperInvariant();
             try
             {
                 foreach (var ring in p.Loops)
@@ -236,22 +241,22 @@ namespace UrbanoMetraj.BoQ.Sections
                 h.SetDatabaseDefaults(c.Db);
                 owner.AppendEntity(h); c.Tr.AddNewlyCreatedDBObject(h, true);
                 h.Associative = false;
-                h.PatternScale = es.HatchScale > 0 ? es.HatchScale : 1.0;
-                h.PatternAngle = es.HatchAngle * Math.PI / 180.0;
+                h.PatternScale = hp.Scale > 0 ? hp.Scale : 1.0;
+                h.PatternAngle = hp.Angle * Math.PI / 180.0;
                 h.SetHatchPattern(HatchPatternType.PreDefined, pattern);
                 h.HatchStyle = HatchStyle.Normal;
                 // Largest ring first (the outer boundary); holes are found by the Normal island style.
                 foreach (var pl in temps.OrderByDescending(t => Math.Abs(t.Area)))
                     h.AppendLoop(HatchLoopTypes.Default, new ObjectIdCollection { pl.ObjectId });
                 h.EvaluateHatch(true);
-                int tr = Math.Max(0, Math.Min(90, es.HatchTransparency));
+                int tr = Math.Max(0, Math.Min(90, hp.Transparency));
                 if (tr > 0) h.Transparency = new Transparency((byte)Math.Round(255 * (100 - tr) / 100.0));
                 return h;
             }
             catch (Exception ex)
             {
                 c.HatchFailures++;
-                if (c.FirstHatchError == null) c.FirstHatchError = $"{pattern} ({p.Element}): {ex.Message}";
+                if (c.FirstHatchError == null) c.FirstHatchError = $"{pattern} ({p.Element}{(p.SubLayer != null ? " / " + p.SubLayer : "")}): {ex.Message}";
                 try { if (h != null && !h.IsErased) h.Erase(); } catch { }
                 return null;
             }
@@ -290,9 +295,9 @@ namespace UrbanoMetraj.BoQ.Sections
 
         // ── Symbol tables ────────────────────────────────────────────────────
 
-        private static ObjectId EnsureLayer(Ctx c, SectionElementStyle es, string network)
+        private static ObjectId EnsureLayer(Ctx c, SectionElementStyle es, string network, int diameterMm)
         {
-            string name = LayerName(es, network);
+            string name = LayerName(es, network, diameterMm);
             if (c.Layers.TryGetValue(name, out var id)) return id;
             var lt = (LayerTable)c.Tr.GetObject(c.Db.LayerTableId, OpenMode.ForRead);
             if (lt.Has(name)) id = lt[name];
@@ -314,10 +319,12 @@ namespace UrbanoMetraj.BoQ.Sections
             return id;
         }
 
-        public static string LayerName(SectionElementStyle es, string network)
+        /// <summary>Layer name from the element's template — tokens {AG} network, {KATMAN} element key, {CAP} diameter (mm).</summary>
+        public static string LayerName(SectionElementStyle es, string network, int diameterMm = 0)
         {
             string tmpl = string.IsNullOrWhiteSpace(es.Layer) ? "URB_KS_{KATMAN}" : es.Layer;
-            string n = tmpl.Replace("{AG}", network ?? "").Replace("{KATMAN}", es.Key ?? "");
+            string n = tmpl.Replace("{AG}", network ?? "").Replace("{KATMAN}", es.Key ?? "")
+                           .Replace("{CAP}", diameterMm > 0 ? diameterMm.ToString(System.Globalization.CultureInfo.InvariantCulture) : "");
             foreach (char ch in "<>/\\\":;?*|,=`") n = n.Replace(ch, '_');
             n = n.Trim();
             return n.Length == 0 ? "URB_KS" : n;

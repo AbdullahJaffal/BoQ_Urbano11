@@ -119,6 +119,19 @@ namespace UrbanoMetraj.BoQ.Sections
         public bool NeedsUncomputedWarning(TiePreference kazi, TiePreference dolgu)
             => UncomputedNetworks.Count > 0 && !(kazi == TiePreference.Ignore && dolgu == TiePreference.Ignore);
 
+        /// <summary>Decision 11 for a whole run — in comparison mode any compared scenario that considers clashes counts.</summary>
+        public bool NeedsUncomputedWarning(SectionRunOptions o)
+            => ScenarioSet(o).Any(sc => NeedsUncomputedWarning(sc.Kazi, sc.Dolgu));
+
+        /// <summary>The (Kazı, Dolgu) pairs each station is drawn with: one normally, the compared set in comparison mode.</summary>
+        public List<(TiePreference Kazi, TiePreference Dolgu)> ScenarioSet(SectionRunOptions o)
+        {
+            if (o != null && o.CompareScenarios && o.CompareSet != null && o.CompareSet.Count > 0)
+                return o.CompareSet.Distinct().Select(p => (p, p)).ToList();
+            var (k, d, _) = Resolve(o);
+            return new List<(TiePreference, TiePreference)> { (k, d) };
+        }
+
         public (TiePreference Kazi, TiePreference Dolgu, double Interval) Resolve(SectionRunOptions o)
         {
             if (o == null || o.UseProjectSettings)
@@ -146,7 +159,7 @@ namespace UrbanoMetraj.BoQ.Sections
 
         public List<SectionCut> BuildCuts(SectionRunOptions o)
         {
-            var (kazi, dolgu, interval) = Resolve(o);
+            var (_, _, interval) = Resolve(o);
             var cuts = new List<SectionCut>();
             var plan = new SectionStationPlanner.Options
             {
@@ -158,12 +171,27 @@ namespace UrbanoMetraj.BoQ.Sections
             };
             SkippedPipes.Clear();
             FailedCuts.Clear();
+            int group = 0;
             foreach (int pi in SelectPipes(o))
             {
                 var row = Capture.Rows[pi];
                 if (row.Length2D < 1e-6) { SkippedPipes.Add(row.PipeName); continue; }   // zero-length (drop) pipe
-                Kol.TryGetValue(pi, out var kol);
-                foreach (double d in SectionStationPlanner.Plan(row.Length2D, Capture.PerPipeZones[pi], plan))
+                AddCuts(pi, SectionStationPlanner.Plan(row.Length2D, Capture.PerPipeZones[pi], plan), o, cuts, ref group);
+            }
+            return cuts;
+        }
+
+        /// <summary>Sections of one pipe at the given local chainages, once per scenario of the run.</summary>
+        public void AddCuts(int pi, IEnumerable<double> dists, SectionRunOptions o, List<SectionCut> cuts, ref int group)
+        {
+            var row = Capture.Rows[pi];
+            var set = ScenarioSet(o);
+            bool compare = set.Count > 1 || (o?.CompareScenarios ?? false);
+            Kol.TryGetValue(pi, out var kol);
+            foreach (double d in dists)
+            {
+                bool any = false;
+                foreach (var (kazi, dolgu) in set)
                 {
                     var cut = BuildOne(pi, d, kazi, dolgu);
                     if (cut == null) continue;
@@ -172,10 +200,52 @@ namespace UrbanoMetraj.BoQ.Sections
                         cut.KolName = kol.KolName;
                         cut.GlobalChainage = KolChainageService.Global(kol, row.Length2D, cut.LocalChainage);
                     }
+                    if (compare) cut.CompareGroup = group;
                     cuts.Add(cut);
+                    any = true;
                 }
+                if (any) group++;
             }
-            return cuts;
+        }
+
+        /// <summary>Nearest drawable pipe to a plan point (−1 when none): its snapped local chainage and plan offset.</summary>
+        public int NearestPipe(double x, double y, out double chainage, out double offset)
+        {
+            int best = -1; chainage = 0; offset = double.MaxValue;
+            var rows = Capture.Rows;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var r = rows[i];
+                if (r.Length2D < 1e-6) continue;
+                double ch = SectionStationPlanner.ChainageAt(r.StartX, r.StartY, r.EndX, r.EndY, x, y, out double off);
+                if (off < offset) { offset = off; chainage = Math.Min(ch, r.Length2D); best = i; }
+            }
+            return best;
+        }
+
+        public const double SelectionNodeTol = 0.2;   // mirrors BoQParserService.ApplySelectionScope
+
+        /// <summary>
+        /// Pipes of a drawing selection, matched like the calc's CAD Seçimi: the pipe entity's
+        /// endpoints at the pipe's node coordinates, or both of its manholes picked.
+        /// </summary>
+        public HashSet<int> MatchSelection(SelectionScope sc)
+        {
+            var res = new HashSet<int>();
+            if (sc == null) return res;
+            var rows = Capture.Rows;
+            double t2 = SelectionNodeTol * SelectionNodeTol;
+            bool Near(double ax, double ay, double bx, double by) => (ax - bx) * (ax - bx) + (ay - by) * (ay - by) <= t2;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var r = rows[i];
+                if (!string.IsNullOrEmpty(r.StartNodeGuid) && !string.IsNullOrEmpty(r.EndNodeGuid)
+                    && sc.ManholeGuids.Contains(r.StartNodeGuid) && sc.ManholeGuids.Contains(r.EndNodeGuid)) { res.Add(i); continue; }
+                foreach (var g in sc.PipeSegments)
+                    if ((Near(g[0], g[1], r.StartX, r.StartY) && Near(g[2], g[3], r.EndX, r.EndY))
+                     || (Near(g[0], g[1], r.EndX, r.EndY) && Near(g[2], g[3], r.StartX, r.StartY))) { res.Add(i); break; }
+            }
+            return res;
         }
 
         /// <summary>Pipes with no drawable section (zero length) in the last <see cref="BuildCuts"/>.</summary>

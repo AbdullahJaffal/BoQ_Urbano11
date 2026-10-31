@@ -9,6 +9,7 @@ using Autodesk.AutoCAD.Runtime;
 using UrbanoMetraj.BoQ.Models;
 using UrbanoMetraj.BoQ.Sections;
 using UrbanoMetraj.BoQ.Sections.UI;
+using UrbanoMetraj.BoQ.Services;
 
 using Application = Autodesk.AutoCAD.ApplicationServices.Application;
 using Exception = System.Exception;
@@ -49,24 +50,44 @@ namespace UrbanoMetraj.BoQ.Sections
             {
                 HasLastRun = last.IsValid
             };
-            var win = new CrossSectionsWindow(vm, TextStyleNames(db))
+            var textStyles = TextStyleNames(db);
+            PanelResult result;
+            while (true)
             {
-                LastRunId = last.RunId,
-                ClearHandler = rid => { using (doc.LockDocument()) return SectionRenderer.Clear(db, string.IsNullOrEmpty(rid) ? null : rid); }
-            };
-            Application.ShowModalWindow(win);
+                var win = new CrossSectionsWindow(vm, textStyles)
+                {
+                    LastRunId = last.RunId,
+                    ClearHandler = rid => { using (doc.LockDocument()) return SectionRenderer.Clear(db, string.IsNullOrEmpty(rid) ? null : rid); },
+                    NetworkLayerColors = () => NetworkLayerColors(db, vm.NetworkColors.Select(n => n.Network))
+                };
+                Application.ShowModalWindow(win);
+                result = win.Result;
+                if (result != PanelResult.CadSelect) break;
+
+                // "Çizimden seç": pick pipes / manholes like the calc's CAD Seçimi, then back to the panel.
+                try
+                {
+                    var scope = CadSelectionScopeService.Prompt(doc, out string summary);
+                    if (scope != null && !scope.IsEmpty)
+                    {
+                        int n = vm.ApplySelection(session.MatchSelection(scope));
+                        ed.WriteMessage($"\n[En Kesit] Çizimden seçim: {summary} → {n} boru kapsamda.");
+                        if (n == 0) Application.ShowAlertDialog("En Kesit\n\nSeçilen nesneler hesaplanmış hiçbir boruyla eşleşmedi.");
+                    }
+                }
+                catch (Exception ex) { ed.WriteMessage($"\n[En Kesit] Seçim yapılamadı: {ex.Message}"); }
+            }
 
             // The panel state is remembered per drawing whether or not anything is drawn.
             vm.CommitScope();
             var style = vm.Style; var run = vm.Run;
             try { using (doc.LockDocument()) SectionStyleStore.Save(db, style, run); }
             catch (Exception ex) { ed.WriteMessage($"\n[En Kesit] Ayarlar kaydedilemedi: {ex.Message}"); }
-            if (win.Result != PanelResult.Draw) return;
+            if (result == PanelResult.PickSingle) { PickSingle(doc, session, style, run); return; }
+            if (result != PanelResult.Draw) return;
             sw.Restart();
 
-            var (kazi, dolgu, interval) = session.Resolve(run);
-            ed.WriteMessage($"\n[En Kesit] Şablon '{style.Name}' · aralık {interval:0.0#} m · Kazı: {SectionLayoutEngine.ScenarioLabel(kazi)} · " +
-                            $"Dolgu: {SectionLayoutEngine.ScenarioLabel(dolgu)}" + (run.UseProjectSettings ? " (Proje Ayarları)" : " (bu çizim için özel)"));
+            WriteRunHeader(ed, session, style, run);
 
             // ── Build + layout ────────────────────────────────────────────────
             System.Collections.Generic.List<SectionCut> cuts;
@@ -153,6 +174,105 @@ namespace UrbanoMetraj.BoQ.Sections
             using (doc.LockDocument())
                 n = SectionRenderer.Clear(db, kr.StringResult == "Son" ? last.RunId : null);
             ed.WriteMessage($"\n[En Kesit] {n} nesne silindi.\n");
+        }
+
+        private static void WriteRunHeader(Editor ed, CrossSectionSession session, SectionStyle style, SectionRunOptions run)
+        {
+            var (kazi, dolgu, interval) = session.Resolve(run);
+            string scen = run.CompareScenarios
+                ? "karşılaştırma: " + string.Join(" / ", session.ScenarioSet(run).Select(s => SectionLayoutEngine.ScenarioLabel(s.Kazi)))
+                : $"Kazı: {SectionLayoutEngine.ScenarioLabel(kazi)} · Dolgu: {SectionLayoutEngine.ScenarioLabel(dolgu)}";
+            ed.WriteMessage($"\n[En Kesit] Şablon '{style.Name}' · aralık {interval:0.0#} m · {scen}" +
+                            (run.UseProjectSettings ? " (Proje Ayarları)" : " (bu çizim için özel)"));
+        }
+
+        /// <summary>
+        /// "Tek kesit (noktadan)": each picked plan point → the nearest computed pipe, the local
+        /// chainage snapped to the 0.5 m grid / pipe end, one section (or one comparison row)
+        /// placed with a drag preview. Enter ends. These runs are separate from the main sheet
+        /// (they never become the "previous drawing" that Önceki çizimin yerine replaces).
+        /// </summary>
+        private static void PickSingle(Document doc, CrossSectionSession session, SectionStyle style, SectionRunOptions run)
+        {
+            var ed = doc.Editor; var db = doc.Database;
+            WriteRunHeader(ed, session, style, run);
+            const double MaxPlanOffset = 10.0;   // m — farther than this is not "on" a pipe
+            int drawn = 0, group = 0;
+            while (true)
+            {
+                var po = new PromptPointOptions("\n[En Kesit] Kesit alınacak noktayı boru üzerinde seçin [Enter = bitir]: ") { AllowNone = true };
+                var pr = ed.GetPoint(po);
+                if (pr.Status != PromptStatus.OK) break;
+                var w = pr.Value.TransformBy(ed.CurrentUserCoordinateSystem);
+                int pi = session.NearestPipe(w.X, w.Y, out double ch, out double off);
+                if (pi < 0 || off > MaxPlanOffset)
+                {
+                    ed.WriteMessage(pi < 0 ? "\n[En Kesit] Hesaplanmış boru yok." : $"\n[En Kesit] En yakın boru {off:0.0} m uzakta — boru üzerinde bir nokta seçin.");
+                    continue;
+                }
+                var row = session.Capture.Rows[pi];
+                var cuts = new System.Collections.Generic.List<SectionCut>();
+                session.FailedCuts.Clear();
+                session.AddCuts(pi, new[] { ch }, run, cuts, ref group);
+                if (cuts.Count == 0)
+                {
+                    ed.WriteMessage($"\n[En Kesit] {SectionLayoutEngine.Sanitize(row.PipeName)} için kesit üretilemedi" +
+                                    (session.FailedCuts.Count > 0 ? ": " + session.FailedCuts[0].Error : "."));
+                    continue;
+                }
+                ed.WriteMessage($"\n[En Kesit] {SectionLayoutEngine.Sanitize(row.PipeName)} [{row.SystemName}] @ {cuts[0].LocalChainage:0.00} m" +
+                                (cuts[0].Kind == SectionStationKind.SnappedInClash ? " (en yakın hesap istasyonu)" : "") +
+                                $" — plan mesafesi {off:0.00} m.");
+                var sheet = SectionLayoutEngine.Layout(cuts, style);
+                var jig = new SheetJig(sheet);
+                var dr = ed.Drag(jig);
+                if (dr.Status != PromptStatus.OK) break;
+                try
+                {
+                    SectionRenderer.Result r;
+                    using (doc.LockDocument())
+                        r = SectionRenderer.Render(db, sheet, style, jig.Origin, "P" + DateTime.Now.ToString("yyyyMMddHHmmssfff"));
+                    drawn += r.Sections;
+                    if (r.HatchFailures > 0) ed.WriteMessage($"\n[En Kesit] ⚠ {r.HatchFailures} tarama oluşturulamadı — ilk hata: {r.FirstHatchError}");
+                }
+                catch (Exception ex) { ed.WriteMessage($"\n[En Kesit HATA] Çizim: {ex.GetType().Name}: {ex.Message}"); }
+            }
+            ed.WriteMessage($"\n[En Kesit] {drawn} tek kesit çizildi. Silmek için: UT_CROSS_SECTIONS_CLEAR → Tumu\n");
+        }
+
+        /// <summary>
+        /// Per network: the most used colour (ACI) of its drawing layers — the layers named
+        /// "{network}_…", the same pattern the network panel and CAD Seçimi use.
+        /// </summary>
+        private static System.Collections.Generic.IDictionary<string, short> NetworkLayerColors(Database db, System.Collections.Generic.IEnumerable<string> networks)
+        {
+            var res = new System.Collections.Generic.Dictionary<string, short>(StringComparer.OrdinalIgnoreCase);
+            var nets = networks.Where(n => !string.IsNullOrEmpty(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var counts = nets.ToDictionary(n => n, n => new System.Collections.Generic.Dictionary<short, int>(), StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+                    foreach (ObjectId id in lt)
+                    {
+                        var l = (LayerTableRecord)tr.GetObject(id, OpenMode.ForRead);
+                        if (!l.Color.IsByAci) continue;
+                        short aci = l.Color.ColorIndex;
+                        if (aci < 1 || aci > 255) continue;
+                        // Longest matching network name wins ("YSU" vs "YSU2").
+                        var net = nets.Where(n => l.Name.StartsWith(n + "_", StringComparison.OrdinalIgnoreCase))
+                                      .OrderByDescending(n => n.Length).FirstOrDefault();
+                        if (net == null) continue;
+                        var c = counts[net];
+                        c[aci] = c.TryGetValue(aci, out int k) ? k + 1 : 1;
+                    }
+                }
+            }
+            catch (Exception) { }
+            foreach (var kv in counts)
+                if (kv.Value.Count > 0) res[kv.Key] = kv.Value.OrderByDescending(x => x.Value).ThenBy(x => x.Key).First().Key;
+            return res;
         }
 
         /// <summary>Text styles of the drawing for the panel's combo ("URB_KS" = created with Arial on first draw).</summary>

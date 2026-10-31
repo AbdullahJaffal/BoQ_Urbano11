@@ -19,6 +19,10 @@ namespace UrbanoMetraj.BoQ.Sections
         public string       Network;
         /// <summary>True for geometry of a clashing pipe (Diğer* elements).</summary>
         public bool         IsOther;
+        /// <summary>Nominal diameter of the pipe the geometry belongs to (fills the {CAP} layer token).</summary>
+        public int          Diameter;
+        /// <summary>Catalog sub-layer of a band hatch (its own <see cref="SubLayerStyle"/>), else null.</summary>
+        public string       SubLayer;
         public List<List<double[]>> Loops;   // Ring / Hatch
         public List<double[]>       Points;  // Polyline (open)
         public string     Text;
@@ -26,10 +30,22 @@ namespace UrbanoMetraj.BoQ.Sections
         public TextAnchor Anchor;
     }
 
+    /// <summary>Resolved hatch parameters of one hatch primitive.</summary>
+    public struct HatchParams
+    {
+        public string Pattern;
+        public double Scale, Angle;
+        /// <summary>256 = element / network colour.</summary>
+        public short  ColorAci;
+        public int    Transparency;
+    }
+
     public sealed class SectionDrawing
     {
         public int        Index;
         public SectionCut Cut;
+        /// <summary>Elevation of the datum line (KK) at local y = 0.</summary>
+        public double     Datum;
         public double     MinX, MinY, MaxX, MaxY;     // sheet bbox of the slot
         public List<DrawPrim> Prims = new List<DrawPrim>();
     }
@@ -82,19 +98,28 @@ namespace UrbanoMetraj.BoQ.Sections
             double gapX = style.ModelText(style.GapXmm), gapY = style.ModelText(style.GapYmm);
             int cols = Math.Max(1, style.Columns);
 
-            // Build every slot in local coordinates first (datum line at y = 0).
-            var slots = new List<SectionDrawing>();
-            for (int i = 0; i < cuts.Count; i++) slots.Add(BuildSlot(cuts[i], style, i));
-
-            // Rows.
-            var rows = new List<List<SectionDrawing>>();
-            List<SectionDrawing> cur = null;
-            for (int i = 0; i < slots.Count; i++)
+            // Rows of cut indices. Comparison mode: one row per station (all its scenarios).
+            var rowIdx = new List<List<int>>();
+            List<int> curIdx = null;
+            for (int i = 0; i < cuts.Count; i++)
             {
                 bool newPipe = i == 0 || cuts[i].PipeIndex != cuts[i - 1].PipeIndex;
-                if (cur == null || cur.Count >= cols || (style.Ordering == SectionOrdering.RowPerPipe && newPipe))
-                    rows.Add(cur = new List<SectionDrawing>());
-                cur.Add(slots[i]);
+                bool compare = cuts[i].CompareGroup >= 0;
+                bool newGroup = compare && (i == 0 || cuts[i].CompareGroup != cuts[i - 1].CompareGroup);
+                if (curIdx == null || newGroup
+                    || (!compare && (curIdx.Count >= cols || (style.Ordering == SectionOrdering.RowPerPipe && newPipe))))
+                    rowIdx.Add(curIdx = new List<int>());
+                curIdx.Add(i);
+            }
+
+            // Slots in local coordinates (datum line at y = 0); a shared datum per row when asked
+            // (always for a comparison row — it is one station).
+            var rows = new List<List<SectionDrawing>>();
+            foreach (var ri in rowIdx)
+            {
+                bool common = style.RowCommonDatum || cuts[ri[0]].CompareGroup >= 0;
+                double? datum = common ? ri.Min(i => DatumOf(cuts[i])) : (double?)null;
+                rows.Add(ri.Select(i => BuildSlot(cuts[i], style, i, datum)).ToList());
             }
 
             double y = 0;   // top of the current row
@@ -116,6 +141,8 @@ namespace UrbanoMetraj.BoQ.Sections
                 {
                     var c0 = row[0].Cut;
                     string t = Sanitize(c0.PipeName) + (style.ShowNetwork && !string.IsNullOrEmpty(c0.SystemName) ? "  [" + c0.SystemName + "]" : "");
+                    if (c0.CompareGroup >= 0)
+                        t += "  " + FormatChainage(c0.LocalChainage, style.ChainageFormat) + "  — senaryo karşılaştırması";
                     sheet.SheetPrims.Add(Txt(SectionElements.Baslik, t, row[0].MinX, baseY + top + style.ModelText(style.TitleHeightMm) * 0.8,
                                              style.ModelText(style.TitleHeightMm) * 1.2, TextAnchor.BottomLeft));
                 }
@@ -142,25 +169,29 @@ namespace UrbanoMetraj.BoQ.Sections
 
         // ── One section ──────────────────────────────────────────────────────
 
-        public static SectionDrawing BuildSlot(SectionCut c, SectionStyle st, int index)
+        /// <summary>Datum (KK) elevation of one section: 0.25 m below its lowest point, on a 0.5 m step.</summary>
+        public static double DatumOf(SectionCut c) => Math.Floor((c.MinZ - 0.25) / 0.5) * 0.5;
+
+        public static SectionDrawing BuildSlot(SectionCut c, SectionStyle st, int index, double? datumOverride = null)
         {
             var d = new SectionDrawing { Index = index, Cut = c };
             var P = d.Prims;
             double ve = st.VerticalExaggeration;
             double th = st.ModelText(st.TextHeightMm);
-            double datum = Math.Floor((c.MinZ - 0.25) / 0.5) * 0.5;
+            double datum = datumOverride ?? DatumOf(c);
+            d.Datum = datum;
             double Y(double z) => (z - datum) * ve;
             List<double[]> Map(List<double[]> ring) => ring.Select(v => new[] { v[0], Y(v[1]) }).ToList();
             List<List<double[]>> MapR(List<List<double[]>> rings) => rings.Select(Map).ToList();
             bool Vis(string key) => st.E(key).Visible;
 
-            void Region(string key, List<List<double[]>> rings, bool other, string net, bool hatch = true)
+            void Region(string key, List<List<double[]>> rings, bool other, string net, bool hatch = true, int dia = 0)
             {
                 if (rings == null || rings.Count == 0 || !Vis(key)) return;
                 var m = MapR(rings);
                 if (hatch && !string.IsNullOrEmpty(st.E(key).Hatch))
-                    P.Add(new DrawPrim { Kind = DrawPrimKind.Hatch, Element = key, Network = net, IsOther = other, Loops = MapR(rings) });
-                P.Add(new DrawPrim { Kind = DrawPrimKind.Ring, Element = key, Network = net, IsOther = other, Loops = m });
+                    P.Add(new DrawPrim { Kind = DrawPrimKind.Hatch, Element = key, Network = net, IsOther = other, Loops = MapR(rings), Diameter = dia });
+                P.Add(new DrawPrim { Kind = DrawPrimKind.Ring, Element = key, Network = net, IsOther = other, Loops = m, Diameter = dia });
             }
             void Line(string key, double x0, double y0, double x1, double y1, string net = null)
             {
@@ -184,13 +215,14 @@ namespace UrbanoMetraj.BoQ.Sections
                     string key = rg.Layer == SectionLayer.Kazi ? SectionElements.DigerKazi
                                : rg.Layer == SectionLayer.BoruGovdesi ? SectionElements.DigerBoru
                                : SectionElements.DigerDolgu;
-                    Region(key, rg.Rings, true, rg.OtherSystemName, key != SectionElements.DigerKazi);
+                    Region(key, rg.Rings, true, rg.OtherSystemName, key != SectionElements.DigerKazi, rg.OtherDiameterMm);
                 }
             if (st.Crossing == CrossingDisplayMode.FullWithGhost)
             {
                 foreach (var rg in c.Regions.Where(r => r.Role == SectionRegionRole.GrossOutline))
                     Region(rg.OtherPipeIndex >= 0 ? SectionElements.DigerKazi : SectionElements.BrutHat,
-                           rg.Rings, rg.OtherPipeIndex >= 0, rg.OtherPipeIndex >= 0 ? rg.OtherSystemName : own, false);
+                           rg.Rings, rg.OtherPipeIndex >= 0, rg.OtherPipeIndex >= 0 ? rg.OtherSystemName : own, false,
+                           rg.OtherPipeIndex >= 0 ? rg.OtherDiameterMm : 0);
             }
             if (showOthers)
                 foreach (var rg in c.Regions.Where(r => r.Role == SectionRegionRole.LostToOther))
@@ -204,7 +236,15 @@ namespace UrbanoMetraj.BoQ.Sections
                            : rg.Layer == SectionLayer.Gomlekleme ? SectionElements.Gomlekleme
                            : rg.Layer == SectionLayer.GeriDolgu ? SectionElements.GeriDolgu
                            : SectionElements.Boru;
-                Region(key, rg.Rings, false, own);
+                // Bands: each catalog sub-layer hatched on its own (the group keeps its outline).
+                var bands = st.HatchSubLayers && rg.Layer != SectionLayer.Kazi && rg.Layer != SectionLayer.BoruGovdesi
+                    ? c.SubBands.Where(b => b.Layer == rg.Layer && b.Rings.Count > 0).ToList() : null;
+                bool banded = bands != null && bands.Count > 0;
+                Region(key, rg.Rings, false, own, hatch: !banded);
+                if (banded && Vis(key))
+                    foreach (var b in bands)
+                        if (!string.IsNullOrEmpty(HatchOf(st, key, b.LayerName).Pattern))
+                            P.Add(new DrawPrim { Kind = DrawPrimKind.Hatch, Element = key, Network = own, Loops = MapR(b.Rings), SubLayer = b.LayerName });
             }
 
             // Sub-layer division lines + names.
@@ -286,6 +326,10 @@ namespace UrbanoMetraj.BoQ.Sections
             // Title block (stacked upward from the geometry top).
             var lines = new List<(string Key, string Text, double H)>();
             double tH = st.ModelText(st.TitleHeightMm);
+            if (c.CompareGroup >= 0)
+                lines.Add((SectionElements.Baslik, c.ExcavScenario == c.BackfillScenario
+                    ? ScenarioLabel(c.ExcavScenario)
+                    : "Kazı: " + ScenarioLabel(c.ExcavScenario) + " · Dolgu: " + ScenarioLabel(c.BackfillScenario), tH));
             if (st.ShowTitle)
             {
                 if (st.ShowLocalChainage)
@@ -338,7 +382,19 @@ namespace UrbanoMetraj.BoQ.Sections
             // Info table below the geometry.
             if (st.ShowTable && Vis(SectionElements.Tablo))
             {
-                var rows = st.TableRows.Where(r => r.Visible).Select(r => (r.Key, Value: TableValue(c, r.Key, st))).Where(r => r.Value != null).ToList();
+                var rows = new List<(string Label, string Value)>();
+                foreach (var r in st.TableRows.Where(r => r.Visible))
+                {
+                    if (r.Key == SectionTableRows.AltKatmanAlanlari)
+                    {
+                        // Top to bottom, as read on the section.
+                        foreach (var b in c.SubBands.Where(b => !string.IsNullOrEmpty(b.LayerName)).OrderByDescending(b => b.ZHigh))
+                            rows.Add((Sanitize(b.LayerName), b.Area.ToString("F" + Math.Max(0, st.AreaDecimals), Inv) + " m²"));
+                        continue;
+                    }
+                    var v = TableValue(c, r.Key, st);
+                    if (v != null) rows.Add((SectionTableRows.Label(r.Key), v));
+                }
                 if (rows.Count > 0)
                 {
                     double wl = st.ModelText(st.TableLabelWidthMm), wv = st.ModelText(st.TableValueWidthMm), rh = st.ModelText(st.TableRowHeightMm);
@@ -351,7 +407,7 @@ namespace UrbanoMetraj.BoQ.Sections
                     for (int k = 0; k < rows.Count; k++)
                     {
                         double yc = y0 - (k + 0.5) * rh;
-                        Text(SectionElements.Tablo, SectionTableRows.Label(rows[k].Key), x0 + th * 0.4, yc, th * 0.85, TextAnchor.MiddleLeft);
+                        Text(SectionElements.Tablo, rows[k].Label, x0 + th * 0.4, yc, th * 0.85, TextAnchor.MiddleLeft);
                         Text(SectionElements.Tablo, rows[k].Value, x0 + tw - th * 0.4, yc, th * 0.85, TextAnchor.MiddleRight);
                     }
                 }
@@ -381,7 +437,26 @@ namespace UrbanoMetraj.BoQ.Sections
                     Loops = new List<List<double[]>> { new List<double[]> { new[] { fx0, fy0 }, new[] { fx1, fy0 }, new[] { fx1, fy1 }, new[] { fx0, fy1 } } }
                 });
             d.MinX = fx0; d.MinY = fy0; d.MaxX = fx1; d.MaxY = fy1;
+            foreach (var p in P) if (!p.IsOther && p.Diameter == 0) p.Diameter = c.DiameterMm;
             return d;
+        }
+
+        /// <summary>Hatch of a primitive: the sub-layer's own style when it has one, else the element's.</summary>
+        public static HatchParams HatchOf(SectionStyle st, DrawPrim p) => HatchOf(st, p.Element, p.SubLayer);
+
+        public static HatchParams HatchOf(SectionStyle st, string element, string subLayer)
+        {
+            var es = st.E(element);
+            if (!string.IsNullOrEmpty(subLayer) && st.SubLayers.TryGetValue(subLayer, out var sl) && !string.IsNullOrEmpty(sl.Hatch))
+                return new HatchParams
+                {
+                    Pattern = sl.Hatch, Scale = sl.HatchScale, Angle = sl.HatchAngle,
+                    ColorAci = sl.HatchColorAci != 256 ? sl.HatchColorAci : es.HatchColorAci, Transparency = sl.HatchTransparency
+                };
+            return new HatchParams
+            {
+                Pattern = es.Hatch, Scale = es.HatchScale, Angle = es.HatchAngle, ColorAci = es.HatchColorAci, Transparency = es.HatchTransparency
+            };
         }
 
         private static double? SubBandMid(SectionSubBand b)

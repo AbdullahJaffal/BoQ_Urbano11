@@ -47,6 +47,8 @@ namespace UrbanoMetraj.BoQ.Sections
         public int               OtherPipeIndex  { get; set; } = -1;
         public string            OtherPipeName   { get; set; }
         public string            OtherSystemName { get; set; }
+        /// <summary>Clashing pipe's nominal diameter (fills the {CAP} layer token).</summary>
+        public int               OtherDiameterMm { get; set; }
         /// <summary>Rings in (U,Z); Clipper orientation (holes opposite to outers).</summary>
         public List<List<double[]>> Rings        { get; set; } = new List<List<double[]>>();
     }
@@ -60,6 +62,8 @@ namespace UrbanoMetraj.BoQ.Sections
         public string           MaterialType { get; set; }
         public double           ZLow         { get; set; }
         public double           ZHigh        { get; set; }
+        /// <summary>Area of <see cref="Rings"/> (m²) — this pipe's owned share of the sub-layer.</summary>
+        public double           Area         { get; set; }
         public List<List<double[]>> Rings    { get; set; } = new List<List<double[]>>();
     }
 
@@ -127,6 +131,8 @@ namespace UrbanoMetraj.BoQ.Sections
         // ── Scenario ─────────────────────────────────────────────────────────
         public TiePreference ExcavScenario    { get; set; }
         public TiePreference BackfillScenario { get; set; }
+        /// <summary>Scenario-comparison mode: cuts of one station share a group (one sheet row); -1 = normal.</summary>
+        public int           CompareGroup     { get; set; } = -1;
 
         // ── Geometry ─────────────────────────────────────────────────────────
         public List<SectionRegion>       Regions       { get; set; } = new List<SectionRegion>();

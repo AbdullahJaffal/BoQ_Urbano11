@@ -75,5 +75,23 @@ namespace UrbanoMetraj.BoQ.Sections
             }
             return kept.Select(v => v.D).ToList();
         }
+
+        /// <summary>
+        /// Picked plan point → local chainage on the pipe start (x0,y0) → end (x1,y1): the
+        /// foot of the perpendicular, clamped to the pipe and snapped to the 0.5 m grid or to
+        /// the pipe end, whichever is nearer (decision 1). <paramref name="offset"/> = plan
+        /// distance from the point to the pipe axis.
+        /// </summary>
+        public static double ChainageAt(double x0, double y0, double x1, double y1, double px, double py, out double offset)
+        {
+            double dx = x1 - x0, dy = y1 - y0, L = Math.Sqrt(dx * dx + dy * dy);
+            if (L < 1e-9) { offset = Math.Sqrt((px - x0) * (px - x0) + (py - y0) * (py - y0)); return 0; }
+            double t = ((px - x0) * dx + (py - y0) * dy) / L;
+            double tc = Math.Max(0, Math.Min(L, t));
+            double fx = x0 + dx * tc / L, fy = y0 + dy * tc / L;
+            offset = Math.Sqrt((px - fx) * (px - fx) + (py - fy) * (py - fy));
+            double g = Math.Min(SnapToGrid(tc), Math.Floor(L / Grid + 1e-9) * Grid);
+            return Math.Abs(L - tc) < Math.Abs(g - tc) ? L : g;
+        }
     }
 }
