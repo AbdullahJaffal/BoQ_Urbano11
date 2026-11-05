@@ -229,6 +229,15 @@ namespace UrbanoMetraj.BoQ.Models
         /// <summary>Backward-compat accessor (PreCast wins if available).</summary>
         public ManholeStackResult Stack => StackPreCast ?? StackCastInPlace;
 
+        /// <summary>
+        /// True when this manhole is INTENTIONALLY cast-in-place inside an otherwise pre-cast
+        /// project — via a "Yerinde Döküm" manhole exception, a cast-in-situ connection tier, or
+        /// the "Min altı Yerinde Döküm" setting. Distinguishes a deliberate cast-in-place manhole
+        /// (billed as concrete) from a genuine catalog miss (StackPreCast null but NOT forced →
+        /// flagged "Catalog not found"). Persisted to the DWG so the Metraj/BOM stays mixed on reload.
+        /// </summary>
+        public bool ForcedCastInPlace { get; set; }
+
         // ── Manhole vs Manhole geometric states ──────────────────────────────
         /// <summary>
         /// Lower segment: ZBottom → zTouch. No overlap exists here.
@@ -564,6 +573,36 @@ namespace UrbanoMetraj.BoQ.Models
         public double Volume       { get; set; }
     }
 
+    /// <summary>Main trench fill group a <see cref="TrenchStackLayer"/> belongs to. Gömlekleme
+    /// is split into its two catalog positions (Boru Etrafı / Boru Üstü).</summary>
+    public enum TrenchStackGroup { Yataklama = 0, BoruEtrafi = 1, BoruUstu = 2, GeriDolgu = 3 }
+
+    /// <summary>How a stack layer's thickness is resolved at a station.</summary>
+    public enum TrenchStackKind
+    {
+        /// <summary>Fixed catalog thickness.</summary>
+        Fixed = 0,
+        /// <summary>Boru Etrafı: fills whatever remains up to the pipe OD (first such layer only).</summary>
+        UpToPipeTop = 1,
+        /// <summary>Absorbs whatever remains of its group's height at the station (first such layer only).</summary>
+        FillToSurface = 2
+    }
+
+    /// <summary>
+    /// One sub-layer of the matched PipeTrenchCatalog tier, bottom-up within its group —
+    /// the raw catalog definition (not the resolved ratio). Used by the cross-section
+    /// drawing (UT_CROSS_SECTIONS) to place the sub-layer division lines at their real
+    /// heights at each station. Persisted under the pipe's TRENCH_STACK XRecord.
+    /// </summary>
+    public class TrenchStackLayer
+    {
+        public TrenchStackGroup Group        { get; set; }
+        public TrenchStackKind  Kind         { get; set; }
+        public string           LayerName    { get; set; } = "";
+        public string           MaterialType { get; set; } = "";
+        public double           ThicknessM   { get; set; }
+    }
+
     public class SectionDebugRow
     {
         // ── Identity ─────────────────────────────────────────────────────────
@@ -575,8 +614,8 @@ namespace UrbanoMetraj.BoQ.Models
         public string EndNodeName     { get; set; }
         /// <summary>Start/end node (manhole) GUIDs from the Urbano topology. Used by
         /// the overlap engine to skip clashes between pipes sharing a manhole
-        /// (connected pipes never count as a real trench clash). Compute-time only —
-        /// not serialised, since overlap resolution runs before the data is saved.</summary>
+        /// (connected pipes never count as a real trench clash). Persisted (appended to
+        /// METADATA, 2026-10-29) so UT_CROSS_SECTIONS can re-run the engine on loaded data.</summary>
         public string StartNodeGuid   { get; set; }
         public string EndNodeGuid     { get; set; }
         public int    DiameterMm      { get; set; }
@@ -661,6 +700,14 @@ namespace UrbanoMetraj.BoQ.Models
         public double VBackfillKL  { get; set; }
         public double VBackfillSP  { get; set; }
         public double VBackfillGross { get; set; }
+        // Yataklama/Gömlekleme have no KU/KL/SP scenarios: Net = after the pipe↔pipe
+        // cross-layer clash losses (V2 Phase 8e), Gross = without them. The aggregator
+        // shows Gross when the Dolgu overlap method is "Ignore", Net otherwise, so
+        // Ignore stays a pure gross state like Kazı/Geri Dolgu.
+        public double VBeddingNet    { get; set; }
+        public double VSurroundNet   { get; set; }
+        public double VBeddingGross  { get; set; }
+        public double VSurroundGross { get; set; }
         public bool   HasV2Volumes  { get; set; }
 
         // ── Clash detection ───────────────────────────────────────────────────
@@ -705,6 +752,48 @@ namespace UrbanoMetraj.BoQ.Models
         public List<TrenchLayerSplit> BoruEtrafiLayerSplits { get; set; } = new List<TrenchLayerSplit>();
         public List<TrenchLayerSplit> BoruUstuLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
         public List<TrenchLayerSplit> BackfillLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
+
+        // ── Cross-section drawing inputs (UT_CROSS_SECTIONS) ──────────────────
+        /// <summary>Raw sub-layer stack of the matched trench tier (empty = no tier / old DWG).</summary>
+        public List<TrenchStackLayer> TrenchStack { get; set; } = new List<TrenchStackLayer>();
+        /// <summary>Load-time flag: the DWG carried every V2 engine input (Dolgu levels + node
+        /// GUIDs). False for DWGs saved before 2026-10-29 → re-run UT_BOQ_HESAPLA before drawing.</summary>
+        public bool HasSectionInputs { get; set; } = true;
+        /// <summary>Index of this row in the calc run (persisted) — the engine's pair roles follow row order.</summary>
+        public int  CalcOrder        { get; set; }
+    }
+
+    /// <summary>
+    /// Importance level for a <see cref="BoQReport.DiscoveryNotes"/> entry. Lets the summary
+    /// dialog show a fatal/critical problem distinctly from a purely informational note (e.g. an
+    /// unavoidable rounding gap that does NOT affect the result), so the user isn't alarmed by a
+    /// message that means "everything is fine".
+    /// </summary>
+    public enum NoteSeverity { Error = 0, Warning = 1, Info = 2 }
+
+    /// <summary>
+    /// Formats/parses the leading severity marker on a DiscoveryNotes string. Notes carry a visible
+    /// marker (🔴/🟡/🔵 + Turkish label) so both the command line and the summary MessageBox can
+    /// group and colour them without a parallel typed list. Legacy/unmarked notes count as Warning.
+    /// </summary>
+    public static class NoteMarker
+    {
+        // Monochrome BMP symbols (Segoe UI renders these) — NOT colour emoji like 🔴/🟡/🔵,
+        // which the Win32 MessageBox font cannot draw (they show as a "◌" tofu box).
+        public const string Error   = "⛔ [HATA]";
+        public const string Warning = "⚠ [UYARI]";
+        public const string Info    = "ℹ [BİLGİ]";
+
+        public static string Of(NoteSeverity s) =>
+            s == NoteSeverity.Error ? Error : s == NoteSeverity.Info ? Info : Warning;
+
+        public static NoteSeverity SeverityOf(string note)
+        {
+            if (string.IsNullOrEmpty(note))      return NoteSeverity.Warning;
+            if (note.StartsWith(Error))          return NoteSeverity.Error;
+            if (note.StartsWith(Info))           return NoteSeverity.Info;
+            return NoteSeverity.Warning;
+        }
     }
 
     // =========================================================================
@@ -716,6 +805,11 @@ namespace UrbanoMetraj.BoQ.Models
         public DateTime              GeneratedAt    { get; set; } = DateTime.Now;
         public List<SystemBoQ>       Systems        { get; set; } = new List<SystemBoQ>();
         public List<string>          DiscoveryNotes { get; set; } = new List<string>();
+
+        /// <summary>Adds a DiscoveryNotes entry prefixed with a visible severity marker (see
+        /// <see cref="NoteMarker"/>). Prefer this over DiscoveryNotes.Add so every note is graded.</summary>
+        public void AddNote(NoteSeverity sev, string text) =>
+            DiscoveryNotes.Add(NoteMarker.Of(sev) + " " + text);
         public List<SectionDebugRow> SectionDebug   { get; set; } = new List<SectionDebugRow>();
 
         /// <summary>
@@ -836,6 +930,11 @@ namespace UrbanoMetraj.BoQ.Models
         public int    Count          { get; set; }
         /// <summary>True if this part was selected by the greedy ring algorithm.</summary>
         public bool   IsVariableRing { get; set; }
+        /// <summary>True only for a "değişken" (site-fitted, variable-height) piece whose
+        /// HeightM was computed to absorb the remaining depth. NOT the same as
+        /// IsVariableRing, which is also true for every fixed-size Gövde/Boyun ring the
+        /// greedy fill picked. Drives the height-band rows in the Metraj Keşif Tablosu.</summary>
+        public bool   IsDegisken     { get; set; }
 
         // ── From our ComponentFamily catalog (proves the stack is catalog-driven) ──
         public string PozNo               { get; set; }
@@ -888,6 +987,16 @@ namespace UrbanoMetraj.BoQ.Models
         public bool ConstraintViolated { get; set; }
         /// <summary>Short human-readable reason for ConstraintViolated (e.g. "Konik (Min≥1) bulunamadı", "hedef derinliğe 0.08m eksik kaldı") — surfaced per-manhole in the aggregate warning so a real cause is visible instead of just a count.</summary>
         public string ConstraintViolationReason { get; set; }
+
+        /// <summary>
+        /// True when the manhole's depth is below the minimum buildable pre-cast height
+        /// (the mandatory pieces — Taban + shortest Konik + Kapak + any Min-count role —
+        /// each at its SMALLEST available height still overshoot the target). When the
+        /// "Min altı Yerinde Döküm" setting is on, ProcessManhole converts such a manhole
+        /// to cast-in-place (nulls StackPreCast) instead of emitting a "derinlik yetersiz"
+        /// warning. Diagnostic only otherwise.
+        /// </summary>
+        public bool DepthInsufficient { get; set; }
 
         /// <summary>Diagnostic: smallest available shaft piece (Gövde/Boyun) height in mm at fill time.
         /// When a residual gap is flagged and this is &gt; the residual, the family simply has no piece

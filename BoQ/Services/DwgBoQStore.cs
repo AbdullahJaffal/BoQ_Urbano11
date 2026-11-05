@@ -58,6 +58,7 @@ namespace UrbanoMetraj.BoQ.Services
         private const string K_MANHOLE_STACKS = "MANHOLE_STACKS";
         private const string K_V2_VOLUMES    = "V2_VOLUMES";
         private const string K_LAYER_SPLITS  = "LAYER_SPLITS";  // Phase 2b — PipeTrenchCatalog per-sub-layer ratios
+        private const string K_TRENCH_STACK  = "TRENCH_STACK";  // raw tier sub-layer stack (UT_CROSS_SECTIONS)
 
         // Sub-container that holds all pipe-network data.
         // Other stores (ManholeCatalogStore, ManholeAssignStore) write under
@@ -104,12 +105,7 @@ namespace UrbanoMetraj.BoQ.Services
                         if (!preserve.Contains(e.Key)) toErase.Add(e.Key);
 
                     foreach (string k in toErase)
-                    {
-                        if (!root.Contains(k)) continue;
-                        var obj = tr.GetObject(root.GetAt(k), OpenMode.ForWrite);
-                        if (obj is DBDictionary sub) EraseTree(tr, sub);
-                        obj.Erase();
-                    }
+                        RemoveEntry(tr, root, k);
                 }
                 else
                 {
@@ -145,7 +141,8 @@ namespace UrbanoMetraj.BoQ.Services
                     I16((short)(settings.BacaBacaKaziHesapla ? 1 : 0)),
                     I16((short)(settings.BacaAltiParcaEklensin ? 1 : 0)),
                     I16((short)(settings.BacaKaziDisCapKullan ? 1 : 0)),
-                    Dbl(settings.MetrajDegiskenParcaBandM));
+                    Dbl(settings.MetrajDegiskenParcaBandM),
+                    I16((short)(settings.MinAltiYerindeDokum ? 1 : 0)));
 
                 // Manhole lookup by system name (first wins on duplicate names).
                 var sysByName = new Dictionary<string, SystemBoQ>(StringComparer.Ordinal);
@@ -155,6 +152,9 @@ namespace UrbanoMetraj.BoQ.Services
                 // ── All pipe networks go under AGLAR ──────────────────────────
                 var aglar = MakeSubDict(tr, root, K_NETWORKS);
                 var rows = report.SectionDebug ?? new List<SectionDebugRow>();
+                // Row order of the calc run — persisted so UT_CROSS_SECTIONS re-runs the engine in the same order.
+                var calcOrder = new Dictionary<SectionDebugRow, int>();
+                for (int ri = 0; ri < rows.Count; ri++) calcOrder[rows[ri]] = ri;
                 foreach (var grp in rows.GroupBy(r => r.SystemName ?? ""))
                 {
                     string netName = grp.Key;
@@ -171,10 +171,11 @@ namespace UrbanoMetraj.BoQ.Services
                             "P_" + SafeKey(sdr.StartNodeName) + "_to_" + SafeKey(sdr.EndNodeName));
                         var pipeDict = MakeSubDict(tr, netDict, pid);
 
-                        WritePipeMetadata(tr, pipeDict, sdr, netName);
+                        WritePipeMetadata(tr, pipeDict, sdr, netName, calcOrder[sdr]);
                         if (sdr.HasV2Volumes)
                             WriteV2Volumes(tr, pipeDict, sdr);
                         WriteLayerSplits(tr, pipeDict, sdr);
+                        WriteTrenchStack(tr, pipeDict, sdr);
 
                         foreach (var st in sdr.Stations ?? new List<CrossSectionStation>())
                         {
@@ -270,8 +271,7 @@ namespace UrbanoMetraj.BoQ.Services
                                              DateTimeStyles.None, out var g))
                         gen = g;
 
-                    var old = tr.GetObject(root.GetAt(K_META), OpenMode.ForWrite);
-                    old.Erase();
+                    RemoveEntry(tr, root, K_META);
                 }
 
                 MakeXRecord(tr, root, K_META, BuildMetaBuffer(gen, settings));
@@ -309,7 +309,8 @@ namespace UrbanoMetraj.BoQ.Services
                 I16((short)(s.BacaBacaKaziHesapla ? 1 : 0)),
                 I16((short)(s.BacaAltiParcaEklensin ? 1 : 0)),
                 I16((short)(s.BacaKaziDisCapKullan ? 1 : 0)),
-                Dbl(s.MetrajDegiskenParcaBandM)
+                Dbl(s.MetrajDegiskenParcaBandM),
+                I16((short)(s.MinAltiYerindeDokum ? 1 : 0))
             };
         }
 
@@ -372,7 +373,9 @@ namespace UrbanoMetraj.BoQ.Services
                     // Absent in older DWGs → default true (Dış Çap), matching BoQSettings.
                     BacaKaziDisCapKullan = mi >= meta.Length || ReadI16(meta, ref mi) != 0,
                     // Metraj variable-piece height band (m). Absent in older DWGs → 0.5.
-                    MetrajDegiskenParcaBandM = mi < meta.Length ? ReadDbl(meta, ref mi) : 0.5
+                    MetrajDegiskenParcaBandM = mi < meta.Length ? ReadDbl(meta, ref mi) : 0.5,
+                    // "Min altı Yerinde Döküm" toggle. Absent in older DWGs → false.
+                    MinAltiYerindeDokum = mi < meta.Length && ReadI16(meta, ref mi) != 0
                 };
 
                 var report = new BoQReport();
@@ -406,6 +409,7 @@ namespace UrbanoMetraj.BoQ.Services
                         sdr.SystemName = netName;   // keep grouping key consistent with the system
                         ReadV2Volumes(tr, pipeDict, sdr);
                         ReadLayerSplits(tr, pipeDict, sdr);
+                        ReadTrenchStack(tr, pipeDict, sdr);
 
                         foreach (DBDictionaryEntry staEntry in pipeDict)
                         {
@@ -587,6 +591,15 @@ namespace UrbanoMetraj.BoQ.Services
                 }
             }
 
+            // Appended AFTER the Alt Temel Katmanları block — the per-manhole
+            // "forced cast-in-place" flag (Yerinde Döküm exception / cast-in-situ
+            // tier / Min-altı setting). Needed so the reload path (URBANO_BOQ_VIEW,
+            // which does NOT re-run ManholeAIService.Process) can still route the
+            // manhole to the concrete BOM instead of mistaking StackPreCast==null
+            // for a genuine catalog miss.
+            foreach (var m in mhs)
+                tvs.Add(I16(m.ForcedCastInPlace ? (short)1 : (short)0));
+
             MakeXRecord(tr, netDict, K_NETWORK_META, tvs.ToArray());
         }
 
@@ -721,6 +734,12 @@ namespace UrbanoMetraj.BoQ.Services
                 m.ResolvedSubBaseLayers = layers;
             }
 
+            // Trailing forced-cast-in-place block (absent in old DWGs — ReadI16
+            // gracefully returns 0 past the end of tvs, so ForcedCastInPlace stays
+            // false and the manhole is treated as pre-cast exactly as before).
+            foreach (var m in sys.Manholes)
+                m.ForcedCastInPlace = ReadI16(tvs, ref i) != 0;
+
             return sys;
         }
 
@@ -809,6 +828,16 @@ namespace UrbanoMetraj.BoQ.Services
                     tvs.Add(Dbl(fp.LengthMm));
                     tvs.Add(Dbl(fp.WidthMm));
                 }
+            }
+
+            // Fourth trailing block: IsDegisken per pre-cast part, same manhole/part
+            // order as the PozNo block. Distinguishes a true değişken piece from a
+            // fixed-size ring the greedy fill picked (both carry IsVariableRing).
+            foreach (var m in mhs)
+            {
+                if (m.StackPreCast?.Parts == null) continue;
+                foreach (var p in m.StackPreCast.Parts)
+                    tvs.Add(I16(p.IsDegisken ? (short)1 : (short)0));
             }
 
             MakeXRecord(tr, netDict, K_MANHOLE_STACKS, tvs.ToArray());
@@ -932,10 +961,16 @@ namespace UrbanoMetraj.BoQ.Services
                         };
                 }
             }
+
+            // Fourth trailing IsDegisken block (absent in older DWGs — ReadI16 returns 0
+            // past the end of tvs, so parts stay non-değişken until the next HESAPLA).
+            foreach (var mh in pcOrder)
+                foreach (var p in mh.StackPreCast.Parts)
+                    p.IsDegisken = ReadI16(tvs, ref i) == 1;
         }
 
         private static void WritePipeMetadata(
-            Transaction tr, DBDictionary pipeDict, SectionDebugRow s, string netName)
+            Transaction tr, DBDictionary pipeDict, SectionDebugRow s, string netName, int calcOrder)
         {
             var tvs = new List<TypedValue>
             {
@@ -963,7 +998,48 @@ namespace UrbanoMetraj.BoQ.Services
             tvs.Add(Str(s.Sinif    ?? ""));
             tvs.Add(Str(s.Aciklama ?? ""));
             tvs.Add(Str(s.LinkedPipeFamilyId.ToString()));
+            // Appended 2026-10-29: the remaining V2 engine inputs, so UT_CROSS_SECTIONS can
+            // re-run the engine on loaded data. Marker 1 = block present.
+            tvs.Add(I16(1));
+            tvs.Add(Dbl(s.StartDolguZ));
+            tvs.Add(Dbl(s.EndDolguZ));
+            tvs.Add(Str(s.StartNodeGuid ?? ""));
+            tvs.Add(Str(s.EndNodeGuid ?? ""));
+            tvs.Add(I32(calcOrder));
             MakeXRecord(tr, pipeDict, K_METADATA, tvs.ToArray());
+        }
+
+        private static void WriteTrenchStack(Transaction tr, DBDictionary pipeDict, SectionDebugRow s)
+        {
+            if ((s.TrenchStack?.Count ?? 0) == 0) return;
+            var tvs = new List<TypedValue> { I16(1), I32(s.TrenchStack.Count) };
+            foreach (var l in s.TrenchStack)
+            {
+                tvs.Add(I16((short)l.Group));
+                tvs.Add(I16((short)l.Kind));
+                tvs.Add(Str(l.LayerName ?? ""));
+                tvs.Add(Str(l.MaterialType ?? ""));
+                tvs.Add(Dbl(l.ThicknessM));
+            }
+            MakeXRecord(tr, pipeDict, K_TRENCH_STACK, tvs.ToArray());
+        }
+
+        private static void ReadTrenchStack(Transaction tr, DBDictionary pipeDict, SectionDebugRow sdr)
+        {
+            var tvs = ReadXRecord(tr, pipeDict, K_TRENCH_STACK);
+            if (tvs == null) return;
+            int i = 0;
+            if (ReadI16(tvs, ref i) != 1) return;
+            int n = ReadI32(tvs, ref i);
+            for (int k = 0; k < n && i < tvs.Length; k++)
+                sdr.TrenchStack.Add(new TrenchStackLayer
+                {
+                    Group        = (TrenchStackGroup)ReadI16(tvs, ref i),
+                    Kind         = (TrenchStackKind)ReadI16(tvs, ref i),
+                    LayerName    = ReadStr(tvs, ref i),
+                    MaterialType = ReadStr(tvs, ref i),
+                    ThicknessM   = ReadDbl(tvs, ref i)
+                });
         }
 
         private static void WriteV2Volumes(Transaction tr, DBDictionary pipeDict, SectionDebugRow s)
@@ -971,8 +1047,10 @@ namespace UrbanoMetraj.BoQ.Services
             MakeXRecord(tr, pipeDict, K_V2_VOLUMES,
                 I16(1),
                 Dbl(s.VExcavKU),      Dbl(s.VExcavKL),      Dbl(s.VExcavSP),    Dbl(s.VExcavGross),
-                Dbl(s.VBedding),      Dbl(s.VSurround),
-                Dbl(s.VBackfillKU),   Dbl(s.VBackfillKL),   Dbl(s.VBackfillSP), Dbl(s.VBackfillGross));
+                Dbl(s.VBeddingNet),   Dbl(s.VSurroundNet),
+                Dbl(s.VBackfillKU),   Dbl(s.VBackfillKL),   Dbl(s.VBackfillSP), Dbl(s.VBackfillGross),
+                // Appended: Yataklama/Gömlekleme without the cross-layer clash losses.
+                Dbl(s.VBeddingGross), Dbl(s.VSurroundGross));
         }
 
         private static void ReadV2Volumes(Transaction tr, DBDictionary pipeDict, SectionDebugRow sdr)
@@ -992,6 +1070,11 @@ namespace UrbanoMetraj.BoQ.Services
             sdr.VBackfillKL     = ReadDbl(tvs, ref i);
             sdr.VBackfillSP     = ReadDbl(tvs, ref i);
             sdr.VBackfillGross  = i < tvs.Length ? ReadDbl(tvs, ref i) : Math.Max(sdr.VBackfillKU, sdr.VBackfillKL);
+            sdr.VBeddingNet     = sdr.VBedding;
+            sdr.VSurroundNet    = sdr.VSurround;
+            // Older DWGs: no gross pair → gross = net (they had no cross-layer losses).
+            sdr.VBeddingGross   = i < tvs.Length ? ReadDbl(tvs, ref i) : sdr.VBeddingNet;
+            sdr.VSurroundGross  = i < tvs.Length ? ReadDbl(tvs, ref i) : sdr.VSurroundNet;
         }
 
         // Phase 2b — PipeTrenchCatalog per-sub-layer ratios (LayerName/MaterialType/
@@ -1087,6 +1170,16 @@ namespace UrbanoMetraj.BoQ.Services
             Guid famId;
             Guid.TryParse(ReadStr(tvs, ref i), out famId);
             sdr.LinkedPipeFamilyId = famId;
+            // Cross-section engine inputs (absent before 2026-10-29 → HasSectionInputs=false).
+            sdr.HasSectionInputs = i < tvs.Length && ReadI16(tvs, ref i) == 1;
+            if (sdr.HasSectionInputs)
+            {
+                sdr.StartDolguZ   = ReadDbl(tvs, ref i);
+                sdr.EndDolguZ     = ReadDbl(tvs, ref i);
+                sdr.StartNodeGuid = ReadStr(tvs, ref i);
+                sdr.EndNodeGuid   = ReadStr(tvs, ref i);
+                sdr.CalcOrder     = ReadI32(tvs, ref i);
+            }
             return sdr;
         }
 
@@ -1238,16 +1331,38 @@ namespace UrbanoMetraj.BoQ.Services
             return tr.GetObject(parent.GetAt(key), OpenMode.ForRead) as DBDictionary;
         }
 
+        // BricsCAD (Teigha): an ERASED entry stays inside its DBDictionary — AutoCAD
+        // drops it — so a later Contains/GetAt/SetAt on the same key in the same
+        // transaction hits eWasErased (UT_BOQ_HESAPLA, 2026-11-05). Always REMOVE the
+        // entry from the dictionary first, then erase the object.
         private static void EraseTree(Transaction tr, DBDictionary dict)
         {
-            var ids = new List<ObjectId>();
-            foreach (DBDictionaryEntry e in dict) ids.Add(e.Value);
-            foreach (var id in ids)
+            var entries = new List<KeyValuePair<string, ObjectId>>();
+            foreach (DBDictionaryEntry e in dict)
+                entries.Add(new KeyValuePair<string, ObjectId>(e.Key, e.Value));
+            if (entries.Count > 0 && !dict.IsWriteEnabled) dict.UpgradeOpen();
+            foreach (var kv in entries)
             {
-                var obj = tr.GetObject(id, OpenMode.ForWrite);
+                dict.Remove(kv.Key);
+                if (kv.Value.IsNull || kv.Value.IsErased) continue;
+                var obj = tr.GetObject(kv.Value, OpenMode.ForWrite);
                 if (obj is DBDictionary sub) EraseTree(tr, sub);
                 obj.Erase();
             }
+        }
+
+        /// <summary>Removes <paramref name="key"/> from <paramref name="parent"/> and erases
+        /// what it held (the whole tree for a dictionary). No-op when the key is absent.</summary>
+        private static void RemoveEntry(Transaction tr, DBDictionary parent, string key)
+        {
+            if (parent == null || !parent.Contains(key)) return;
+            ObjectId id = parent.GetAt(key);
+            if (!parent.IsWriteEnabled) parent.UpgradeOpen();
+            parent.Remove(key);
+            if (id.IsNull || id.IsErased) return;
+            var obj = tr.GetObject(id, OpenMode.ForWrite);
+            if (obj is DBDictionary sub) EraseTree(tr, sub);
+            obj.Erase();
         }
 
         private static Xrecord MakeXRecord(

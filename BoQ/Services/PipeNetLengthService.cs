@@ -22,15 +22,24 @@ namespace UrbanoMetraj.BoQ.Services
             // Global lookup across ALL systems — not scoped per system — so a pipe whose
             // two ends belong to manholes in different networks (cross-system connection)
             // still gets both ends reduced, not just the one sharing the pipe's own system.
+            // Guard against manholes with a null NodeName: GroupBy would produce a
+            // null-key group and ToDictionary rejects a null key with
+            // ArgumentNullException("key"). Such a manhole cannot be matched to a
+            // pipe end by name anyway, so it is simply excluded from the lookup.
             var byName = report.Systems
                 .SelectMany(s => s.Manholes)
+                .Where(m => m.NodeName != null)
                 .GroupBy(m => m.NodeName)
                 .ToDictionary(g => g.Key, g => g.First());
 
             foreach (var row in report.SectionDebug)
             {
-                byName.TryGetValue(row.StartNodeName, out var startMh);
-                byName.TryGetValue(row.EndNodeName, out var endMh);
+                // TryGetValue also throws on a null key, so a pipe end with no node
+                // name simply gets no manhole (null → no reduction), same as an
+                // unresolved Taban below.
+                ManholeItem startMh = null, endMh = null;
+                if (row.StartNodeName != null) byName.TryGetValue(row.StartNodeName, out startMh);
+                if (row.EndNodeName   != null) byName.TryGetValue(row.EndNodeName,   out endMh);
 
                 double redStart = Reduction(startMh, row.InvertStart, mode);
                 double redEnd   = Reduction(endMh, row.InvertEnd, mode);

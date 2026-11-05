@@ -207,6 +207,33 @@ namespace UrbanoMetraj.BoQ.Services
         // Measurement helpers
         // =====================================================================
 
+        /// <summary>Net area (m²) of a region WITHOUT the 3-d.p. rounding of <see cref="Area(IEnumerable{List{double[]}})"/>.
+        /// Used where many slice areas are integrated and must stay consistent with each other
+        /// (V2 per-pair deduction ledger).</summary>
+        public static double AreaRaw(IEnumerable<List<double[]>> region)
+        {
+            if (region == null) return 0;
+            double a = 0;
+            foreach (var ring in region)
+                if (ring != null && ring.Count >= 3)
+                    a += Clipper.Area(ToPath(ring));
+            return Math.Abs(a) / (Scale * Scale);
+        }
+
+        /// <summary>
+        /// Net area (m²) of a ∩ b measured on Clipper's raw output — no spur clean-up. Exact
+        /// when a clip edge runs through a ring's tangent vertex (e.g. a sub-layer edge at the
+        /// pipe top), where the self-touching ring's clean-up would drop a few cm². Display
+        /// measurements only (cross-section sub-layer areas).
+        /// </summary>
+        public static double IntersectAreaRaw(IEnumerable<List<double[]>> a, IEnumerable<List<double[]>> b)
+        {
+            var res = Clipper.Intersect(ToPaths(a), ToPaths(b), FillRule.NonZero);
+            double s = 0;
+            foreach (var p in res) s += Clipper.Area(p);
+            return Math.Abs(s) / (Scale * Scale);
+        }
+
         /// <summary>Net area (m²) of a region, accounting for holes, rounded to nearest mm² (3 d.p.).</summary>
         public static double Area(IEnumerable<List<double[]>> region)
         {

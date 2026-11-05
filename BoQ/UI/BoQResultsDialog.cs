@@ -285,21 +285,18 @@ namespace UrbanoMetraj.BoQ.UI
             // UT_PROJE_AYARLARI). Ayarlar orada düzenlenip DWG'ye kaydedilir; bu pencere
             // onları açılışta DWG'den okur ve Hesapla ile uygular.
 
-            // HOLD (2026-07): "Kesit Çiz" (UT_SECTIONS) hidden from the UI — feature not
-            // fully validated yet. Command still works from the command line.
-            // Restore by un-commenting this block and re-adding btnSections to Controls.AddRange.
-            // var btnSections = new Button
-            // {
-            //     Text = "Kesit Çiz", Left = MARGIN + 270, Top = row1 - 1, Width = 90, Height = 28,
-            //     FlatStyle = FlatStyle.Flat
-            // };
-            // btnSections.Click += (s, e) =>
-            // {
-            //     SectionsCommand.OverrideExcavation           = SelectedExcavationOverlap;
-            //     SectionsCommand.OverrideBackfill             = SelectedBackfillOverlap;
-            //     SectionsCommand.OverrideCrossSectionInterval = _savedSettings?.CrossSectionInterval ?? 5.0;
-            //     _doc.SendStringToExecute("UT_SECTIONS\n", true, false, true);
-            // };
+            // "Kesit Çiz" — UT_CROSS_SECTIONS (En Kesit, 2026-10-29; replaces the held UT_SECTIONS).
+            // Draws the last saved calc exactly as calculated; scenarios/interval from Proje Ayarları.
+            var btnSections = new Button
+            {
+                Text = "Kesit Çiz", Left = MARGIN + 328, Top = row1 - 1, Width = 90, Height = 28,
+                FlatStyle = FlatStyle.Flat
+            };
+            btnSections.Click += (s, e) =>
+            {
+                _doc.SendStringToExecute("UT_CROSS_SECTIONS\n", true, false, true);
+                Close();
+            };
 
             // The real calculation (geometry + Manhole AI + save), meant to be run
             // after Tür Eşleştirme / Baca-Boru Bağlantı Kuralları links are set up.
@@ -358,7 +355,7 @@ namespace UrbanoMetraj.BoQ.UI
 
             Controls.AddRange(new Control[]
             {
-                btnRefresh, _btnHesapla,          // HOLD: btnSolids (3B Katı) + btnSections (Kesit Çiz) removed
+                btnRefresh, _btnHesapla, btnSections,   // HOLD: btnSolids (3B Katı) removed
                 _btnScopeMain, _btnScopeArrow
             });
 
@@ -534,6 +531,19 @@ namespace UrbanoMetraj.BoQ.UI
                 (BacaKaziHesapla && BacaBacaKaziHesapla) ? $"{_report.TotalManholeVsManholeBackfillDeducted:N3}" : "0,000");
             Add(grid, "Çakışmadan düşülen kazı (m³)",  $"{_report.TotalOverlapExcavDeducted:N3}");
             Add(grid, "Çakışmadan düşülen dolgu (m³)", $"{_report.TotalOverlapBackfillDeducted:N3}");
+
+            // ── Kontrol: when Kazı and Dolgu share one datum, kazı − dolgu should equal the
+            // volume occupied by the pipes + manhole structures (a large gap = a clash bug).
+            double kontrolKazi  = _report.TotalExcavationVolume + (BacaKaziHesapla ? netManholeExcav : 0);
+            double kontrolDolgu = _report.TotalBeddingVolume + _report.TotalSurroundVolume + _report.TotalBackfillVolume
+                                + (BacaKaziHesapla ? _report.TotalManholeSubBaseVolume + netManholeBackfill : 0);
+            double govdeHacmi   = (_report.SectionDebug?.Sum(s => s.PipeArea * s.Length2D) ?? 0)
+                                + (BacaKaziHesapla
+                                    ? _report.Systems.SelectMany(s => s.Manholes).Sum(m => m.StructureVolume) : 0);
+            Add(grid, "Kontrol — toplam kazı, boru + baca (m³)",  $"{kontrolKazi:N3}");
+            Add(grid, "Kontrol — toplam dolgu, boru + baca (m³)", $"{kontrolDolgu:N3}");
+            Add(grid, "Kontrol — kazı − dolgu (m³)",              $"{kontrolKazi - kontrolDolgu:N3}");
+            Add(grid, "Kontrol — boru gövdesi + baca yapısı (≈ m³)", $"{govdeHacmi:N3}");
             Add(grid, "İstasyon verisi",
                 $"{_report.SectionDebug?.Sum(s => s.Stations?.Count ?? 0) ?? 0} istasyon / " +
                 $"{_report.SectionDebug?.Count ?? 0} kesit");

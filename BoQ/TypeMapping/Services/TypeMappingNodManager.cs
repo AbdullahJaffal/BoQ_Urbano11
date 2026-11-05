@@ -234,11 +234,40 @@ namespace UrbanoMetraj.BoQ.TypeMapping.Services
         }
 
         private static void EraseAllEntries(Transaction tr, DBDictionary dict)
+            => EraseTree(tr, dict);
+
+        // BricsCAD (Teigha): an ERASED entry stays inside its DBDictionary — AutoCAD
+        // drops it — so a later Contains/GetAt/SetAt on the same key in the same
+        // transaction hits eWasErased (UT_BOQ_HESAPLA, 2026-11-05). Always REMOVE the
+        // entry from the dictionary first, then erase the object.
+        private static void EraseTree(Transaction tr, DBDictionary dict)
         {
-            var ids = new List<ObjectId>();
-            foreach (DBDictionaryEntry e in dict) ids.Add(e.Value);
-            foreach (var id in ids)
-                tr.GetObject(id, OpenMode.ForWrite).Erase();
+            var entries = new List<KeyValuePair<string, ObjectId>>();
+            foreach (DBDictionaryEntry e in dict)
+                entries.Add(new KeyValuePair<string, ObjectId>(e.Key, e.Value));
+            if (entries.Count > 0 && !dict.IsWriteEnabled) dict.UpgradeOpen();
+            foreach (var kv in entries)
+            {
+                dict.Remove(kv.Key);
+                if (kv.Value.IsNull || kv.Value.IsErased) continue;
+                var obj = tr.GetObject(kv.Value, OpenMode.ForWrite);
+                if (obj is DBDictionary sub) EraseTree(tr, sub);
+                obj.Erase();
+            }
+        }
+
+        /// <summary>Removes <paramref name="key"/> from <paramref name="parent"/> and erases
+        /// what it held (the whole tree for a dictionary). No-op when the key is absent.</summary>
+        private static void RemoveEntry(Transaction tr, DBDictionary parent, string key)
+        {
+            if (parent == null || !parent.Contains(key)) return;
+            ObjectId id = parent.GetAt(key);
+            if (!parent.IsWriteEnabled) parent.UpgradeOpen();
+            parent.Remove(key);
+            if (id.IsNull || id.IsErased) return;
+            var obj = tr.GetObject(id, OpenMode.ForWrite);
+            if (obj is DBDictionary sub) EraseTree(tr, sub);
+            obj.Erase();
         }
 
         // =====================================================================
@@ -255,9 +284,7 @@ namespace UrbanoMetraj.BoQ.TypeMapping.Services
                 var dict = GetSubDictReadOnly(tr, db, groupKey);
                 if (dict == null || !dict.Contains(key)) { tr.Commit(); return false; }
 
-                dict.UpgradeOpen();
-                var rec = tr.GetObject(dict.GetAt(key), OpenMode.ForWrite);
-                rec.Erase();
+                RemoveEntry(tr, dict, key);
                 tr.Commit();
                 return true;
             }
@@ -329,11 +356,7 @@ namespace UrbanoMetraj.BoQ.TypeMapping.Services
         private static void MakeXRecord(
             Transaction tr, DBDictionary parent, string key, params TypedValue[] tvs)
         {
-            if (parent.Contains(key))
-            {
-                var old = tr.GetObject(parent.GetAt(key), OpenMode.ForWrite);
-                old.Erase();
-            }
+            RemoveEntry(tr, parent, key);
             var rec = new Xrecord { Data = new ResultBuffer(tvs) };
             parent.SetAt(key, rec);
             tr.AddNewlyCreatedDBObject(rec, true);

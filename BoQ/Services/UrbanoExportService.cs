@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -38,7 +39,36 @@ namespace UrbanoMetraj.BoQ.Services
         [DllImport("user32.dll")]
         private static extern bool IsWindow(IntPtr hWnd);
 
-        private const uint WM_CLOSE = 0x0010;
+        // Extra imports for the caption-INDEPENDENT modal-popup dismissal (see DismissOkPopup).
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowEnabled(IntPtr hWnd);
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        private const uint WM_CLOSE   = 0x0010;
+        private const uint WM_COMMAND = 0x0111;
+        private const uint WM_KEYDOWN = 0x0100;
+        private const uint WM_KEYUP   = 0x0101;
+        private const int  VK_RETURN  = 0x0D;
+        private const int  IDOK       = 1;      // OK control id — SAME in every Windows UI language
+        private const uint GW_OWNER   = 4;
+
+        // OK/confirm button captions across the languages the suite targets (TR/EN/RU/AR + a few
+        // more), lower-cased. Used ONLY as a tie-breaker when a popup has more than one button —
+        // a single-button success popup is dismissed structurally without consulting this set.
+        private static readonly HashSet<string> OkCaptions = new HashSet<string>
+        {
+            "tamam", "ok", "okay", "ок", "موافق", "aceptar", "確定", "确定"
+        };
 
         // ── Dialog / button names ─────────────────────────────────────────────
         private const string MainWindowTitle  = "Urbano XML'e topoloji ihraç";
@@ -270,56 +300,45 @@ namespace UrbanoMetraj.BoQ.Services
         // Phase 3 — Dismiss "Tamam" success popup
         // =====================================================================
 
+        // LANGUAGE-INDEPENDENT dismissal. The success popup Urbano shows after export is a
+        // standard Windows MessageBox whose OK-button CAPTION is localised to the machine's
+        // Windows UI language ("Tamam" on Turkish, "OK"/"موافق"/"ОК" elsewhere). Matching the
+        // literal string "Tamam" therefore worked only on Turkish Windows and left the modal
+        // popup up on every other machine — which (being modal) froze the AutoCAD main thread,
+        // starved Application.Idle, and left the InputBlocker stuck. This version never reads the
+        // caption: it locates the modal popup structurally and dismisses it by mechanism.
         private static bool DismissOkPopup(
             IntPtr mainHwnd, int maxIterations, CancellationToken ct)
         {
-            var btnCond = new AndCondition(
-                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
-                new PropertyCondition(AutomationElement.NameProperty, OkButtonName));
-
             for (int i = 0; i < maxIterations; i++)
             {
                 if (ct.IsCancellationRequested) return false;
 
-                // Strategy A: look for "Tamam" anywhere on the desktop.
-                AutomationElement okBtn = AutomationElement.RootElement
-                    .FindFirst(TreeScope.Descendants, btnCond);
-
-                if (okBtn != null)
+                IntPtr popup = FindModalPopup(mainHwnd);
+                if (popup != IntPtr.Zero && DismissPopupWindow(popup))
                 {
-                    Dbg($"  DismissOk — found \"{OkButtonName}\" via desktop search " +
-                        $"(parent: \"{okBtn.Current.ClassName}\").");
-
-                    if (okBtn.TryGetCurrentPattern(InvokePattern.Pattern, out object ipo))
-                    {
-                        ((InvokePattern)ipo).Invoke();
-                        Dbg($"  DismissOk — \"{OkButtonName}\" invoked.");
-                        Thread.Sleep(200);
-                        return true;
-                    }
+                    Dbg("  DismissOk — modal popup dismissed (caption-independent).");
+                    return true;
                 }
 
-                // Strategy B: look inside the main dialog itself (in case it's
-                // a panel rather than a separate popup window).
+                // Fallback: a confirm button sitting INSIDE the main dialog (panel, not a
+                // separate window). Invoke by button role, not by name.
                 if (mainHwnd != IntPtr.Zero && IsWindow(mainHwnd))
                 {
-                    AutomationElement mainWin = AutomationElement.FromHandle(mainHwnd);
-                    if (mainWin != null)
+                    try
                     {
-                        AutomationElement okInMain =
-                            mainWin.FindFirst(TreeScope.Descendants, btnCond);
-                        if (okInMain != null)
+                        var mainWin = AutomationElement.FromHandle(mainHwnd);
+                        var btn = PickOkButton(mainWin?.FindAll(TreeScope.Descendants,
+                            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)));
+                        if (btn != null && btn.TryGetCurrentPattern(InvokePattern.Pattern, out object ip))
                         {
-                            Dbg($"  DismissOk — found \"{OkButtonName}\" inside main window.");
-                            if (okInMain.TryGetCurrentPattern(InvokePattern.Pattern, out object ipo2))
-                            {
-                                ((InvokePattern)ipo2).Invoke();
-                                Dbg($"  DismissOk — \"{OkButtonName}\" (in main) invoked.");
-                                Thread.Sleep(200);
-                                return true;
-                            }
+                            ((InvokePattern)ip).Invoke();
+                            Dbg("  DismissOk — confirm button inside main window invoked.");
+                            Thread.Sleep(200);
+                            return true;
                         }
                     }
+                    catch { /* keep polling */ }
                 }
 
                 Dbg($"  DismissOk poll {i + 1}/{maxIterations} — popup not visible yet...");
@@ -327,6 +346,87 @@ namespace UrbanoMetraj.BoQ.Services
             }
 
             return false;
+        }
+
+        // Finds the modal confirmation window Urbano opens after export: a visible+enabled
+        // top-level window OWNED by the export dialog, or (fallback) a standard "#32770" dialog
+        // on the same UI thread. Never matches our own WinForms InputBlocker (different class and
+        // owner) nor the main dialog itself.
+        private static IntPtr FindModalPopup(IntPtr mainHwnd)
+        {
+            IntPtr found = IntPtr.Zero;
+            if (mainHwnd == IntPtr.Zero) return found;
+            uint mainProc;
+            uint mainThread = GetWindowThreadProcessId(mainHwnd, out mainProc);
+
+            EnumWindows((hwnd, l) =>
+            {
+                if (hwnd == mainHwnd || !IsWindowVisible(hwnd) || !IsWindowEnabled(hwnd)) return true;
+
+                bool owned = GetWindow(hwnd, GW_OWNER) == mainHwnd;
+                bool sameThreadDialog = false;
+                if (!owned)
+                {
+                    var sb = new StringBuilder(64);
+                    GetClassName(hwnd, sb, sb.Capacity);
+                    uint proc;
+                    sameThreadDialog = sb.ToString() == "#32770"
+                                    && GetWindowThreadProcessId(hwnd, out proc) == mainThread;
+                }
+                if (owned || sameThreadDialog) { found = hwnd; return false; }  // stop enumeration
+                return true;
+            }, IntPtr.Zero);
+
+            return found;
+        }
+
+        // Dismisses a modal popup WITHOUT reading its button text, trying in order until the
+        // window is gone: (1) UIA-invoke its sole/confirm button, (2) WM_COMMAND IDOK (control
+        // id 1 — identical in every Windows language), (3) Enter keypress, (4) WM_CLOSE.
+        private static bool DismissPopupWindow(IntPtr popup)
+        {
+            try
+            {
+                var el = AutomationElement.FromHandle(popup);
+                var btn = PickOkButton(el?.FindAll(TreeScope.Descendants,
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)));
+                if (btn != null && btn.TryGetCurrentPattern(InvokePattern.Pattern, out object ip))
+                {
+                    ((InvokePattern)ip).Invoke();
+                    Thread.Sleep(200);
+                    if (!IsWindow(popup) || !IsWindowVisible(popup)) return true;
+                }
+            }
+            catch { /* fall through to the Win32 paths */ }
+
+            SendMessage(popup, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero);
+            Thread.Sleep(150);
+            if (!IsWindow(popup) || !IsWindowVisible(popup)) return true;
+
+            PostMessage(popup, WM_KEYDOWN, (IntPtr)VK_RETURN, IntPtr.Zero);
+            PostMessage(popup, WM_KEYUP,   (IntPtr)VK_RETURN, IntPtr.Zero);
+            Thread.Sleep(150);
+            if (!IsWindow(popup) || !IsWindowVisible(popup)) return true;
+
+            SendMessage(popup, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            Thread.Sleep(150);
+            return !IsWindow(popup);
+        }
+
+        // From a popup's buttons, pick the confirm button caption-independently: the only button
+        // when there is just one (the success-popup case); otherwise the one whose name matches a
+        // known OK caption across languages, else the first button.
+        private static AutomationElement PickOkButton(AutomationElementCollection buttons)
+        {
+            if (buttons == null || buttons.Count == 0) return null;
+            if (buttons.Count == 1) return buttons[0];
+            foreach (AutomationElement b in buttons)
+            {
+                string n = "";
+                try { n = (b.Current.Name ?? "").Trim().ToLowerInvariant(); } catch { }
+                if (OkCaptions.Contains(n)) return b;
+            }
+            return buttons[0];
         }
 
         // =====================================================================

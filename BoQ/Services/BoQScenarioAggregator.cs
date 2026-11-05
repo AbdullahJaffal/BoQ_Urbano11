@@ -56,6 +56,9 @@ namespace UrbanoMetraj.BoQ.Services
                 }
 
                 // Dolgu (bedding / surround / backfill)
+                // Yataklama/Gömlekleme: gross under "Ignore", clash-resolved otherwise.
+                sdr.VBedding  = dolgu == TiePreference.Ignore ? sdr.VBeddingGross  : sdr.VBeddingNet;
+                sdr.VSurround = dolgu == TiePreference.Ignore ? sdr.VSurroundGross : sdr.VSurroundNet;
                 if (dolgu == TiePreference.Ignore)
                 {
                     sdr.VBackfill               = sdr.VBackfillGross;
@@ -195,6 +198,9 @@ namespace UrbanoMetraj.BoQ.Services
                 {
                     sdr.VExcav    = System.Math.Max(0, sdr.VExcav    - sdr.ManholeExcavDeducted);
                     sdr.VBackfill = System.Math.Max(0, sdr.VBackfill - sdr.ManholeBackfillDeducted);
+                    // Keep the backfill sub-layer splits summing to the deducted total
+                    // (RecomputeRow split the pre-deduction VBackfill).
+                    ApplyRatios(sdr.BackfillLayerSplits, sdr.VBackfill);
                 }
             }
 

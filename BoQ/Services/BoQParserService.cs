@@ -193,7 +193,7 @@ namespace UrbanoMetraj.BoQ.Services
             var sections = ParseSections(doc, catDict, sysNames, nodes, notes, ed, activeSystems);
             Dbg(ed, $"\n         {sections.Count} section(s) calculated.");
 
-            ComputeManholeDepths(nodes, sections, notes, ed);
+            ComputeManholeDepths(nodes, sections, sysNames, notes, ed);
 
             // CAD Seçimi: restrict clash + output to the picked sections. Manhole
             // depths above were computed from ALL connected pipes first, so they stay
@@ -600,6 +600,7 @@ namespace UrbanoMetraj.BoQ.Services
             public List<TrenchLayerSplit> BoruEtrafiLayerSplits { get; set; } = new List<TrenchLayerSplit>();
             public List<TrenchLayerSplit> BoruUstuLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
             public List<TrenchLayerSplit> BackfillLayerSplits   { get; set; } = new List<TrenchLayerSplit>();
+            public List<TrenchStackLayer> TrenchStack           { get; set; } = new List<TrenchStackLayer>();
         }
 
         // =====================================================================
@@ -854,6 +855,9 @@ namespace UrbanoMetraj.BoQ.Services
             if (tplMain == null) return result;
 
             int missingCatalogCount = 0, missingTrenchRuleCount = 0, unlinkedPipeCount = 0;
+            // Pipe wall thickness: Urbano's exported catalog vs our Akıllı Montaj pipe catalog
+            // (key = Urbano item + our PipeDefinition) → (urbano mm, ours mm, section count).
+            var wallMismatch = new Dictionary<string, (string Urb, string Ours, double UrbMm, double OurMm, int Count)>();
 
             foreach (var sEl in tplMain.Descendants("ss").Elements("s"))
             {
@@ -888,10 +892,20 @@ namespace UrbanoMetraj.BoQ.Services
                 double odMm    = 0;
                 int    nomMm   = 0;
                 string material= "?";
+                double urbWallMm = double.NaN;   // NaN = Urbano gives no usable wall
+                string urbItemName = "";
 
                 var pipeProps = CatLookup(catDict, pprGuid);
                 if (pipeProps != null)
                 {
+                    // Urbano's own wall: PIPE_T, else (PIPE_DV − PIPE_DU)/2 (DV = outer, DU = inner).
+                    double urbT  = DecodeFloatProp(GetProp(pipeProps, "PIPE_T"));
+                    double urbDv = DecodeFloatProp(GetProp(pipeProps, "PIPE_DV"));
+                    double urbDu = DecodeFloatProp(GetProp(pipeProps, "PIPE_DU"));
+                    if (urbT > 0)                     urbWallMm = urbT;
+                    else if (urbDv > 0 && urbDu > 0)  urbWallMm = Math.Max(0, (urbDv - urbDu) / 2.0);
+                    urbItemName = DecodeStrProp(GetProp(pipeProps, "CATALOGITEM_NAME"));
+
                     // PIPE_DV = outer diameter (primary); PIPE_DU = fallback
                     odMm = DecodeFloatProp(GetProp(pipeProps, "PIPE_DV"));
                     if (odMm <= 0)
@@ -940,6 +954,7 @@ namespace UrbanoMetraj.BoQ.Services
                 // consistent in our catalog).
                 string linkedPozNo = "", linkedSinif = "", linkedAciklama = "";
                 Guid   linkedPipeFamilyId = Guid.Empty;
+                PipeDefinition matchedDef = null;   // our catalog pipe actually used (for the wall check)
 
                 if (ProjectRulesStore.IsRulesMode)
                 {
@@ -964,6 +979,7 @@ namespace UrbanoMetraj.BoQ.Services
                         ? FindPipeInFamily(famId, sinif, nomMm) : null;
                     if (rp != null)
                     {
+                        matchedDef         = rp;
                         linkedPozNo        = rp.PozNo    ?? "";
                         linkedSinif        = rp.Sinif    ?? "";
                         linkedAciklama     = rp.Aciklama ?? "";
@@ -983,6 +999,7 @@ namespace UrbanoMetraj.BoQ.Services
                         var linkedPipe = FindPipeDefinitionById(pipeLink.LinkedPipeDefinitionId, out PipeFamily linkedFamily);
                         if (linkedPipe != null)
                         {
+                            matchedDef        = linkedPipe;
                             linkedPozNo       = linkedPipe.PozNo    ?? "";
                             linkedSinif       = linkedPipe.Sinif    ?? "";
                             linkedAciklama    = linkedPipe.Aciklama ?? "";
@@ -1000,6 +1017,24 @@ namespace UrbanoMetraj.BoQ.Services
 
                 double odM = odMm / 1000.0;
                 double idM = nomMm / 1000.0; // inner (nominal) diameter
+
+                // ── Wall-thickness check (warning only — no value is changed) ─────
+                if (matchedDef != null && !double.IsNaN(urbWallMm))
+                {
+                    double ourId     = matchedDef.InnerDiameter > 0 ? matchedDef.InnerDiameter : matchedDef.NominalDiameter;
+                    double ourWallMm = matchedDef.WallThickness > 0
+                        ? matchedDef.WallThickness
+                        : Math.Max(0, (matchedDef.OuterDiameter - ourId) / 2.0);
+                    if (Math.Abs(ourWallMm - urbWallMm) > 0.5)
+                    {
+                        string key = urbItemName + "|" + matchedDef.Id;
+                        wallMismatch.TryGetValue(key, out var w);
+                        wallMismatch[key] = (string.IsNullOrEmpty(urbItemName) ? $"DN{nomMm}" : urbItemName,
+                                             $"DN{matchedDef.NominalDiameter:0} dış Ø{matchedDef.OuterDiameter:0}" +
+                                             (string.IsNullOrEmpty(matchedDef.Sinif) ? "" : $" {matchedDef.Sinif}"),
+                                             urbWallMm, ourWallMm, w.Count + 1);
+                    }
+                }
 
                 // Convert LL10/LL11 → AkarKot using the per-pipe LLPOS measurement position.
                 double invertStart = LlToInvert(ll10, llpos, odM, idM);
@@ -1128,7 +1163,7 @@ namespace UrbanoMetraj.BoQ.Services
                     if (trenchTier.BeddingLayers.Count > 0)
                     {
                         if (trenchTier.BeddingLayers.Any(l => l.IsFillToSurface))
-                            notes.Add("[WARN] Yataklama layer breakdown skipped (a fill-to-surface layer is configured) — reporting combined total only.");
+                            notes.Add(NoteMarker.Info + " Yataklama katman ayrıntısı atlandı (yüzeye-doldur katmanı tanımlı) — yalnızca birleşik toplam raporlanıyor. (Hesap geçerli.)");
                         else
                             beddingSplits = ComputeLayerRatios(
                                 trenchTier.BeddingLayers.Select(l => (l.LayerName, l.MaterialType, l.ThicknessM)).ToList(),
@@ -1318,16 +1353,22 @@ namespace UrbanoMetraj.BoQ.Services
                     BeddingLayerSplits    = beddingSplits,
                     BoruEtrafiLayerSplits = boruEtrafiSplits,
                     BoruUstuLayerSplits   = boruUstuSplits,
-                    BackfillLayerSplits   = backfillSplits
+                    BackfillLayerSplits   = backfillSplits,
+                    TrenchStack           = BuildTrenchStack(trenchTier)
                 });
             }
 
             if (missingCatalogCount > 0)
-                notes.Add($"[WARN] {missingCatalogCount} boru kesiti için Urbano katalog kaydı bulunamadı.");
+                notes.Add($"{NoteMarker.Warning} {missingCatalogCount} boru kesiti için Urbano katalog kaydı bulunamadı.");
             if (missingTrenchRuleCount > 0)
-                notes.Add($"[WARN] {missingTrenchRuleCount} boru kesiti için Hendek Kataloğu kuralı bulunamadı — varsayılan hendek boyutları kullanıldı.");
+                notes.Add($"{NoteMarker.Warning} {missingTrenchRuleCount} boru kesiti için Hendek Kataloğu kuralı bulunamadı — varsayılan hendek boyutları kullanıldı.");
             if (unlinkedPipeCount > 0)
-                notes.Add($"[WARN] {unlinkedPipeCount} boru kesiti Tür Eşleştirme'de bağlı değil — Poz No/Sınıf boş kalacak ve bağlı bacalar çap/malzeme listesini çözemeyebilir.");
+                notes.Add($"{NoteMarker.Warning} {unlinkedPipeCount} boru kesiti Tür Eşleştirme'de bağlı değil — Poz No/Sınıf boş kalacak ve bağlı bacalar çap/malzeme listesini çözemeyebilir.");
+            if (wallMismatch.Count > 0)
+                notes.Add($"{NoteMarker.Warning} Boru et kalınlığı Urbano kataloğu ile Akıllı Montaj boru kataloğunda farklı " +
+                          "(hesap Akıllı Montaj değerini kullanır; Urbano kotları Urbano'nun kendi borusuna göre çizilmiştir): " +
+                          string.Join("; ", wallMismatch.Values.Select(w =>
+                              $"'{w.Urb}' Urbano {w.UrbMm:0.#} mm ↔ {w.Ours} {w.OurMm:0.#} mm ({w.Count} kesit)")));
 
             return result;
         }
@@ -1451,6 +1492,36 @@ namespace UrbanoMetraj.BoQ.Services
             return sum;
         }
 
+        // Raw bottom-up sub-layer stack of the matched tier, persisted for the cross-section
+        // drawing (UT_CROSS_SECTIONS), which resolves the heights per station itself.
+        private static List<TrenchStackLayer> BuildTrenchStack(PipeTrenchDepthTier tier)
+        {
+            var stack = new List<TrenchStackLayer>();
+            if (tier == null) return stack;
+            foreach (var l in tier.BeddingLayers)
+                stack.Add(new TrenchStackLayer
+                {
+                    Group = TrenchStackGroup.Yataklama,
+                    Kind  = l.IsFillToSurface ? TrenchStackKind.FillToSurface : TrenchStackKind.Fixed,
+                    LayerName = l.LayerName ?? "", MaterialType = l.MaterialType ?? "", ThicknessM = l.ThicknessM
+                });
+            foreach (var l in tier.GomleklemeLayers)
+                stack.Add(new TrenchStackLayer
+                {
+                    Group = l.Position == "boru üstü" ? TrenchStackGroup.BoruUstu : TrenchStackGroup.BoruEtrafi,
+                    Kind  = l.Position != "boru üstü" && l.IsUpToPipeTop ? TrenchStackKind.UpToPipeTop : TrenchStackKind.Fixed,
+                    LayerName = l.LayerName ?? "", MaterialType = l.MaterialType ?? "", ThicknessM = l.ThicknessM
+                });
+            foreach (var l in tier.BackfillLayers)
+                stack.Add(new TrenchStackLayer
+                {
+                    Group = TrenchStackGroup.GeriDolgu,
+                    Kind  = l.IsFillToSurface ? TrenchStackKind.FillToSurface : TrenchStackKind.Fixed,
+                    LayerName = l.LayerName ?? "", MaterialType = l.MaterialType ?? "", ThicknessM = l.ThicknessM
+                });
+            return stack;
+        }
+
         // Fixed area-ratio split among a bottom-up ordered list of sub-layers,
         // using each layer's REAL cumulative height within the stack (not an
         // isolated slice from zero) — W(h) = baseWidthAtHZero + 2×h×slopeRatio.
@@ -1492,11 +1563,23 @@ namespace UrbanoMetraj.BoQ.Services
         private static void ComputeManholeDepths(
             Dictionary<string, NodeInfo> nodes,
             List<SectionInfo>            sections,
+            Dictionary<int, string>      sysNames,
             List<string>                 notes,
             Editor ed)
         {
             foreach (var n in nodes.Values)
                 n.Depth = 0;
+
+            // BASINÇLI networks have no manholes — skip their nodes entirely so no manhole depth is
+            // computed and no Dolgu/Kazı "invalid level" warning is raised for them. The pipe-trench
+            // depth (SectionInfo.DepthToInv*/TrueDepth*) is computed in ParseSections and is untouched.
+            var basincliNodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var nd in nodes.Values)
+            {
+                string sn = sysNames != null && sysNames.ContainsKey(nd.SystemId)
+                    ? sysNames[nd.SystemId] : $"System_{nd.SystemId}";
+                if (ProjectRulesStore.IsBasincli(sn)) basincliNodes.Add(nd.Guid);
+            }
 
             // Collect pipe-invert elevations (with each pipe's own wall thickness)
             // that arrive at each node.
@@ -1523,6 +1606,9 @@ namespace UrbanoMetraj.BoQ.Services
             // and answers a different question: ring-stack height, not dig depth).
             foreach (var nd in nodes.Values)
             {
+                if (basincliNodes.Contains(nd.Guid))
+                    continue;   // pressure network — no manhole, no depth/warning
+
                 if (!invertsByNode.ContainsKey(nd.Guid) ||
                     invertsByNode[nd.Guid].Count == 0)
                     continue;
@@ -1669,7 +1755,8 @@ namespace UrbanoMetraj.BoQ.Services
                     BeddingLayerSplits    = sec.BeddingLayerSplits,
                     BoruEtrafiLayerSplits = sec.BoruEtrafiLayerSplits,
                     BoruUstuLayerSplits   = sec.BoruUstuLayerSplits,
-                    BackfillLayerSplits   = sec.BackfillLayerSplits
+                    BackfillLayerSplits   = sec.BackfillLayerSplits,
+                    TrenchStack           = sec.TrenchStack
                 };
                 sdrs.Add(sdr);
                 report.SectionDebug.Add(sdr);
@@ -1748,7 +1835,15 @@ namespace UrbanoMetraj.BoQ.Services
                     });
                 }
 
-                foreach (var nd in nodes.Values
+                // BASINÇLI (pressure / non-gravity) networks have no manholes: emit none, so the
+                // whole downstream manhole pipeline (Manhole AI stacking, excav overlap, manhole
+                // rows/sheet, pipe↔manhole net-length linking and every manhole-linking warning)
+                // sees nothing to do. Pipe items above are unaffected — the pipe-trench geometry is
+                // pipe-level and already computed. Depths for these nodes were likewise skipped in
+                // ComputeManholeDepths, so no spurious Dolgu/Kazı warnings were raised either.
+                bool isBasincli = ProjectRulesStore.IsBasincli(sysName);
+
+                foreach (var nd in isBasincli ? Enumerable.Empty<NodeInfo>() : nodes.Values
                     .Where(n => n.SystemId == sid)
                     .OrderBy(n => n.Name))
                 {
@@ -2381,7 +2476,7 @@ namespace UrbanoMetraj.BoQ.Services
                 try
                 {
                     string txt = cp == 0
-                        ? Encoding.Default.GetString(raw)
+                        ? Encoding.GetEncoding(0).GetString(raw)   // 0 = system ANSI code page (== Encoding.Default on net48; on .NET 8 Default is UTF-8)
                         : Encoding.GetEncoding(cp).GetString(raw);
                     return XDocument.Parse(
                         XmlDeclRx.Replace(txt,

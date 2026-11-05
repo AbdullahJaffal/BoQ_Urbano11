@@ -474,6 +474,7 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
                 new XAttribute("MinPipeMm",            pr.MinPipeMm.ToString("G", IC)),
                 new XAttribute("MaxPipeMm",            pr.MaxPipeMm.ToString("G", IC)),
                 new XAttribute("SelectedPipeFamilyId", pr.SelectedPipeFamilyId),
+                new XAttribute("ManholeFamilyId",      pr.ManholeFamilyId),
                 new XAttribute("MinPipeId",            pr.MinPipeId),
                 new XAttribute("MaxPipeId",            pr.MaxPipeId),
                 new XAttribute("SystemTypeId",         pr.SystemTypeId));
@@ -513,14 +514,16 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Serialization
             Guid.TryParse((string)el.Attribute("SelectedPipeFamilyId"), out familyId);
             Guid.TryParse((string)el.Attribute("MinPipeId"),            out minPipeId);
             Guid.TryParse((string)el.Attribute("MaxPipeId"),            out maxPipeId);
-            Guid systemTypeId;
+            Guid systemTypeId, manholeFamilyId;
             Guid.TryParse((string)el.Attribute("SystemTypeId"), out systemTypeId);
+            Guid.TryParse((string)el.Attribute("ManholeFamilyId"), out manholeFamilyId);   // absent in old files → Empty
             var pr = new PipeRangeRule
             {
                 Id                   = id == Guid.Empty ? Guid.NewGuid() : id,
                 MinPipeMm            = ParseDouble(el, "MinPipeMm", 0),
                 MaxPipeMm            = ParseDouble(el, "MaxPipeMm", 0),
                 SelectedPipeFamilyId = familyId,
+                ManholeFamilyId      = manholeFamilyId,
                 MinPipeId            = minPipeId,
                 MaxPipeId            = maxPipeId,
                 SystemTypeId         = systemTypeId

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Drawing;
 using System.Linq;
 using OfficeOpenXml;
@@ -121,6 +122,12 @@ namespace UrbanoMetraj.BoQ.Services
 
         private enum Kind { Band, Label, Content }
 
+        // How a row's money columns behave:
+        //   Sum    — aggregate: Σ of its direct children's money (section/band totals).
+        //   Priced — the user enters BF here; TUTAR = MİKTAR × BF (the single priced row).
+        //   None   — quantity-only: shows MİKTAR but NO pricing (a breakdown row).
+        private enum Money { Sum, Priced, None }
+
         private sealed class Row
         {
             public Kind   Kind;
@@ -131,6 +138,7 @@ namespace UrbanoMetraj.BoQ.Services
             public double Miktar;
             public string Birim;
             public string MiktarFmt;
+            public Money? MoneyOverride;   // null → default (below); set for KAZI/DOLGU material groups
             public readonly List<Row> Children = new List<Row>();
 
             public int    ExcelRow;
@@ -140,6 +148,12 @@ namespace UrbanoMetraj.BoQ.Services
 
             public bool HasChildren => Children.Count > 0;
             public bool HasContent  => Children.Count > 0;
+
+            // Default: bands/labels aggregate (Sum); a Content leaf is priced; a Content
+            // row that has children aggregates. KAZI/DOLGU override this so pricing sits
+            // only on the material total (see MarkPricedTotal).
+            public Money EffectiveMoney => MoneyOverride ??
+                (Kind != Kind.Content ? Money.Sum : (HasChildren ? Money.Sum : Money.Priced));
 
             public static Row Band(string title)  => new Row { Kind = Kind.Band,  Title = title };
             public static Row Label(string title) => new Row { Kind = Kind.Label, Title = title };
@@ -166,13 +180,25 @@ namespace UrbanoMetraj.BoQ.Services
         // back to the stored value, then a composed name.
         private sealed class CatalogAck
         {
-            private readonly Dictionary<string, string> _piece   = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            // Several components may share one Name (e.g. "1000 GOVDE" at 600/500/350/250 mm),
+            // each with its own Açıklama — so a fixed piece is keyed by Name + height (mm),
+            // and a değişken piece (computed height) by Name among IsVariable components.
+            private readonly Dictionary<string, string> _pieceByH   = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, string> _pieceVar   = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             private readonly Dictionary<string, string> _pipeDnMat = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             private readonly Dictionary<int, string>    _pipeDn    = new Dictionary<int, string>();
 
-            /// <summary>Live piece Açıklama by component Name (= StackedPart.PartName).</summary>
-            public string ForPiece(string partName)
-                => partName != null && _piece.TryGetValue(partName, out var a) ? a : null;
+            /// <summary>Live piece Açıklama by component Name (= StackedPart.PartName) + height.</summary>
+            public string ForPiece(string partName, double heightM, bool degisken)
+            {
+                if (partName == null) return null;
+                if (degisken)
+                    return _pieceVar.TryGetValue(partName, out var v) ? v : null;
+                return _pieceByH.TryGetValue(PieceKey(partName, heightM * 1000.0), out var a) ? a : null;
+            }
+
+            private static string PieceKey(string name, double heightMm)
+                => name + "|" + Math.Round(heightMm).ToString(CultureInfo.InvariantCulture);
 
             /// <summary>Live pipe Açıklama by diameter (+ material when it disambiguates).</summary>
             public string ForPipe(int dn, string material)
@@ -190,9 +216,12 @@ namespace UrbanoMetraj.BoQ.Services
                     var mc = SmartAssemblyCatalogStore.Current;
                     if (mc?.Components != null)
                         foreach (var c in mc.Components)
-                            if (!string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Aciklama)
-                                && !r._piece.ContainsKey(c.Name))
-                                r._piece[c.Name] = c.Aciklama;
+                        {
+                            if (string.IsNullOrWhiteSpace(c.Name) || string.IsNullOrWhiteSpace(c.Aciklama)) continue;
+                            string k = PieceKey(c.Name, c.EffectiveHeight);
+                            if (!r._pieceByH.ContainsKey(k)) r._pieceByH[k] = c.Aciklama;
+                            if (c.IsVariable && !r._pieceVar.ContainsKey(c.Name)) r._pieceVar[c.Name] = c.Aciklama;
+                        }
                 }
                 catch { }
                 try
@@ -251,9 +280,9 @@ namespace UrbanoMetraj.BoQ.Services
 
             // ── KAZI-DOLGU İŞLERİ ─────────────────────────────────────────────
             var kaziDolgu = Row.Band("KAZI-DOLGU İŞLERİ");
-            var kazi  = Row.Band("KAZI İŞLERİ");   BuildKazi(kazi, sys);
+            var kazi  = Row.Band("KAZI İŞLERİ");   BuildKazi(kazi, sys, settings);
             if (kazi.HasContent) kaziDolgu.Add(kazi);
-            var dolgu = Row.Band("DOLGU İŞLERİ");  BuildDolgu(dolgu, sys, sections);
+            var dolgu = Row.Band("DOLGU İŞLERİ");  BuildDolgu(dolgu, sys, sections, settings);
             if (dolgu.HasContent) kaziDolgu.Add(dolgu);
             if (kaziDolgu.HasContent) root.Add(kaziDolgu);
 
@@ -271,10 +300,10 @@ namespace UrbanoMetraj.BoQ.Services
         }
 
         // ── KAZI: one material group per soil (single soil now) ───────────────
-        private static void BuildKazi(Row kazi, SystemBoQ sys)
+        private static void BuildKazi(Row kazi, SystemBoQ sys, BoQSettings settings)
         {
             var (poz, desc) = SoilPozDesc(sys.SystemName);
-            double mh   = sys.Manholes.Sum(m => m.ExcavationVolume);
+            double mh   = sys.Manholes.Sum(m => ManholeNetExcav(m, settings));
             double pipe = sys.Pipes.Sum(p => p.TotalExcavationVolume);
 
             var contribs = new List<Contrib>();
@@ -284,12 +313,15 @@ namespace UrbanoMetraj.BoQ.Services
 
             string title = !string.IsNullOrWhiteSpace(desc) ? desc : "KAZI";
             var band = Row.Band(title);
-            band.Add(BuildAgg(contribs, 0, poz, desc));
+            var total = BuildAgg(contribs, 0, poz, desc);
+            MarkPricedTotal(total);
+            band.Add(total);
             kazi.Add(band);
         }
 
         // ── DOLGU: group all backfill/bedding contributions by material ───────
-        private static void BuildDolgu(Row dolgu, SystemBoQ sys, List<SectionDebugRow> sections)
+        private static void BuildDolgu(Row dolgu, SystemBoQ sys, List<SectionDebugRow> sections,
+                                       BoQSettings settings)
         {
             var all = new List<Contrib>();
             void AddMap(Dictionary<string, double> map, string[] pathTail, string source)
@@ -302,13 +334,13 @@ namespace UrbanoMetraj.BoQ.Services
             }
 
             // Geri Dolgu
-            AddMap(ManholeGeriDolguByMaterial(sys), new[] { L_GeriDolgu }, S_Baca);
+            AddMap(ManholeGeriDolguByMaterial(sys, settings), new[] { L_GeriDolgu }, S_Baca);
             var boruGd = PipeSplitsByMaterial(sections, s => s.BackfillLayerSplits);
             if (boruGd.Count == 0) AddIfPos(boruGd, "", sys.Pipes.Sum(p => p.TotalBackfillVolume));
             AddMap(boruGd, new[] { L_GeriDolgu }, S_Boru);
 
             // Yataklama
-            AddMap(ManholeYataklamaByMaterial(sys), new[] { L_Yataklama }, S_Baca);
+            AddMap(ManholeYataklamaByMaterial(sys, settings), new[] { L_Yataklama }, S_Baca);
             var boruYa = PipeSplitsByMaterial(sections, s => s.BeddingLayerSplits);
             if (boruYa.Count == 0) AddIfPos(boruYa, "", sys.Pipes.Sum(p => p.TotalBeddingVolume));
             AddMap(boruYa, new[] { L_Yataklama }, S_Boru);
@@ -339,7 +371,9 @@ namespace UrbanoMetraj.BoQ.Services
                              : (!string.IsNullOrEmpty(desc) ? desc : "DOLGU");
 
                 var band = Row.Band(title);
-                band.Add(BuildAgg(contribs, 0, poz, desc));
+                var total = BuildAgg(contribs, 0, poz, desc);
+                MarkPricedTotal(total);
+                band.Add(total);
                 dolgu.Add(band);
             }
         }
@@ -370,16 +404,35 @@ namespace UrbanoMetraj.BoQ.Services
             return total;
         }
 
+        // KAZI/DOLGU pricing rule: the user enters BF ONLY on the material total, so the
+        // same material is never priced twice (e.g. Baca-kazı and Boru-kazı sharing a soil).
+        // The top row of a material group is Priced (TUTAR = MİKTAR × BF); everything under
+        // it becomes quantity-only (MİKTAR shown, no pricing). The higher section/network
+        // totals still Σ these priced material totals.
+        private static void MarkPricedTotal(Row materialTotal)
+        {
+            if (materialTotal == null) return;
+            materialTotal.MoneyOverride = Money.Priced;
+            foreach (var c in materialTotal.Children) MarkQuantityOnly(c);
+        }
+
+        private static void MarkQuantityOnly(Row n)
+        {
+            n.MoneyOverride = Money.None;
+            foreach (var c in n.Children) MarkQuantityOnly(c);
+        }
+
         private static string DetailAck(string desc, Contrib c) => desc ?? "";
         private static string LabelAt(Contrib c, int d) => d < c.Path.Length ? c.Path[d] : "";
         private static int Rank(string label) => LabelRank.TryGetValue(label, out int r) ? r : 99;
 
         // ── MUAYENE: pieces aggregated per manhole nominal diameter ───────────
-        // Fixed pieces (Taban/Konik/Kapak…) get one row per exact height. VARIABLE
-        // rings (değişken — Gövde/Boyun) are summed into height BANDS of width bandM
-        // (a DWG-saved setting, default 0.5 m): every ring whose height falls in the
-        // same [n·band, (n+1)·band) interval is one line, with that interval appended to
-        // the catalog Açıklama (the piece's own description, per user request).
+        // Fixed-size pieces (Taban/Konik/Kapak and every catalog-size Gövde/Boyun ring the
+        // greedy fill picked) get one row per exact height. Only DEĞİŞKEN pieces (site-
+        // fitted, computed height — StackedPart.IsDegisken) are summed into height BANDS of
+        // width bandM (a DWG-saved setting, default 0.5 m): every değişken piece whose
+        // height falls in the same [n·band, (n+1)·band) interval is one line, with that
+        // interval appended to the catalog Açıklama (the piece's own description).
         private static void BuildManholes(Row parent, SystemBoQ sys, double bandM, CatalogAck ack)
         {
             var withStack = sys.Manholes.Where(m => m.StackPreCast != null
@@ -392,13 +445,13 @@ namespace UrbanoMetraj.BoQ.Services
                 string title = diaGrp.Key > 0 ? $"Ø{diaGrp.Key} MM İÇ ÇAPLI BACALAR" : "MUAYENE BACALARI";
                 var band = Row.Band(title);
 
-                var agg = new List<(string key, string poz, string ack, int count)>();
+                var agg = new List<(string key, string name, double h, string poz, string ack, int count)>();
                 foreach (var m in diaGrp)
                     foreach (var p in m.StackPreCast.Parts)
                     {
-                        bool isVar = p.IsVariableRing && bandM > 1e-6;
+                        bool isVar = p.IsDegisken && bandM > 1e-6;
                         // Live catalog Açıklama first, then the stored value, then a composed name.
-                        string catAck = ack.ForPiece(p.PartName)
+                        string catAck = ack.ForPiece(p.PartName, p.HeightM, p.IsDegisken)
                                      ?? (!string.IsNullOrWhiteSpace(p.Aciklama) ? p.Aciklama : null);
                         string baseAck = !string.IsNullOrWhiteSpace(catAck)
                             ? catAck
@@ -420,11 +473,16 @@ namespace UrbanoMetraj.BoQ.Services
 
                         string key = p.PartName + "|" + (p.PozNo ?? "") + "|" + hkey;
                         int i = agg.FindIndex(x => x.key == key);
-                        if (i < 0) agg.Add((key, p.PozNo ?? "", desc, p.Count));
-                        else       agg[i] = (agg[i].key, agg[i].poz, agg[i].ack, agg[i].count + p.Count);
+                        if (i < 0) agg.Add((key, p.PartName ?? "", p.HeightM, p.PozNo ?? "", desc, p.Count));
+                        else       agg[i] = (agg[i].key, agg[i].name, agg[i].h, agg[i].poz, agg[i].ack, agg[i].count + p.Count);
                     }
 
-                foreach (var a in agg)
+                // Keep every size of one piece name together (first-seen name order, then
+                // tallest first) instead of scattering them in discovery order.
+                var nameOrder = agg.Select(a => a.name).Distinct(StringComparer.OrdinalIgnoreCase)
+                                   .Select((n, idx) => (n: n, idx: idx))
+                                   .ToDictionary(t => t.n, t => t.idx, StringComparer.OrdinalIgnoreCase);
+                foreach (var a in agg.OrderBy(a => nameOrder[a.name]).ThenByDescending(a => a.h))
                     band.Add(Row.Content(a.poz, a.ack, a.count, "Adet", FmtCount));
                 if (band.HasContent) parent.Add(band);
             }
@@ -476,25 +534,51 @@ namespace UrbanoMetraj.BoQ.Services
             return d;
         }
 
-        private static Dictionary<string, double> ManholeGeriDolguByMaterial(SystemBoQ sys)
+        // Manhole volumes follow the same settings as the Metraj window's Özet
+        // (BoQResultsDialog.AddSummaryTab): nothing when Baca Kazı is off; net of the
+        // Bacalar Arası çakışma when Baca-Baca Kazı is on.
+        private static double ManholeNetExcav(ManholeItem m, BoQSettings s)
+        {
+            if (!s.BacaKaziHesapla) return 0;
+            return s.BacaBacaKaziHesapla
+                ? Math.Max(0, m.ExcavationVolume - m.ManholeVsManholeExcavDeducted)
+                : m.ExcavationVolume;
+        }
+
+        private static double ManholeNetBackfill(ManholeItem m, BoQSettings s)
+        {
+            if (!s.BacaKaziHesapla) return 0;
+            return s.BacaBacaKaziHesapla
+                ? Math.Max(0, m.BackfillVolume - m.ManholeVsManholeBackfillDeducted)
+                : m.BackfillVolume;
+        }
+
+        private static Dictionary<string, double> ManholeGeriDolguByMaterial(SystemBoQ sys, BoQSettings settings)
         {
             var d = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
             foreach (var m in sys.Manholes)
             {
+                double net = ManholeNetBackfill(m, settings);
+                if (net <= 1e-9) continue;
                 var splits = m.BackfillLayerSplits ?? new List<TrenchLayerSplit>();
                 double sum = splits.Sum(l => l.Volume);
                 if (sum > 1e-9)
+                {
+                    // Splits partition the gross BackfillVolume — scale them to the net.
+                    double k = net / sum;
                     foreach (var l in splits) { if (l.Volume <= 1e-9) continue;
-                        string mat = l.MaterialType ?? ""; d.TryGetValue(mat, out double v); d[mat] = v + l.Volume; }
-                else if (m.BackfillVolume > 1e-9)
-                    { d.TryGetValue("", out double v); d[""] = v + m.BackfillVolume; }
+                        string mat = l.MaterialType ?? ""; d.TryGetValue(mat, out double v); d[mat] = v + l.Volume * k; }
+                }
+                else
+                    { d.TryGetValue("", out double v); d[""] = v + net; }
             }
             return d;
         }
 
-        private static Dictionary<string, double> ManholeYataklamaByMaterial(SystemBoQ sys)
+        private static Dictionary<string, double> ManholeYataklamaByMaterial(SystemBoQ sys, BoQSettings settings)
         {
             var d = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            if (!settings.BacaKaziHesapla) return d;
             foreach (var m in sys.Manholes)
             {
                 if (m.SubBaseVolume <= 1e-9) continue;
@@ -583,18 +667,17 @@ namespace UrbanoMetraj.BoQ.Services
                 ws.Cells[r, 5].Style.VerticalAlignment = ExcelVerticalAlignment.Top;
             }
 
+            Money money = n.EffectiveMoney;
+
             if (n.Kind == Kind.Content)
             {
                 ws.Cells[r, 2].Value = n.Poz;
                 ws.Cells[r, 6].Value = n.Birim;
                 if (n.HasMiktar) ws.Cells[r, 7].Value = n.Miktar;
 
-                if (n.HasChildren)
+                if (money == Money.Priced)
                 {
-                    foreach (int col in MoneyCols) ws.Cells[r, col].Formula = SumChildren(n, col);
-                }
-                else
-                {
+                    // The single priced row: user fills BF, TUTAR = MİKTAR × BF.
                     ws.Cells[r, 12].Formula = $"{ColMalzBf}{r}+{ColIsciBf}{r}+{ColGgBf}{r}+{ColKarBf}{r}";
                     ws.Cells[r, 13].Formula = $"{ColMiktar}{r}*{ColMalzBf}{r}";
                     ws.Cells[r, 14].Formula = $"{ColMiktar}{r}*{ColIsciBf}{r}";
@@ -602,21 +685,27 @@ namespace UrbanoMetraj.BoQ.Services
                     ws.Cells[r, 16].Formula = $"{ColMiktar}{r}*{ColKarBf}{r}";
                     ws.Cells[r, 17].Formula = $"{ColMalzT}{r}+{ColIsciT}{r}+{ColGgT}{r}+{ColKarT}{r}";
                 }
+                else if (money == Money.Sum)
+                {
+                    foreach (int col in MoneyCols) ws.Cells[r, col].Formula = SumChildren(n, col);
+                }
+                // Money.None → quantity-only: MİKTAR shown, pricing columns left empty.
 
                 ExcelExportService.ApplyDataRowStyle(ws, r, ColCount, false);
                 ws.Cells[r, 6].Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
                 if (n.HasMiktar) ExcelExportService.SetNumericFormat(ws, r, 7, 7, n.MiktarFmt);
-                ExcelExportService.SetNumericFormat(ws, r, 8, ColCount, FmtPrice);
-                // Aggregate content rows read as bold totals.
+                if (money != Money.None) ExcelExportService.SetNumericFormat(ws, r, 8, ColCount, FmtPrice);
+                // Aggregate/total content rows read as bold.
                 if (n.HasChildren) ws.Cells[r, 5].Style.Font.Bold = true;
             }
             else
             {
-                foreach (int col in MoneyCols)
-                {
-                    ws.Cells[r, col].Formula = SumChildren(n, col);
-                    ws.Cells[r, col].Style.Numberformat.Format = FmtPrice;
-                }
+                if (money == Money.Sum)
+                    foreach (int col in MoneyCols)
+                    {
+                        ws.Cells[r, col].Formula = SumChildren(n, col);
+                        ws.Cells[r, col].Style.Numberformat.Format = FmtPrice;
+                    }
                 StyleBand(ws, r, n);
             }
 

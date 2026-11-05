@@ -73,6 +73,35 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.UI.ViewModels
 
         public PipeRangeRule Model => _model;
 
+        // ── Baca Aile (manhole family of this range) ──────────────────────────
+
+        private ComponentFamily _selectedManholeFamily;
+
+        /// <summary>Raised when the range's Baca Aile changes (the owner rebuilds the Taban list).</summary>
+        public event EventHandler ManholeFamilyChanged;
+
+        public ComponentFamily SelectedManholeFamily
+        {
+            get => _selectedManholeFamily;
+            set
+            {
+                if (!Set(ref _selectedManholeFamily, value)) return;
+                _model.ManholeFamilyId = value?.Id ?? Guid.Empty;
+                OnPropertyChanged(nameof(ManholeFamilyDisplay));
+                ManholeFamilyChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        public string ManholeFamilyDisplay => _selectedManholeFamily?.Name ?? "—";
+
+        /// <summary>Restores the family object from the model id (called by the owner, which has the catalog).</summary>
+        public void AttachManholeFamily(ComponentFamily family)
+        {
+            _selectedManholeFamily = family;
+            OnPropertyChanged(nameof(SelectedManholeFamily));
+            OnPropertyChanged(nameof(ManholeFamilyDisplay));
+        }
+
         // ── Numeric fallback (read/write when no catalog is attached) ─────────
 
         public double MinPipeMm

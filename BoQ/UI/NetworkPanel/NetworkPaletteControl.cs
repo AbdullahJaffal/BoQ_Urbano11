@@ -69,6 +69,11 @@ namespace UrbanoMetraj.BoQ.UI.NetworkPanel
             Background = BgBrush;
             BuildLayout();
             NetworkSessionManager.StateChanged += (s, e) => RefreshRows();
+
+            // Clicks only queue layer/NOD work; the drawing is updated in one batch
+            // once the user leaves the panel (see NetworkSessionManager.FlushPending).
+            MouseLeave += (s, e) => NetworkSessionManager.FlushPending();
+            NetworkSessionManager.IsPointerOverPanel = () => IsMouseOver;
         }
 
         // ── Public API ────────────────────────────────────────────────────────

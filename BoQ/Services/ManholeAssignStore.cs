@@ -50,13 +50,7 @@ namespace UrbanoMetraj.BoQ.Services
                 else
                     kataloglar = MakeSubDict(tr, boqRoot, K_CATALOGS);
 
-                if (kataloglar.Contains(K_ASSIGN))
-                {
-                    var old = (DBDictionary)tr.GetObject(
-                        kataloglar.GetAt(K_ASSIGN), OpenMode.ForWrite);
-                    EraseTree(tr, old);
-                    old.Erase();
-                }
+                RemoveEntry(tr, kataloglar, K_ASSIGN);
 
                 var dict = MakeSubDict(tr, kataloglar, K_ASSIGN);
                 MakeXRec(tr, dict, K_META,
@@ -160,16 +154,38 @@ namespace UrbanoMetraj.BoQ.Services
             return d;
         }
 
+        // BricsCAD (Teigha): an ERASED entry stays inside its DBDictionary — AutoCAD
+        // drops it — so a later Contains/GetAt/SetAt on the same key in the same
+        // transaction hits eWasErased (UT_BOQ_HESAPLA, 2026-11-05). Always REMOVE the
+        // entry from the dictionary first, then erase the object.
         private static void EraseTree(Transaction tr, DBDictionary dict)
         {
-            var ids = new List<ObjectId>();
-            foreach (DBDictionaryEntry e in dict) ids.Add(e.Value);
-            foreach (var id in ids)
+            var entries = new List<KeyValuePair<string, ObjectId>>();
+            foreach (DBDictionaryEntry e in dict)
+                entries.Add(new KeyValuePair<string, ObjectId>(e.Key, e.Value));
+            if (entries.Count > 0 && !dict.IsWriteEnabled) dict.UpgradeOpen();
+            foreach (var kv in entries)
             {
-                var obj = tr.GetObject(id, OpenMode.ForWrite);
+                dict.Remove(kv.Key);
+                if (kv.Value.IsNull || kv.Value.IsErased) continue;
+                var obj = tr.GetObject(kv.Value, OpenMode.ForWrite);
                 if (obj is DBDictionary sub) EraseTree(tr, sub);
                 obj.Erase();
             }
+        }
+
+        /// <summary>Removes <paramref name="key"/> from <paramref name="parent"/> and erases
+        /// what it held (the whole tree for a dictionary). No-op when the key is absent.</summary>
+        private static void RemoveEntry(Transaction tr, DBDictionary parent, string key)
+        {
+            if (parent == null || !parent.Contains(key)) return;
+            ObjectId id = parent.GetAt(key);
+            if (!parent.IsWriteEnabled) parent.UpgradeOpen();
+            parent.Remove(key);
+            if (id.IsNull || id.IsErased) return;
+            var obj = tr.GetObject(id, OpenMode.ForWrite);
+            if (obj is DBDictionary sub) EraseTree(tr, sub);
+            obj.Erase();
         }
 
         private static void MakeXRec(Transaction tr, DBDictionary parent,

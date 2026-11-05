@@ -60,6 +60,16 @@ namespace UrbanoMetraj.BoQ
             // BACA_KESIF_TABLOSU does. Safe to call repeatedly; needs only report.Systems/
             // SectionDebug, both fully restored by Load() above.
             ManholeExcavOverlapService.Compute(report);
+            // Mirror the Metraj window (BoQResultsDialog ctor + Recalculate) so the
+            // workbook shows exactly what the saved settings show on screen: Bacalar
+            // Arası çakışma volumes, then the pipe volumes for the saved Kazı/Dolgu
+            // overlap method with the pipe-inside-manhole-pit deduction when Baca Kazı
+            // is on. Manhole-side gating is applied in MetrajKesifExportService.
+            ManholeExcavOverlapService.ComputeManholeVsManhole(report);
+            BoQScenarioAggregator.Apply(report,
+                BoQScenarioAggregator.Map(settings.ExcavationOverlap),
+                BoQScenarioAggregator.Map(settings.BackfillOverlap),
+                settings.BacaKaziHesapla);
 
             string defaultName = string.IsNullOrWhiteSpace(doc.Name)
                 ? "Metraj_Kesif_Tablosu.xlsx"

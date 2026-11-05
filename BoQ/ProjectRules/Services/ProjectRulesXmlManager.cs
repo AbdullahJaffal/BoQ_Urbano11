@@ -41,7 +41,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                     new XAttribute("PipeFamilyId",    net.PipeFamilyId),
                     new XAttribute("PipeSinif",       net.PipeSinif       ?? ""),
                     new XAttribute("ManholeFamilyId", net.ManholeFamilyId),
-                    new XAttribute("SoilName",        net.SoilName        ?? ""));
+                    new XAttribute("SoilName",        net.SoilName        ?? ""),
+                    new XAttribute("IsBasincli",      net.IsBasincli.ToString().ToLowerInvariant()));
 
                 foreach (var r in net.ConnectionRules ?? new List<ConnectionRule>())
                 {
@@ -51,11 +52,11 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                     foreach (var t in r.Tiers ?? new List<ConnDepthTier>())
                     {
                         var tEl = new XElement("Tier",
-                            new XAttribute("MinDepthM",         t.MinDepthM.ToString("G", IC)),
-                            new XAttribute("MaxDepthM",         t.MaxDepthM.ToString("G", IC)),
-                            new XAttribute("ManholeDiameterMm", t.ManholeDiameterMm.ToString("G", IC)),
-                            new XAttribute("IsCastInSitu",      t.IsCastInSitu.ToString().ToLowerInvariant()),
-                            new XAttribute("Notes",             t.Notes ?? ""));
+                            new XAttribute("MinDepthM",    t.MinDepthM.ToString("G", IC)),
+                            new XAttribute("MaxDepthM",    t.MaxDepthM.ToString("G", IC)),
+                            new XAttribute("TabanId",      t.TabanId),
+                            new XAttribute("IsCastInSitu", t.IsCastInSitu.ToString().ToLowerInvariant()),
+                            new XAttribute("Notes",        t.Notes ?? ""));
                         foreach (var cc in t.ComponentConstraints ?? new List<ComponentTypeConstraint>())
                             tEl.Add(new XElement("CC",
                                 new XAttribute("Role", cc.Role.ToString()),
@@ -75,7 +76,7 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                 {
                     var rowEl = new XElement("PieceRow",
                         new XAttribute("FamilyId", row.ManholeFamilyId),
-                        new XAttribute("Diameter", row.ManholeDiameterMm.ToString("G", IC)));
+                        new XAttribute("TabanId",  row.TabanId));
                     foreach (var pe in row.Roles ?? new List<PieceExclusion>())
                         rowEl.Add(new XElement("Role",
                             new XAttribute("Role",    pe.Role.ToString()),
@@ -113,13 +114,16 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                 Guid pf, mf;
                 Guid.TryParse((string)el.Attribute("PipeFamilyId"),    out pf);
                 Guid.TryParse((string)el.Attribute("ManholeFamilyId"), out mf);
+                bool basincli;
+                bool.TryParse((string)el.Attribute("IsBasincli"), out basincli);   // false/absent for old templates
                 var net = new NetworkRule
                 {
                     SystemName      = (string)el.Attribute("SystemName") ?? "",
                     PipeFamilyId    = pf,
                     PipeSinif       = (string)el.Attribute("PipeSinif") ?? "",
                     ManholeFamilyId = mf,
-                    SoilName        = (string)el.Attribute("SoilName") ?? ""
+                    SoilName        = (string)el.Attribute("SoilName") ?? "",
+                    IsBasincli      = basincli
                 };
 
                 foreach (var fEl in el.Elements("TrenchFilter"))
@@ -146,11 +150,11 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                         bool.TryParse((string)tEl.Attribute("IsCastInSitu"), out cis);
                         var tier = new ConnDepthTier
                         {
-                            MinDepthM         = ParseD(tEl, "MinDepthM"),
-                            MaxDepthM         = ParseD(tEl, "MaxDepthM"),
-                            ManholeDiameterMm = ParseD(tEl, "ManholeDiameterMm"),
-                            IsCastInSitu      = cis,
-                            Notes             = (string)tEl.Attribute("Notes") ?? ""
+                            MinDepthM    = ParseD(tEl, "MinDepthM"),
+                            MaxDepthM    = ParseD(tEl, "MaxDepthM"),
+                            TabanId      = ParseG(tEl, "TabanId"),   // old diameter-only templates → Empty
+                            IsCastInSitu = cis,
+                            Notes        = (string)tEl.Attribute("Notes") ?? ""
                         };
                         foreach (var ccEl in tEl.Elements("CC"))
                         {
@@ -171,7 +175,8 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
                 {
                     Guid fid;
                     Guid.TryParse((string)rowEl.Attribute("FamilyId"), out fid);
-                    var row = new PieceExclusionRow { ManholeFamilyId = fid, ManholeDiameterMm = ParseD(rowEl, "Diameter") };
+                    var row = new PieceExclusionRow { ManholeFamilyId = fid, TabanId = ParseG(rowEl, "TabanId") };
+                    if (row.TabanId == Guid.Empty) continue;   // legacy diameter-keyed row — can't map to a Taban
                     foreach (var pEl in rowEl.Elements("Role"))
                     {
                         ComponentRole role;
@@ -200,6 +205,12 @@ namespace UrbanoMetraj.BoQ.ProjectRules.Services
             double d;
             return double.TryParse((string)el?.Attribute(attr),
                                    System.Globalization.NumberStyles.Float, IC, out d) ? d : 0;
+        }
+
+        private static Guid ParseG(XElement el, string attr)
+        {
+            Guid g;
+            return Guid.TryParse((string)el?.Attribute(attr), out g) ? g : Guid.Empty;
         }
 
         private static void EnsureDir(string filePath)

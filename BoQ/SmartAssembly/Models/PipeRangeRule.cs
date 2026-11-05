@@ -30,6 +30,11 @@ namespace UrbanoMetraj.BoQ.SmartAssembly.Models
         /// <summary>The PipeFamily this rule is scoped to.</summary>
         public Guid SelectedPipeFamilyId { get; set; }
 
+        /// <summary>The manhole ComponentFamily ("Baca Aile") of this pipe range: every precast tier's
+        /// Taban must come from it (one family per range — decision 2026-09-25). Guid.Empty on rules
+        /// saved before the field existed; see SmartAssemblyMasterCatalog.ResolveManholeFamilyId.</summary>
+        public Guid ManholeFamilyId { get; set; }
+
         /// <summary>Specific PipeDefinition that defines the lower diameter bound.</summary>
         public Guid MinPipeId { get; set; }
 

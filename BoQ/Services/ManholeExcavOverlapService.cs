@@ -146,7 +146,8 @@ namespace UrbanoMetraj.BoQ.Services
 
                     foreach (var (sdr, invertAtMh, dirX, dirY) in connectedPipes)
                     {
-                        // Trench polygon at each manhole slice elevation
+                        // Trench polygon at each manhole slice elevation (union for the
+                        // diagnostic "free" volume below only).
                         var trBot = TrenchRectAt(mh.X, mh.Y, zBottom,  invertAtMh,
                                                  sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
                         var trMid = TrenchRectAt(mh.X, mh.Y, zManhMid, invertAtMh,
@@ -154,125 +155,47 @@ namespace UrbanoMetraj.BoQ.Services
                         var trTop = TrenchRectAt(mh.X, mh.Y, zTop,     invertAtMh,
                                                  sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
 
-                        // Individual intersection with manhole at each slice
-                        double aBot = AreaOfIntersect(mhBot, trBot);
-                        double aMid = AreaOfIntersect(mhMid, trMid);
-                        double aTop = AreaOfIntersect(mhTop, trTop);
+                        // ── The pipe's REAL trench section (same as the pipe itself,
+                        // BoQParserService/V2 BuildGrossProfiles): one trapezoid whose
+                        // bottom is the outer pipe bottom − Yataklama, widening with the
+                        // slope from THAT bottom; zones are referenced to the OUTER pipe
+                        // bottom. (Before 2026-10-15 the trench was taken down to the pit
+                        // bottom at full width, from the inner invert, and the sand zones
+                        // with no slope — UT_BOQ_PIT_DIAG proved T ≠ F + S by 270.75 m³.)
+                        double wallM     = Math.Max(0, (sdr.PipeOuterDiamM - sdr.DiameterMm / 1000.0) / 2.0);
+                        double outerBtm  = invertAtMh - wallM;
+                        double trBottom  = outerBtm - sdr.TrBedHeight;
+                        double sandTop   = outerBtm + sdr.PipeOuterDiamM + sdr.TrSandOverPipe;
 
-                        double pipeVol = (Hmh / 6.0) * (aBot + 4.0 * aMid + aTop);
+                        double ZoneVol(double z0, double z1, double pitBottom, double rLo, double rHi)
+                            => PitTrenchSlice(mh, rotAngle, pitBottom, Math.Max(z0, rLo), Math.Min(z1, rHi),
+                                              trBottom, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY,
+                                              PipeReach(sdr));
+
+                        // Kazı basis: T is the exact sum of its three zones, so the pipe's
+                        // trench removed here = its bedding + surround + backfill removed.
+                        double bedVolDbg  = ZoneVol(trBottom, outerBtm, zBottom, zBottom, zTop);
+                        double surrVolDbg = ZoneVol(outerBtm, sandTop,  zBottom, zBottom, zTop);
+                        double bfVolDbg   = ZoneVol(sandTop,  zTop,     zBottom, zBottom, zTop);
+                        double pipeVol    = bedVolDbg + surrVolDbg + bfVolDbg;
                         string lbl = $"{sdr.StartNodeName}→{sdr.EndNodeName}";
 
                         // Accumulate into the section row for BoQ deduction.
-                        sdr.ManholeExcavDeducted += pipeVol;
+                        sdr.ManholeExcavDeducted    += pipeVol;
+                        sdr.ManholeBeddingDeducted  += bedVolDbg;
+                        sdr.ManholeSurroundDeducted += surrVolDbg;
+                        sdr.ManholeBackfillDeducted += bfVolDbg;
+                        mhBeddingSum                += bedVolDbg;
+                        mhSurroundSum               += surrVolDbg;
 
-                        // Per-pipe bedding/surround/backfill overlap — 0 unless the
-                        // corresponding Z-range below actually overlaps this manhole's
-                        // excavation span (populated further down, diagnostic only).
-                        double bedVolDbg = 0, surrVolDbg = 0, bfVolDbg = 0;
-
-                        // ── Bedding overlap ───────────────────────────────────
-                        // Bedding occupies Z: [invertAtMh − TrBedHeight, invertAtMh].
-                        // Fixed width TrWidth (no slope) → reuse TrenchRectAt with slopeRatio=0.
-                        double bedZBot = invertAtMh - sdr.TrBedHeight;
-                        double bedZTop = invertAtMh;
-                        double bedZLo  = Math.Max(zBottom, bedZBot);
-                        double bedZHi  = Math.Min(zTop,    bedZTop);
-                        if (bedZHi - bedZLo > 1e-6)
-                        {
-                            double bedZMid = (bedZLo + bedZHi) * 0.5;
-                            double Hbed    = bedZHi - bedZLo;
-                            var bBot = TrenchRectAt(mh.X, mh.Y, bedZLo,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                            var bMid = TrenchRectAt(mh.X, mh.Y, bedZMid, invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                            var bTop = TrenchRectAt(mh.X, mh.Y, bedZHi,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                            double abBot = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bedZLo,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bBot);
-                            double abMid = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bedZMid, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bMid);
-                            double abTop = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bedZHi,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bTop);
-                            double bedVol = (Hbed / 6.0) * (abBot + 4.0 * abMid + abTop);
-                            sdr.ManholeBeddingDeducted += bedVol;
-                            mhBeddingSum               += bedVol;
-                            bedVolDbg                    = bedVol;
-                        }
-
-                        // ── Surround overlap ──────────────────────────────────
-                        // Surround occupies Z: [invertAtMh, invertAtMh + PipeOD + TrSandOverPipe].
-                        // Fixed width TrWidth (no slope).
-                        double surrZBot = invertAtMh;
-                        double surrZTop = invertAtMh + sdr.PipeOuterDiamM + sdr.TrSandOverPipe;
-                        double surrZLo  = Math.Max(zBottom, surrZBot);
-                        double surrZHi  = Math.Min(zTop,    surrZTop);
-                        if (surrZHi - surrZLo > 1e-6)
-                        {
-                            double surrZMid = (surrZLo + surrZHi) * 0.5;
-                            double Hsurr    = surrZHi - surrZLo;
-                            var sBot = TrenchRectAt(mh.X, mh.Y, surrZLo,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                            var sMid = TrenchRectAt(mh.X, mh.Y, surrZMid, invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                            var sTop = TrenchRectAt(mh.X, mh.Y, surrZHi,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                            double asBot = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, surrZLo,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sBot);
-                            double asMid = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, surrZMid, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sMid);
-                            double asTop = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, surrZHi,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sTop);
-                            double surrVol = (Hsurr / 6.0) * (asBot + 4.0 * asMid + asTop);
-                            sdr.ManholeSurroundDeducted += surrVol;
-                            mhSurroundSum               += surrVol;
-                            surrVolDbg                    = surrVol;
-                        }
-
-                        // ── Bedding/Surround overlap, Dolgu-basis range ───────
-                        // Same zones (bedding/surround are invert-referenced, not
-                        // top-referenced) but clipped to [zBottomDolgu, zTopDolgu]
-                        // instead of [zBottom, zTop] — recomputed rather than reused,
-                        // since the two ranges can differ. Local-only (not written to
-                        // sdr.ManholeBeddingDeducted/ManholeSurroundDeducted, which
-                        // stay Kazı-only diagnostics).
+                        // ── Bedding/Surround, Dolgu-basis range ───────────────
+                        // Same zones (invert-referenced, not top-referenced) clipped to
+                        // the manhole's own Dolgu pit [zBottomDolgu, zTopDolgu] — these
+                        // are what the manhole's Geri Dolgu gives up to the pipe's sand.
                         if (dolguGeomValid)
                         {
-                            double bedZLoD = Math.Max(zBottomDolgu, bedZBot);
-                            double bedZHiD = Math.Min(zTopDolgu,    bedZTop);
-                            if (bedZHiD - bedZLoD > 1e-6)
-                            {
-                                double bedZMidD = (bedZLoD + bedZHiD) * 0.5;
-                                double HbedD    = bedZHiD - bedZLoD;
-                                var bBotD = TrenchRectAt(mh.X, mh.Y, bedZLoD,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                                var bMidD = TrenchRectAt(mh.X, mh.Y, bedZMidD, invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                                var bTopD = TrenchRectAt(mh.X, mh.Y, bedZHiD,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                                double abBotD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, bedZLoD,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bBotD);
-                                double abMidD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, bedZMidD, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bMidD);
-                                double abTopD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, bedZHiD,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), bTopD);
-                                mhBeddingSumDolgu += (HbedD / 6.0) * (abBotD + 4.0 * abMidD + abTopD);
-                            }
-
-                            double surrZLoD = Math.Max(zBottomDolgu, surrZBot);
-                            double surrZHiD = Math.Min(zTopDolgu,    surrZTop);
-                            if (surrZHiD - surrZLoD > 1e-6)
-                            {
-                                double surrZMidD = (surrZLoD + surrZHiD) * 0.5;
-                                double HsurrD    = surrZHiD - surrZLoD;
-                                var sBotD = TrenchRectAt(mh.X, mh.Y, surrZLoD,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                                var sMidD = TrenchRectAt(mh.X, mh.Y, surrZMidD, invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                                var sTopD = TrenchRectAt(mh.X, mh.Y, surrZHiD,  invertAtMh, sdr.TrWidth, 0.0, dirX, dirY);
-                                double asBotD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, surrZLoD,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sBotD);
-                                double asMidD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, surrZMidD, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sMidD);
-                                double asTopD = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottomDolgu, surrZHiD,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), sTopD);
-                                mhSurroundSumDolgu += (HsurrD / 6.0) * (asBotD + 4.0 * asMidD + asTopD);
-                            }
-                        }
-
-                        // ── Backfill overlap ──────────────────────────────────
-                        // Backfill occupies Z: [invertAtMh + PipeOD + TrSandOverPipe, zTop].
-                        // Width grows with SlopeRatio (same as excavation trench).
-                        double bfZLo = Math.Max(zBottom, invertAtMh + sdr.PipeOuterDiamM + sdr.TrSandOverPipe);
-                        double bfZHi = zTop;
-                        if (bfZHi - bfZLo > 1e-6)
-                        {
-                            double bfZMid = (bfZLo + bfZHi) * 0.5;
-                            double Hbf    = bfZHi - bfZLo;
-                            var fBot = TrenchRectAt(mh.X, mh.Y, bfZLo,  invertAtMh, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
-                            var fMid = TrenchRectAt(mh.X, mh.Y, bfZMid, invertAtMh, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
-                            var fTop = TrenchRectAt(mh.X, mh.Y, bfZHi,  invertAtMh, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY);
-                            double afBot = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bfZLo,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), fBot);
-                            double afMid = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bfZMid, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), fMid);
-                            double afTop = AreaOfIntersect(ManholeSquareAt(mh.X, mh.Y, zBottom, bfZHi,  rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio), fTop);
-                            bfVolDbg = (Hbf / 6.0) * (afBot + 4.0 * afMid + afTop);
-                            sdr.ManholeBackfillDeducted += bfVolDbg;
+                            mhBeddingSumDolgu  += ZoneVol(trBottom, outerBtm, zBottomDolgu, zBottomDolgu, zTopDolgu);
+                            mhSurroundSumDolgu += ZoneVol(outerBtm, sandTop,  zBottomDolgu, zBottomDolgu, zTopDolgu);
                         }
 
                         perPipeVolumes.Add((lbl, pipeVol, bedVolDbg, surrVolDbg, bfVolDbg));
@@ -515,8 +438,8 @@ namespace UrbanoMetraj.BoQ.Services
                     mLow.Mh.GeoLower  = loLow;  mLow.Mh.GeoUpper  = upLow;
 
                     // Volumes
-                    double volHigh = EffectiveVolume(loHigh, upHigh);
-                    double volLow  = EffectiveVolume(loLow,  upLow);
+                    double volHigh = EffectiveVolume(loHigh, upHigh) + SlabAboveVolume(mHigh, zTopEff);
+                    double volLow  = EffectiveVolume(loLow,  upLow)  + SlabAboveVolume(mLow,  zTopEff);
 
                     // Bacalar Arası Kazı Çakışması (user directive 2026-07-07): accumulate
                     // this pair's contribution — additive across every neighbour a manhole
@@ -606,11 +529,16 @@ namespace UrbanoMetraj.BoQ.Services
                     var (loHigh, upHigh) = BuildGeoSegments(mHigh, mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: true);
                     var (loLow,  upLow)  = BuildGeoSegments(mLow,  mHigh, mLow, zTouch, zTopEff, halfPlane, isHigh: false);
 
-                    double volHighD = EffectiveVolume(loHigh, upHigh);
-                    double volLowD  = EffectiveVolume(loLow,  upLow);
+                    double volHighD = EffectiveVolume(loHigh, upHigh) + SlabAboveVolume(mHigh, zTopEff);
+                    double volLowD  = EffectiveVolume(loLow,  upLow)  + SlabAboveVolume(mLow,  zTopEff);
 
-                    double deductedHigh = Math.Max(0, mHigh.Mh.BackfillVolume - volHighD);
-                    double deductedLow  = Math.Max(0, mLow.Mh.BackfillVolume  - volLowD);
+                    // Geometric overlap = gross Dolgu-basis pit − its post-split volume,
+                    // exactly mirroring the Kazı pass (ExcavationVolume − volHigh).
+                    // NOT BackfillVolume − vol: BackfillVolume is already NET of
+                    // Structure/SubBase/pipe bedding+surround, so that mixed net−gross
+                    // difference under-deducted the overlap by those volumes per pair.
+                    double deductedHigh = Math.Max(0, mHigh.Mh.DolguBasisVolume - volHighD);
+                    double deductedLow  = Math.Max(0, mLow.Mh.DolguBasisVolume  - volLowD);
                     mHigh.Mh.ManholeVsManholeBackfillDeducted += deductedHigh;
                     mLow.Mh.ManholeVsManholeBackfillDeducted  += deductedLow;
 
@@ -835,6 +763,18 @@ namespace UrbanoMetraj.BoQ.Services
         /// Effective excavation volume = lower segment (full raw) + upper segment
         /// (exclusive zone + this manhole's Inside share).
         /// </summary>
+        // The pair's segments stop at zTopEff = min(ZTop) — above the shallower pit's
+        // top there is no neighbour, so the taller pit keeps that slab whole. Without
+        // adding it back, "gross − effective" counted the slab as overlap (deducted).
+        private static double SlabAboveVolume(MhInfo self, double zTopEff)
+        {
+            double h = self.ZTop - zTopEff;
+            if (h <= 1e-6) return 0;
+            double Side(double z) => self.BaseSideM + 2.0 * (z - self.ZBottom) * self.SlopeRatio;
+            double s0 = Side(zTopEff), s1 = Side(self.ZTop), sm = Side((zTopEff + self.ZTop) * 0.5);
+            return (h / 6.0) * (s0 * s0 + 4.0 * sm * sm + s1 * s1);
+        }
+
         private static double EffectiveVolume(ManholeGeoSegment lower, ManholeGeoSegment upper)
         {
             return SegmentVolume(lower, includeInside: false) +
@@ -905,6 +845,255 @@ namespace UrbanoMetraj.BoQ.Services
             var polyB = ManholeSquareAt(b.Mh.X, b.Mh.Y, b.ZBottom, z, b.RotAngle, b.BaseSideM, b.SlopeRatio);
             if (polyA == null || polyB == null) return 0;
             return ClipperGeo.Area(ClipperGeo.Intersect(polyA, polyB));
+        }
+
+        /// <summary>
+        /// The trench rectangle runs from the manhole centre along the pipe for the pipe's
+        /// own length (it ends at the other manhole's centre). Was a fixed 10 m, which on a
+        /// pipe shorter than the pit counted trench beyond the pipe's end (UT_BOQ_PIT_DIAG:
+        /// 0.048 m³ on 31 pipes, 2026-10-18).
+        /// </summary>
+        private static double PipeReach(SectionDebugRow sdr)
+        {
+            double dx = sdr.EndX - sdr.StartX, dy = sdr.EndY - sdr.StartY;
+            double L = Math.Sqrt(dx * dx + dy * dy);
+            return L > 1e-6 ? L : 10.0;
+        }
+
+        /// <summary>
+        /// Volume of (manhole pit) ∩ (pipe trench) between z0 and z1 — Simpson's 1/3 rule
+        /// on one Z-zone. The trench is the pipe's real trapezoid: width
+        /// trWidth + 2·(z − trBottom)·slope, nothing below trBottom. Within one zone the
+        /// intersected area is (close to) quadratic in z, so Simpson is (near-)exact.
+        /// </summary>
+        private static double PitTrenchSlice(
+            ManholeItem mh, double rotAngle, double pitBottom, double z0, double z1,
+            double trBottom, double trWidth, double slope, double dirX, double dirY, double reach = 10.0)
+        {
+            z0 = Math.Max(z0, trBottom);
+            if (z1 - z0 <= 1e-6) return 0;
+            double A(double z) => AreaOfIntersect(
+                ManholeSquareAt(mh.X, mh.Y, pitBottom, z, rotAngle, mh.ExcavBaseSideM, mh.ExcavSlopeRatio),
+                TrenchRectAt(mh.X, mh.Y, z, trBottom, trWidth, slope, dirX, dirY, reach));
+            return ((z1 - z0) / 6.0) * (A(z0) + 4.0 * A((z0 + z1) * 0.5) + A(z1));
+        }
+
+        // =====================================================================
+        // Diagnostic (read-only) — pipe-in-pit consistency, UT_BOQ_PIT_DIAG
+        // =====================================================================
+
+        /// <summary>One pipe end inside one manhole pit — every volume re-derived with the
+        /// exact geometry Compute() uses.</summary>
+        public sealed class PitDiagRow
+        {
+            public string System, Manhole, Pipe;
+            public double ZPitBottom, ZTop, Invert, OuterBottom, TrenchBottom, SandTop;
+            public double T;          // trench ∩ pit (→ pipe ManholeExcavDeducted)
+            public double F;          // backfill zone (→ pipe ManholeBackfillDeducted)
+            public double BedK, SurK; // bedding/surround zones, Kazı pit
+            public double BedD, SurD; // bedding/surround zones, Dolgu pit (→ subtracted from manhole fill)
+            public double TFine;      // T with a 24-interval composite Simpson (integration-error check)
+        }
+
+        /// <summary>
+        /// Re-derives, WITHOUT changing the report, every pipe-in-pit volume Compute()
+        /// produces. Identity being tested: T = F + (bedding + surround of the Dolgu pit);
+        /// anything else lowers Σkazı − Σdolgu.
+        /// </summary>
+        public static List<PitDiagRow> DiagnosePipeInPit(BoQReport report)
+        {
+            var rows = new List<PitDiagRow>();
+            if (report?.Systems == null || report.SectionDebug == null) return rows;
+
+            var outlets = report.SectionDebug.Where(s => s.StartNodeName != null)
+                .GroupBy(s => s.StartNodeName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+            var inlets = report.SectionDebug.Where(s => s.EndNodeName != null)
+                .GroupBy(s => s.EndNodeName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var sys in report.Systems)
+                foreach (var mh in sys.Manholes)
+                {
+                    if (mh.ExcavationDepth <= 1e-6) continue;
+                    double zTop = mh.ZKazi, zBottom = zTop - mh.ExcavationDepth;
+                    if (zTop - zBottom <= 1e-6) continue;
+                    double rot = ComputeRotationAngle(mh, outlets, inlets);
+
+                    bool   dolguValid   = !mh.DolguInvalid && mh.DolguFinalDepth > 1e-6;
+                    double zTopDolgu    = mh.ZDolgu;
+                    double zBottomDolgu = zTopDolgu - mh.DolguFinalDepth;
+
+                    var pipes = new List<(SectionDebugRow sdr, double inv, double dx, double dy)>();
+                    if (outlets.TryGetValue(mh.NodeName ?? "", out var outList))
+                        foreach (var s in outList)
+                        {
+                            double dx = s.EndX - s.StartX, dy = s.EndY - s.StartY, len = Math.Sqrt(dx * dx + dy * dy);
+                            if (len >= 1e-6) pipes.Add((s, s.InvertStart, dx / len, dy / len));
+                        }
+                    if (inlets.TryGetValue(mh.NodeName ?? "", out var inList))
+                        foreach (var s in inList)
+                        {
+                            double dx = s.StartX - s.EndX, dy = s.StartY - s.EndY, len = Math.Sqrt(dx * dx + dy * dy);
+                            if (len >= 1e-6) pipes.Add((s, s.InvertEnd, dx / len, dy / len));
+                        }
+
+                    foreach (var (sdr, inv, dirX, dirY) in pipes)
+                    {
+                        double wallM    = Math.Max(0, (sdr.PipeOuterDiamM - sdr.DiameterMm / 1000.0) / 2.0);
+                        double outerBtm = inv - wallM;
+                        double trBottom = outerBtm - sdr.TrBedHeight;
+                        double sandTop  = outerBtm + sdr.PipeOuterDiamM + sdr.TrSandOverPipe;
+
+                        double Zone(double z0, double z1, double pitBottom, double rLo, double rHi)
+                            => PitTrenchSlice(mh, rot, pitBottom, Math.Max(z0, rLo), Math.Min(z1, rHi),
+                                              trBottom, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY,
+                                              PipeReach(sdr));
+
+                        var r = new PitDiagRow
+                        {
+                            System = sys.SystemName, Manhole = mh.NodeName,
+                            Pipe = $"{sdr.StartNodeName}->{sdr.EndNodeName}",
+                            ZPitBottom = zBottom, ZTop = zTop, Invert = inv,
+                            OuterBottom = outerBtm, TrenchBottom = trBottom, SandTop = sandTop,
+                        };
+                        r.BedK = Zone(trBottom, outerBtm, zBottom, zBottom, zTop);
+                        r.SurK = Zone(outerBtm, sandTop,  zBottom, zBottom, zTop);
+                        r.F    = Zone(sandTop,  zTop,     zBottom, zBottom, zTop);
+                        r.T    = r.BedK + r.SurK + r.F;
+                        if (dolguValid)
+                        {
+                            r.BedD = Zone(trBottom, outerBtm, zBottomDolgu, zBottomDolgu, zTopDolgu);
+                            r.SurD = Zone(outerBtm, sandTop,  zBottomDolgu, zBottomDolgu, zTopDolgu);
+                        }
+
+                        // Fine composite Simpson of T over the real trench height (24 intervals).
+                        double lo = Math.Max(zBottom, trBottom);
+                        if (zTop - lo > 1e-6)
+                        {
+                            const int N = 24;
+                            double h = (zTop - lo) / N, acc = 0;
+                            for (int k = 0; k <= N; k++)
+                            {
+                                double w = (k == 0 || k == N) ? 1 : (k % 2 == 1 ? 4 : 2);
+                                double z = lo + k * h;
+                                acc += w * AreaOfIntersect(
+                                    ManholeSquareAt(mh.X, mh.Y, zBottom, z, rot, mh.ExcavBaseSideM, mh.ExcavSlopeRatio),
+                                    TrenchRectAt(mh.X, mh.Y, z, trBottom, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY));
+                            }
+                            r.TFine = acc * h / 3.0;
+                        }
+
+                        rows.Add(r);
+                    }
+                }
+            return rows;
+        }
+
+        /// <summary>One pipe between two manholes — the two pipe-in-pit suspects of
+        /// KAZI_DOLGU_DOGRULAMA.md §5.2, measured read-only.</summary>
+        public sealed class DoublePitRow
+        {
+            public string System, Pipe, MhStart, MhEnd;
+            public double Length;
+            /// <summary>Pipe trench lying in BOTH pits (deducted from the pipe once per pit),
+            /// measured with the start-end / end-end trench section.</summary>
+            public double BothPitsFromStart, BothPitsFromEnd;
+            /// <summary>Trench counted inside a pit BEYOND the pipe's far end (the 10 m reach
+            /// overshoots a pipe shorter than the pit), start / end manhole.</summary>
+            public double OvershootStart, OvershootEnd;
+        }
+
+        /// <summary>
+        /// READ-ONLY. For every pipe whose both end manholes have a pit: (1) the trench
+        /// volume inside pitStart ∩ pitEnd, (2) the trench volume Compute() takes beyond
+        /// the pipe's own length (Reach = 10 m vs the real length). Neither changes data.
+        /// </summary>
+        public static List<DoublePitRow> DiagnoseDoublePit(BoQReport report)
+        {
+            var rows = new List<DoublePitRow>();
+            if (report?.Systems == null || report.SectionDebug == null) return rows;
+
+            var outlets = report.SectionDebug.Where(s => s.StartNodeName != null)
+                .GroupBy(s => s.StartNodeName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+            var inlets = report.SectionDebug.Where(s => s.EndNodeName != null)
+                .GroupBy(s => s.EndNodeName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+            var mhByKey = new Dictionary<string, ManholeItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var sys in report.Systems)
+                foreach (var m in sys.Manholes)
+                    if (m.NodeName != null) mhByKey[sys.SystemName + "|" + m.NodeName] = m;
+
+            foreach (var sdr in report.SectionDebug)
+            {
+                mhByKey.TryGetValue(sdr.SystemName + "|" + sdr.StartNodeName, out var mA);
+                mhByKey.TryGetValue(sdr.SystemName + "|" + sdr.EndNodeName,   out var mB);
+                double dx = sdr.EndX - sdr.StartX, dy = sdr.EndY - sdr.StartY, L = Math.Sqrt(dx * dx + dy * dy);
+                if (L < 1e-6) continue;
+                double ux = dx / L, uy = dy / L;
+
+                double wallM = Math.Max(0, (sdr.PipeOuterDiamM - sdr.DiameterMm / 1000.0) / 2.0);
+                double TrBottom(double inv) => inv - wallM - sdr.TrBedHeight;
+
+                bool PitOk(ManholeItem m) => m != null && m.ExcavationDepth > 1e-6;
+                var row = new DoublePitRow
+                {
+                    System = sdr.SystemName, Pipe = $"{sdr.StartNodeName}->{sdr.EndNodeName}",
+                    MhStart = sdr.StartNodeName, MhEnd = sdr.EndNodeName, Length = L
+                };
+
+                // (2) overshoot at each end: same zone integration as Compute, reach 10 m vs L.
+                double Overshoot(ManholeItem m, double inv, double dirX, double dirY)
+                {
+                    if (!PitOk(m)) return 0;
+                    double zTop = m.ZKazi, zBot = zTop - m.ExcavationDepth;
+                    double rot = ComputeRotationAngle(m, outlets, inlets);
+                    double trb = TrBottom(inv);
+                    // What Compute now takes (PipeReach) vs the pipe's exact length — 0 once fixed.
+                    double full = PitTrenchSlice(m, rot, zBot, zBot, zTop, trb, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY, PipeReach(sdr));
+                    double cut  = PitTrenchSlice(m, rot, zBot, zBot, zTop, trb, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY, L);
+                    return Math.Max(0, full - cut);
+                }
+                row.OvershootStart = Overshoot(mA, sdr.InvertStart,  ux,  uy);
+                row.OvershootEnd   = Overshoot(mB, sdr.InvertEnd,   -ux, -uy);
+
+                // (1) trench inside BOTH pits (composite Simpson, 24 intervals).
+                if (PitOk(mA) && PitOk(mB))
+                {
+                    double zTopA = mA.ZKazi, zBotA = zTopA - mA.ExcavationDepth, rotA = ComputeRotationAngle(mA, outlets, inlets);
+                    double zTopB = mB.ZKazi, zBotB = zTopB - mB.ExcavationDepth, rotB = ComputeRotationAngle(mB, outlets, inlets);
+
+                    double Both(ManholeItem anchor, double inv, double dirX, double dirY)
+                    {
+                        double trb = TrBottom(inv);
+                        double lo = Math.Max(Math.Max(zBotA, zBotB), trb), hi = Math.Min(zTopA, zTopB);
+                        if (hi - lo <= 1e-6) return 0;
+                        double Area(double z)
+                        {
+                            var sqA = ManholeSquareAt(mA.X, mA.Y, zBotA, z, rotA, mA.ExcavBaseSideM, mA.ExcavSlopeRatio);
+                            var sqB = ManholeSquareAt(mB.X, mB.Y, zBotB, z, rotB, mB.ExcavBaseSideM, mB.ExcavSlopeRatio);
+                            var tr  = TrenchRectAt(anchor.X, anchor.Y, z, trb, sdr.TrWidth, sdr.SlopeRatio, dirX, dirY, L);
+                            if (sqA == null || sqB == null || tr == null) return 0;
+                            var ab = ClipperGeo.Intersect(sqA, sqB);
+                            if (ab.Count == 0) return 0;
+                            return ClipperGeo.Area(ClipperGeo.Intersect(ab, new List<List<double[]>> { tr }));
+                        }
+                        const int N = 24;
+                        double h = (hi - lo) / N, acc = 0;
+                        for (int k = 0; k <= N; k++)
+                            acc += ((k == 0 || k == N) ? 1 : (k % 2 == 1 ? 4 : 2)) * Area(lo + k * h);
+                        return acc * h / 3.0;
+                    }
+                    row.BothPitsFromStart = Both(mA, sdr.InvertStart,  ux,  uy);
+                    row.BothPitsFromEnd   = Both(mB, sdr.InvertEnd,   -ux, -uy);
+                }
+
+                if (row.BothPitsFromStart + row.BothPitsFromEnd + row.OvershootStart + row.OvershootEnd > 1e-9)
+                    rows.Add(row);
+            }
+            return rows;
         }
 
         // =====================================================================
@@ -1061,7 +1250,7 @@ namespace UrbanoMetraj.BoQ.Services
             double cx, double cy,
             double z, double invertAtMh,
             double baseTrenchWidth, double slopeRatio,
-            double dirX, double dirY)
+            double dirX, double dirY, double reach = 10.0)
         {
             double rise  = Math.Max(0, z - invertAtMh);
             double halfW = (baseTrenchWidth + 2.0 * rise * slopeRatio) * 0.5;
@@ -1069,7 +1258,7 @@ namespace UrbanoMetraj.BoQ.Services
 
             // Perpendicular (90° CCW from dir)
             double perpX = -dirY, perpY = dirX;
-            const double Reach = 10.0;  // m — safely beyond any manhole footprint
+            double Reach = reach;   // m — default 10: safely beyond any manhole footprint
 
             // CCW: near-left → far-left → far-right → near-right
             return new List<double[]>

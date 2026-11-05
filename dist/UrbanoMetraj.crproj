@@ -12,7 +12,15 @@
     anti tamper -> method bodies encrypted; patching the verify branch corrupts
                    the image instead of cleanly bypassing.
     anti ildasm -> discourages ILDASM.
-  Only UrbanoMetraj.dll is processed. EPPlus.dll (third-party) is left untouched.
+
+  constants is REMOVED for UrbanoMetraj.dll (nested module rule below). ConfuserEx's
+  constants protection rebuilds static array initializers via System.Buffer.BlockCopy,
+  which throws "Object must be an array of primitives. Parameter name: dest" on arrays
+  of ENUM — crashing BoQOverlapResolver..cctor (static TiePreference[]/TrenchLayerType[])
+  with a TypeInitializationException at UT_BOQ_HESAPLA on every machine. The API URL /
+  RSA key / licence strings live in UrbanoLicensing.dll, which KEEPS constants.
+
+  EPPlus.dll (third-party) is left untouched.
 
   NOTE: comments must stay OUTSIDE <project> — ConfuserEx's loader trips on
   comment/probePath nodes interleaved with the element sequence.
@@ -27,6 +35,10 @@
     <protection id="anti tamper" />
   </rule>
   <module path="UrbanoLicensing.dll" />
-  <module path="UrbanoMetraj.dll" />
+  <module path="UrbanoMetraj.dll">
+    <rule pattern="true" inherit="true">
+      <protection id="constants" action="remove" />
+    </rule>
+  </module>
   <probePath>C:\Program Files\Bricsys\BricsCAD V23 en_US</probePath>
 </project>

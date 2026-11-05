@@ -56,6 +56,20 @@ namespace UrbanoMetraj.BoQ.ManholeExcavationCatalog.Models
         /// </summary>
         public double SlopeRatio { get; set; }
 
+        /// <summary>
+        /// DISPLAY-ONLY reciprocal of <see cref="SlopeRatio"/> for the "Şev (1:x)" grid column: the
+        /// user enters x (the vertical run per 1 m of horizontal spread, i.e. slope = 1/x), while the
+        /// math + XML persistence keep <see cref="SlopeRatio"/> = H:V decimal unchanged. Not
+        /// serialized (the XML managers write SlopeRatio only). 0 ⇄ 0 = vertical wall; the guards
+        /// (>0) prevent any divide-by-zero.
+        /// </summary>
+        [System.Xml.Serialization.XmlIgnore]
+        public double SevX
+        {
+            get => SlopeRatio > 0 ? 1.0 / SlopeRatio : 0;
+            set => SlopeRatio = value > 0 ? 1.0 / value : 0;
+        }
+
         /// <summary>True when a trench box (iksa) is required for this depth band.</summary>
         public bool RequiresShoring { get; set; }
 
