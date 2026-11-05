@@ -291,7 +291,7 @@ namespace UrbanoMetraj.BoQ.Sections.UI
                 string extra = _vm.Session.FailedCuts.Count > 0 ? $"\n⚠ {_vm.Session.FailedCuts.Count} kesit üretilemedi." : "";
                 if (MessageBox.Show(this, $"{cuts.Count} kesit yazıldı:\n{dlg.FileName}{extra}\n\nDosya açılsın mı?", "Excel'e aktar",
                                     MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
-                    System.Diagnostics.Process.Start(dlg.FileName);
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dlg.FileName) { UseShellExecute = true });   // .NET 8: shell open must be explicit
             }
             catch (Exception ex)
             {
