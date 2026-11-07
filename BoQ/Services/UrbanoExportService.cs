@@ -72,6 +72,11 @@ namespace UrbanoMetraj.BoQ.Services
 
         // ── Dialog / button names ─────────────────────────────────────────────
         private const string MainWindowTitle  = "Urbano XML'e topoloji ihraç";
+        // Softplan 11.3 (BricsCAD V24 build) renamed the dialog "Urbano XML'e topoloji ihraç"
+        // -> "Urbano XML'e ihraç" (2026-11-07). Accept both so ONE build serves every Urbano /
+        // Softplan version; the dialog's contents (path box, system check boxes, "Dışa aktar")
+        // are unchanged.
+        private static readonly string[] AltWindowTitles = { "Urbano XML'e ihraç" };
         private const string ExportButtonName = "Dışa aktar";
         private const string OkButtonName     = "Tamam";
 
@@ -192,6 +197,9 @@ namespace UrbanoMetraj.BoQ.Services
                 if (ct.IsCancellationRequested) return IntPtr.Zero;
 
                 IntPtr hwnd = FindWindow(null, title);
+                if (hwnd == IntPtr.Zero && title == MainWindowTitle)
+                    foreach (string alt in AltWindowTitles)
+                        if ((hwnd = FindWindow(null, alt)) != IntPtr.Zero) break;
                 if (hwnd != IntPtr.Zero) return hwnd;
 
                 Dbg($"  Phase 1 poll {i + 1}/{maxIterations} — window not found yet...");
