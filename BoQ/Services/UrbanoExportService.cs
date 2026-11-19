@@ -114,7 +114,7 @@ namespace UrbanoMetraj.BoQ.Services
         // Phase 3 – wait for "Tamam" success popup   : 20 × 500 ms = 10 s
         private const int PopupPollCount   = 20;
         // Phase 5 – wait for XML file to be ready    : 20 × 500 ms = 10 s
-        private const int FilePollCount    = 20;
+        private const int FilePollCount    = 60;   // 30 s (large drawings; file must stop growing)
         private const int PollMs           = 500;
 
         private readonly Editor _editor;
@@ -471,44 +471,52 @@ namespace UrbanoMetraj.BoQ.Services
         // Phase 4 — Wait for XML file to be ready
         // =====================================================================
 
-        private static bool WaitForFileReady(
-            string path, int maxIterations, CancellationToken ct)
+        // Ready = exists, non-empty, the SAME length for 3 consecutive polls, and the last
+        // non-whitespace byte is '>' (closed root element). "Exists + length > 0" alone let
+        // a still-growing file through (newer Softplan writes it more slowly) -> truncated
+        // XML -> "XML okunamadı" (2026-11-19). On timeout an existing file is still used;
+        // the XML loader then reports exactly what is wrong with it.
+        private static bool WaitForFileReady(string path, int maxIterations, CancellationToken ct)
         {
+            long lastLen = -1;
+            int stable = 0;
             for (int i = 0; i < maxIterations; i++)
             {
                 if (ct.IsCancellationRequested) return false;
-
                 if (File.Exists(path))
                 {
                     try
                     {
-                        // FileShare.ReadWrite (not None): Urbano often keeps its own
-                        // handle open AFTER the "Tamam" success popup — by then the
-                        // file is already fully written, so an exclusive (None) open
-                        // would throw IOException and make us poll for the full timeout
-                        // for no reason. We only need to confirm it exists and is
-                        // non-empty, which a shared open does without blocking.
-                        using (var fs = File.Open(
-                            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                        // FileShare.ReadWrite: Urbano may keep its own handle open.
+                        using (var fs = File.Open(path, FileMode.Open, FileAccess.Read,
+                                                  FileShare.ReadWrite | FileShare.Delete))
                         {
-                            if (fs.Length > 0)
-                            {
-                                Dbg($"  FileReady — file exists, length={fs.Length} bytes.");
-                                return true;
-                            }
+                            long len = fs.Length;
+                            if (len > 0 && len == lastLen) stable++; else stable = 0;
+                            lastLen = len;
+                            if (stable >= 2 && EndsWithTagClose(fs)) return true;
                         }
                     }
-                    catch (IOException)
-                    {
-                        Dbg($"  FileReady poll {i + 1}/{maxIterations} — file not readable yet...");
-                    }
+                    catch (IOException) { }
                 }
-                else
-                {
-                    Dbg($"  FileReady poll {i + 1}/{maxIterations} — file does not exist yet...");
-                }
-
                 Thread.Sleep(PollMs);
+            }
+            return File.Exists(path) && new FileInfo(path).Length > 0;
+        }
+
+        private static bool EndsWithTagClose(FileStream fs)
+        {
+            int n = (int)Math.Min(64, fs.Length);
+            if (n <= 0) return false;
+            var buf = new byte[n];
+            fs.Seek(-n, SeekOrigin.End);
+            int read = 0;
+            while (read < n) { int r = fs.Read(buf, read, n - read); if (r <= 0) break; read += r; }
+            for (int k = read - 1; k >= 0; k--)
+            {
+                byte b = buf[k];
+                if (b == 0 || b == (byte)' ' || b == (byte)'\r' || b == (byte)'\n' || b == (byte)'\t') continue;   // NUL = UTF-16
+                return b == (byte)'>';
             }
             return false;
         }
