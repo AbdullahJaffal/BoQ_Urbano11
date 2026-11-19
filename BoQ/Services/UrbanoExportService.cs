@@ -76,7 +76,35 @@ namespace UrbanoMetraj.BoQ.Services
         // -> "Urbano XML'e ihraç" (2026-11-07). Accept both so ONE build serves every Urbano /
         // Softplan version; the dialog's contents (path box, system check boxes, "Dışa aktar")
         // are unchanged.
-        private static readonly string[] AltWindowTitles = { "Urbano XML'e ihraç" };
+        private static readonly string[] AltWindowTitles = { "Urbano XML'e ihraç", "Softplan XML'e ihraç" };
+
+        // Last resort when no known title matches (Urbano / Softplan rename the export
+        // dialog between versions: "Urbano XML'e topoloji ihraç" -> "Urbano XML'e ihraç"
+        // (Softplan 11.3, BricsCAD V24) -> "Softplan XML'e ihraç" (BricsCAD V25)): a VISIBLE
+        // top-level window of THIS process whose title contains "XML'e" and "ihra".
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+        private static IntPtr FindExportDialogByPattern()
+        {
+            IntPtr found = IntPtr.Zero;
+            uint myPid = (uint)Process.GetCurrentProcess().Id;
+            EnumWindows((h, l) =>
+            {
+                if (!IsWindowVisible(h)) return true;
+                uint pid;
+                GetWindowThreadProcessId(h, out pid);
+                if (pid != myPid) return true;
+                var sb = new StringBuilder(256);
+                GetWindowText(h, sb, sb.Capacity);
+                string t = sb.ToString();
+                if (t.IndexOf("XML'e", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    t.IndexOf("ihra", StringComparison.OrdinalIgnoreCase) >= 0)
+                { found = h; return false; }
+                return true;
+            }, IntPtr.Zero);
+            return found;
+        }
         private const string ExportButtonName = "Dışa aktar";
         private const string OkButtonName     = "Tamam";
 
@@ -200,6 +228,8 @@ namespace UrbanoMetraj.BoQ.Services
                 if (hwnd == IntPtr.Zero && title == MainWindowTitle)
                     foreach (string alt in AltWindowTitles)
                         if ((hwnd = FindWindow(null, alt)) != IntPtr.Zero) break;
+                if (hwnd == IntPtr.Zero && title == MainWindowTitle)
+                    hwnd = FindExportDialogByPattern();
                 if (hwnd != IntPtr.Zero) return hwnd;
 
                 Dbg($"  Phase 1 poll {i + 1}/{maxIterations} — window not found yet...");
