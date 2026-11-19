@@ -361,6 +361,14 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.Services
         private static readonly Regex InvalidXmlCharRx =
             new Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", RegexOptions.Compiled);
 
+        // Softplan (BricsCAD V25) writes some attributes with NO separating space —
+        // <lsComponent … parentGuid=""rowSpacing="0.0" …> in the longitudinal-profile
+        // (boykesit) definitions — which no XML parser accepts ("'rowSpacing' is an
+        // unexpected token. Expecting white space"). Re-insert the space between a complete
+        // name="value" and the attribute glued to it (2026-11-19).
+        private static readonly Regex GluedAttrRx =
+            new Regex("([\\w:.\\-]+=\"[^\"]*\")(?=[A-Za-z_][\\w:.\\-]*=\")", RegexOptions.Compiled);
+
         // Lenient parse: control characters XML 1.0 forbids are tolerated (CheckCharacters
         // = false), NULs and a leading BOM dropped, and the declaration's encoding replaced
         // because the text is already decoded (2026-11-19).
@@ -368,6 +376,7 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.Services
         {
             txt = XmlDeclRx.Replace(InvalidXmlCharRx.Replace(txt, "").TrimStart('\uFEFF'),
                                     "<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+            txt = GluedAttrRx.Replace(txt, "$1 ");
             var settings = new System.Xml.XmlReaderSettings
             {
                 CheckCharacters = false,
