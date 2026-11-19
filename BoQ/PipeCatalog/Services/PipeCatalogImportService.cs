@@ -321,30 +321,61 @@ namespace UrbanoMetraj.BoQ.PipeCatalogs.Services
 
         private static XDocument LoadXmlRobust(string path)
         {
+            System.Exception first = null;
             try { return XDocument.Load(path); }
-            catch (System.Xml.XmlException) { }
+            catch (System.Xml.XmlException ex) { first = ex; }
 
             byte[] raw = File.ReadAllBytes(path);
-            // Try: system default, Windows-1254 (Turkish), cp-1252, ISO-8859-1
-            foreach (int cp in new[] { 0, 1254, 1252, 28591 })
+
+            // UTF-16 with or without BOM (a NUL every other byte).
+            if (raw.Length >= 4 && ((raw[0] == 0xFF && raw[1] == 0xFE) || (raw[1] == 0 && raw[3] == 0)))
+                try { return ParseUrbanoXmlTolerant(Encoding.Unicode.GetString(raw)); } catch { }
+            if (raw.Length >= 4 && ((raw[0] == 0xFE && raw[1] == 0xFF) || (raw[0] == 0 && raw[2] == 0)))
+                try { return ParseUrbanoXmlTolerant(Encoding.BigEndianUnicode.GetString(raw)); } catch { }
+
+            foreach (int cp in new[] { 65001, 0, 1254, 1252, 28591 })
             {
                 try
                 {
                     string txt = cp == 0
                         ? Encoding.GetEncoding(0).GetString(raw)   // 0 = system ANSI code page (== Encoding.Default on net48; on .NET 8 Default is UTF-8)
                         : Encoding.GetEncoding(cp).GetString(raw);
-
-                    // Strip or fix any existing <?xml?> declaration so XDocument.Parse
-                    // accepts the re-encoded string as UTF-16
-                    txt = XmlDeclRx.Replace(txt, "<?xml version=\"1.0\" encoding=\"utf-8\"?>");
-
-                    return XDocument.Parse(txt);
+                    return ParseUrbanoXmlTolerant(txt);
                 }
-                catch { }
+                catch (System.Exception ex) { if (first == null) first = ex; }
             }
-            throw new InvalidOperationException(
-                "XML yüklenemedi — UTF-8, sistem varsayılanı, cp1254, cp1252, ISO-8859-1 " +
-                "kodlamaları denendi.");
+
+            // Everything failed: say WHY (first parser error + what the file looks like),
+            // so the next report is diagnosable without the file.
+            string head = BitConverter.ToString(raw, 0, Math.Min(16, raw.Length));
+            int tl = Math.Min(40, raw.Length);
+            string tail = Encoding.GetEncoding(28591).GetString(raw, raw.Length - tl, tl)
+                                  .Replace('\r', ' ').Replace('\n', ' ').Replace('\0', '.');
+            throw new System.Exception(
+                "XML okunamadı — " + (first != null ? first.Message : "?") +
+                " | dosya: " + path + ", " + raw.Length + " bayt, ilk baytlar: " + head + ", son: …" + tail);
+        }
+
+        // Characters XML 1.0 forbids (NUL and C0 controls except TAB / LF / CR). Even with
+        // CheckCharacters = false the .NET parser rejects them RAW in text, so drop them.
+        private static readonly Regex InvalidXmlCharRx =
+            new Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", RegexOptions.Compiled);
+
+        // Lenient parse: control characters XML 1.0 forbids are tolerated (CheckCharacters
+        // = false), NULs and a leading BOM dropped, and the declaration's encoding replaced
+        // because the text is already decoded (2026-11-19).
+        private static XDocument ParseUrbanoXmlTolerant(string txt)
+        {
+            txt = XmlDeclRx.Replace(InvalidXmlCharRx.Replace(txt, "").TrimStart('\uFEFF'),
+                                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+            var settings = new System.Xml.XmlReaderSettings
+            {
+                CheckCharacters = false,
+                DtdProcessing = System.Xml.DtdProcessing.Ignore
+            };
+            using (var sr = new StringReader(txt))
+            using (var xr = System.Xml.XmlReader.Create(sr, settings))
+                return XDocument.Load(xr);
         }
 
         // ── Misc helpers ──────────────────────────────────────────────────────
